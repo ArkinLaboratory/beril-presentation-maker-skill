@@ -1,0 +1,1038 @@
+{
+  "$defs": {
+    "acknowledgments_content": {
+      "properties": {
+        "code_repo_url": {
+          "type": "string"
+        },
+        "contributors": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "funder_logos": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tenant_attribution": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contributors"
+      ],
+      "type": "object"
+    },
+    "big_idea_content": {
+      "properties": {
+        "supporting_graphic": {
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "big_number_content": {
+      "properties": {
+        "headline": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_footer": {
+          "type": "string"
+        },
+        "sub_pointer": {
+          "type": "string"
+        },
+        "subtitle": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "headline",
+        "subtitle"
+      ],
+      "type": "object"
+    },
+    "claim_evidence_content": {
+      "properties": {
+        "bullets": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "type": "array"
+        },
+        "citations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "figure": {
+          "type": "string"
+        },
+        "figure_caption": {
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "type": "object"
+    },
+    "concept_illustration_content": {
+      "properties": {
+        "ai_disclosure_footer": {
+          "type": "boolean"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "image_path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "image_prompt": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "provenance": {
+          "properties": {
+            "approved_at": {
+              "type": "string"
+            },
+            "channel": {
+              "enum": [
+                "A",
+                "B"
+              ]
+            },
+            "cost_usd": {
+              "type": "number"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "quant_content_score": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "model",
+            "cost_usd",
+            "channel",
+            "approved_at"
+          ],
+          "type": "object"
+        },
+        "style": {
+          "enum": [
+            "metaphor",
+            "infographic",
+            "conceptual_diagram"
+          ]
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "image_path",
+        "image_prompt",
+        "style",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "cross_tenant_integration_content": {
+      "properties": {
+        "data_flow_diagram": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/diagram"
+            }
+          ]
+        },
+        "kberdl_db_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "no_signal_fallback": {
+          "type": "boolean"
+        },
+        "sibling_project_refs": {
+          "items": {
+            "properties": {
+              "project_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "what_was_leveraged": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "what_was_leveraged"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "tenant_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "data_figure_content": {
+      "properties": {
+        "caption": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "data_source": {
+          "type": "string"
+        },
+        "figure": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "figure",
+        "caption"
+      ],
+      "type": "object"
+    },
+    "diagram": {
+      "properties": {
+        "edges": {
+          "items": {
+            "properties": {
+              "from": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "straight",
+                  "elbow",
+                  "curved"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "to": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "kind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "boxes_and_arrows"
+          ]
+        },
+        "nodes": {
+          "items": {
+            "properties": {
+              "fill_color": {
+                "type": "string"
+              },
+              "h": {
+                "type": "number"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "label": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "shape": {
+                "enum": [
+                  "rectangle",
+                  "rounded",
+                  "ellipse",
+                  "parallelogram",
+                  "cylinder",
+                  "callout",
+                  "swimlane"
+                ]
+              },
+              "text_color": {
+                "type": "string"
+              },
+              "w": {
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "shape",
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "implications_content": {
+      "properties": {
+        "bullets": {
+          "items": {
+            "properties": {
+              "claim": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "evidence_pointer": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim",
+              "evidence_pointer"
+            ],
+            "type": "object"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "type": "object"
+    },
+    "methods_summary_content": {
+      "properties": {
+        "bullets": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 5,
+          "type": "array"
+        },
+        "see_notes_footer": {
+          "type": "boolean"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tools_versions": {
+          "items": {
+            "properties": {
+              "tool": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "type": "object"
+    },
+    "qa_anticipated_content": {
+      "properties": {
+        "answer_detail": {
+          "type": "string"
+        },
+        "answer_summary": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidence_pointer": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "question": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "answer_summary",
+        "evidence_pointer"
+      ],
+      "type": "object"
+    },
+    "references_content": {
+      "properties": {
+        "ai_disclosure": {
+          "type": "string"
+        },
+        "full_pool_in_speaker_notes": {
+          "type": "boolean"
+        },
+        "refs_short": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "refs_short"
+      ],
+      "type": "object"
+    },
+    "section_divider_content": {
+      "properties": {
+        "punchline": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "substory_number": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "punchline"
+      ],
+      "type": "object"
+    },
+    "title_content": {
+      "properties": {
+        "affiliation": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "presenter": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "venue": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "presenter",
+        "date"
+      ],
+      "type": "object"
+    },
+    "two_column_compare_content": {
+      "properties": {
+        "left_col_content": {
+          "oneOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "left_col_title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "right_col_content": {
+          "oneOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "right_col_title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "left_col_title",
+        "left_col_content",
+        "right_col_title",
+        "right_col_content"
+      ],
+      "type": "object"
+    },
+    "workflow_diagram_content": {
+      "properties": {
+        "diagram": {
+          "$ref": "#/$defs/diagram"
+        },
+        "step_caption": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tool_version_footer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "diagram",
+        "step_caption"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/src/beril_presentation_maker/skill/references/slide_spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "v1.0 contract for slide_spec.json. The hand-rolled validator in tools/slide_spec.py is the authoritative source; this JSON Schema is generated for documentation and prompt-context hygiene.",
+  "properties": {
+    "audience": {
+      "enum": [
+        "peer"
+      ]
+    },
+    "citation_pool_ref": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "draft_dir": {
+      "type": "string"
+    },
+    "last_modified": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "talk-30",
+        "talk-15",
+        "talk-45",
+        "lightning-5",
+        "poster-h",
+        "poster-v"
+      ]
+    },
+    "model_used": {
+      "type": "object"
+    },
+    "project_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "slides": {
+      "items": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "title"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/title_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "section_divider"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/section_divider_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "big_idea"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/big_idea_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "big_number"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/big_number_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "claim_evidence"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/claim_evidence_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "two_column_compare"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/two_column_compare_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "data_figure"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/data_figure_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "workflow_diagram"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/workflow_diagram_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "methods_summary"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/methods_summary_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "concept_illustration"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/concept_illustration_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "cross_tenant_integration"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/cross_tenant_integration_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "implications"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/implications_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "acknowledgments"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/acknowledgments_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "references"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/references_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "qa_anticipated"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/qa_anticipated_content"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "content": {
+            "type": "object"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "layout": {
+            "enum": [
+              "title",
+              "section_divider",
+              "big_idea",
+              "big_number",
+              "claim_evidence",
+              "two_column_compare",
+              "data_figure",
+              "workflow_diagram",
+              "methods_summary",
+              "concept_illustration",
+              "cross_tenant_integration",
+              "implications",
+              "acknowledgments",
+              "references",
+              "qa_anticipated"
+            ]
+          },
+          "revision_log": {
+            "type": "array"
+          },
+          "speaker_notes": {
+            "type": "string"
+          },
+          "speaker_notes_provenance": {
+            "type": "array"
+          },
+          "substory_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validator_status": {
+            "additionalProperties": {
+              "enum": [
+                "pass",
+                "soft-warning",
+                "accepted-with-warning",
+                "escalated",
+                "user-fixed",
+                "accepted-as-limitation"
+              ]
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "layout",
+          "content"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "substories": {
+      "items": {
+        "properties": {
+          "approved_at": {
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "punchline": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "slide_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "punchline",
+          "slide_ids"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "throughline": {
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "punchline": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tier_evidence": {
+          "enum": [
+            "STRONG",
+            "THIN",
+            "EXPLORATORY"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "punchline",
+        "tier_evidence"
+      ],
+      "type": "object"
+    },
+    "tier": {
+      "enum": [
+        "STRONG",
+        "THIN",
+        "EXPLORATORY"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "project_id",
+    "mode",
+    "audience",
+    "tier",
+    "throughline",
+    "substories",
+    "slides"
+  ],
+  "title": "BERIL Presentation Maker \u2014 slide_spec.json schema",
+  "type": "object"
+}

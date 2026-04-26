@@ -802,46 +802,57 @@ hand-editing the master. (D-007.)
 
 ### 14.2 Slide-spec → pptx
 
-The orchestrator emits `slide_spec.json` per substory, then the
-assembler walks it into python-pptx slides:
+The orchestrator emits `slide_spec.json` per draft, then the assembler
+walks it into python-pptx slides. The schema is the contract between
+four consumers (assembler, validator, slide-compose prompt, revise
+verb).
+
+**Authoritative source of the contract:**
+[`src/beril_presentation_maker/skill/tools/slide_spec.py`](src/beril_presentation_maker/skill/tools/slide_spec.py)
+— pure-stdlib hand-rolled validator (~700 LOC), constants, per-layout
+checkers, and a CLI (`validate | schema-json | example`).
+
+**Generated documentation:**
+[`src/beril_presentation_maker/skill/references/slide_spec.schema.json`](src/beril_presentation_maker/skill/references/slide_spec.schema.json)
+— JSON Schema Draft 2020-12 doc emitted by `slide_spec.py schema-json`.
+Useful for prompt-context hygiene; the Python validator is authoritative.
+
+**Design rationale + open questions resolved:**
+[`reference/slide-spec-schema-proposal.md`](reference/slide-spec-schema-proposal.md)
+— Adam-signed-off proposal documenting the 5 substantive decisions:
+hand-rolled validator, 7 diagram node shapes (incl. swimlane),
+`tools_versions` as Option A list-of-objects, on-slide `revision_log`,
+on-slide `validator_status`.
+
+**Top-level shape (abridged; see proposal §1 for full):**
 
 ```json
 {
+  "schema_version": "1.0",
+  "project_id": "<id>",
+  "mode": "talk-30 | talk-15 | talk-45 | lightning-5 | poster-h | poster-v",
+  "audience": "peer",
+  "tier": "STRONG | THIN | EXPLORATORY",
+  "throughline": {"id": "TL1", "punchline": "...", "tier_evidence": "STRONG"},
+  "substories": [{"id": "S1", "punchline": "...", "slide_ids": [...]}],
   "slides": [
     {
       "id": 1,
-      "layout": "title",
-      "content": {
-        "title": "...",
-        "subtitle": "...",
-        "presenter": "...",
-        "date": "..."
-      },
-      "speaker_notes": "..."
-    },
-    {
-      "id": 2,
-      "layout": "section_divider",
-      "content": {"punchline": "..."},
-      "substory_id": "S1"
-    },
-    {
-      "id": 3,
-      "layout": "claim_evidence",
-      "content": {
-        "title": "...",
-        "bullets": ["...", "...", "..."],
-        "figure": "figures/fig01.png",
-        "figure_caption": "...",
-        "citations": ["smith2023", "jones2024"]
-      },
-      "speaker_notes": "..."
+      "layout": "<one of 15>",
+      "substory_id": "S1 | null",
+      "content": { /* layout-discriminated; see proposal §3 */ },
+      "speaker_notes": "...",
+      "speaker_notes_provenance": [...],
+      "validator_status": {"P3": "pass", "P10": "soft-warning"},
+      "revision_log": [...]
     }
-  ],
-  "throughline": "...",
-  "substories": [{"id": "S1", "punchline": "..."}, ...]
+  ]
 }
 ```
+
+Use `python3 src/.../skill/tools/slide_spec.py example all` to dump a
+minimal valid spec covering every layout. Use `... example <layout>` for
+a single-slide example.
 
 ### 14.3 PDF output
 
