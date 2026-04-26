@@ -177,6 +177,8 @@ def _find_sp(layout_element, target_spec):
     We don't import the build_master function so the test is independent of
     the production target-resolution logic (and would catch its bugs)."""
     from lxml import etree as _et
+    drawable_locals = {"sp", "pic", "grpSp", "graphicFrame"}
+
     if "by_ph" in target_spec:
         ph_type, ph_idx = target_spec["by_ph"]
         for sp in layout_element.iter(f"{{{P_NS}}}sp"):
@@ -192,16 +194,34 @@ def _find_sp(layout_element, target_spec):
                 if this_type == ph_type and (ph_idx is None or this_idx == ph_idx):
                     return sp
         return None
+
     if "by_shape_index" in target_spec:
-        # Drawable = <p:sp>, <p:pic>, <p:grpSp>, <p:graphicFrame> in order.
         sptree = layout_element.find(f".//{{{P_NS}}}cSld/{{{P_NS}}}spTree")
         if sptree is None:
             return None
-        drawable_locals = {"sp", "pic", "grpSp", "graphicFrame"}
         drawables = [c for c in sptree
                      if _et.QName(c).localname in drawable_locals]
         n = target_spec["by_shape_index"]
         return drawables[n] if n < len(drawables) else None
+
+    if "by_kind_index" in target_spec:
+        kind, n = target_spec["by_kind_index"]
+        sptree = layout_element.find(f".//{{{P_NS}}}cSld/{{{P_NS}}}spTree")
+        if sptree is None:
+            return None
+        matching = []
+        for c in sptree:
+            local = _et.QName(c).localname
+            if local != kind:
+                continue
+            if local == "sp":
+                # Skip placeholders — by_kind_index targets decorative shapes.
+                ph = c.find(f".//{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+                if ph is not None:
+                    continue
+            matching.append(c)
+        return matching[n] if n < len(matching) else None
+
     return None
 
 
