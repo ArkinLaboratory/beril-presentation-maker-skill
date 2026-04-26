@@ -450,6 +450,12 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
         _spec = _util.spec_from_file_location(
             "diagram_render", _THIS_DIR / "diagram_render.py")
         _dr = _util.module_from_spec(_spec)
+        # Register in sys.modules BEFORE exec_module so the @dataclass
+        # decorator inside diagram_render can resolve cls.__module__
+        # via sys.modules.get(...).__dict__ (Python's dataclass machinery
+        # walks sys.modules, and unregistered modules return None).
+        # Same pattern used in _load_slide_spec_module above.
+        sys.modules["diagram_render"] = _dr
         _spec.loader.exec_module(_dr)
         # Diagram region: most of the body, leaving room for step caption + footer.
         region = (0.50, 1.30, 9.00, 3.10)
@@ -619,6 +625,10 @@ def _build_poster_spec_from_slide_spec(spec: dict, draft_dir: Path):
     from importlib import util as _util
     _spec = _util.spec_from_file_location("poster_fill", _THIS_DIR / "poster_fill.py")
     _pf = _util.module_from_spec(_spec)
+    # Register before exec_module so @dataclass inside poster_fill works
+    # (Python dataclasses walk sys.modules to resolve cls.__module__).
+    # Same gotcha that bit diagram_render's load.
+    sys.modules["poster_fill"] = _pf
     _spec.loader.exec_module(_pf)
 
     title = ""

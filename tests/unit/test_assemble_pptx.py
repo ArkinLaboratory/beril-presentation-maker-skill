@@ -105,9 +105,18 @@ def test_assemble_returns_warnings_for_missing_figures(ss, asm, tmp_path):
     out = tmp_path / "slides.pptx"
 
     result = asm.assemble(spec_path, out)
-    # data_figure and concept_illustration's figures aren't present;
-    # workflow_diagram emits a stub warning. Total ≥ 3 expected.
-    assert len(result.warnings) >= 3
+    # data_figure and concept_illustration's figures aren't present in the
+    # example spec → 2 missing-asset warnings. (Earlier expected ≥3 — that
+    # was implicitly counting the workflow_diagram NoneType crash dressed
+    # up as a warning. The 2026-04-26 fix to assemble_pptx.py registers
+    # diagram_render in sys.modules before exec_module, so the diagram
+    # now renders cleanly and emits no warning.)
+    assert len(result.warnings) >= 2
+    warning_text = " | ".join(result.warnings)
+    assert "data_figure" in warning_text
+    assert "concept_illustration" in warning_text
+    # The diagram render bug from before should NOT appear
+    assert "diagram render failed" not in warning_text
     # Slide still renders
     assert out.is_file()
 

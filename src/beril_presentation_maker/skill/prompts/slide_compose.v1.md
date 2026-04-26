@@ -350,10 +350,56 @@ memory; the schema field names matter.
   edges array), `step_caption` (list of EXACTLY 3 strings)
 - **Optional:** `tool_version_footer` (e.g. "RAST 2.0 · DRAM 1.4")
 - **Authoring rule:** use only when you have a real procedural
-  sequence. ≥3 steps. Diagram nodes use the 7 node shapes / 3 edge
-  kinds vocabulary (see `diagram_design.v1.md` for node placement).
-  step_caption length is fixed at 3 — even if your workflow has 5
-  steps, summarize as 3 narrative beats.
+  sequence. ≥3 steps. step_caption length is fixed at 3 — even if
+  your workflow has 5 steps, summarize as 3 narrative beats.
+
+The `diagram` object is **closed-vocabulary**. Use ONLY these values:
+
+- `diagram.kind` MUST be `"boxes_and_arrows"` (only kind in v1).
+- `nodes[].shape` MUST be one of: `"rectangle"`, `"rounded"`,
+  `"ellipse"`, `"parallelogram"`, `"cylinder"`, `"callout"`,
+  `"swimlane"`. **Generic-flowchart vocabulary (`"data_input"`,
+  `"process"`, `"output"`, `"decision"`) is INVALID — pick from the
+  seven above.** Semantic mapping: `rectangle` for generic step /
+  process; `rounded` for soft step / human-in-loop; `ellipse` for
+  start / end / decision; `parallelogram` for input / output (data
+  file); `cylinder` for database / persisted store; `callout` for
+  annotation; `swimlane` for phase boundary / tenant separator.
+- `nodes[].x`, `y`, `w`, `h` MUST be numeric (inches). Default
+  region: x in [0.5, 9.5], y in [1.4, 5.6]. For N horizontal nodes,
+  simple linear flow: gap = 0.4", `node_w = (9.0 − (N+1)·0.4) / N`,
+  node_h = 0.9, y = 1.8.
+- `edges[].kind` MUST be one of: `"straight"`, `"elbow"`, `"curved"`.
+  Forward flow → `straight`; 90° turn → `elbow`; back-edge / loop →
+  `curved`. **Missing `kind` is INVALID — every edge needs one.**
+
+Worked example (4-node horizontal flow):
+
+```json
+{
+  "kind": "boxes_and_arrows",
+  "nodes": [
+    {"id": "input",  "label": "Top 500 candidates",   "shape": "parallelogram", "x": 0.9,  "y": 1.8, "w": 1.75, "h": 0.9},
+    {"id": "filter", "label": "Greedy set-cover",     "shape": "rectangle",     "x": 3.05, "y": 1.8, "w": 1.75, "h": 0.9},
+    {"id": "verify", "label": "Cross-organism verify", "shape": "rectangle",    "x": 5.2,  "y": 1.8, "w": 1.75, "h": 0.9},
+    {"id": "output", "label": "Prioritized roadmap",  "shape": "parallelogram", "x": 7.35, "y": 1.8, "w": 1.75, "h": 0.9}
+  ],
+  "edges": [
+    {"from": "input",  "to": "filter", "kind": "straight"},
+    {"from": "filter", "to": "verify", "kind": "straight"},
+    {"from": "verify", "to": "output", "kind": "straight", "label": "validated"}
+  ]
+}
+```
+
+Note: rough geometry is acceptable — the orchestrator runs a
+deterministic repair pass (`repair_diagram_stubs.py`) that re-flows
+nodes onto the canonical horizontal layout if your geometry is
+missing, sub-region, or numeric-but-overlapping. **Closed
+vocabulary is YOUR responsibility, not the repair's.** Do not
+invent shape names or edge kinds and rely on the repair script to
+catch you — the repair coerces what it can but logs every coercion
+for the user to see; treat coercions as bugs, not flexibility.
 
 ### `methods_summary`
 
