@@ -1,0 +1,216 @@
+####################################################################
+# beril-presentation-maker-skill — pyproject.toml
+#
+# Status: v0.1.0-spec (specification-only release; implementation
+# pending). Mirrors beril-paper-writer-skill packaging. The fourth
+# skill in the BERIL drop-in quartet (atlas, adversarial, paper-
+# writer, presentation-maker).
+#
+# When implementation lands, version bumps to 0.1.0 and the CLI
+# stubs in cli.py become real subcommands. The package shape is
+# stable from this commit forward; future PRs add code, not
+# refactor structure.
+####################################################################
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+# ----------------------------------------------------------------------
+# Project metadata
+# ----------------------------------------------------------------------
+
+[project]
+name = "beril-presentation-maker-skill"
+version = "0.1.0.dev0"
+description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
+readme = "README.md"
+requires-python = ">=3.10"
+
+authors = [
+    {name = "Arkin Laboratory", email = "aparkin@lbl.gov"},
+]
+
+license = {text = "MIT"}
+
+keywords = [
+    "bioinformatics",
+    "claude-code",
+    "beril",
+    "kbase",
+    "research-observatory",
+    "scientific-presentations",
+    "slide-generation",
+    "talks",
+    "posters",
+]
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    # Prevents accidental `twine upload` while repo is private.
+    # Remove when going public on PyPI.
+    "Private :: Do Not Upload",
+]
+
+# ----------------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------------
+#
+# Pure-Python deps for the assemble step (slides + posters). The
+# stdlib carries everything else (install, configure, state-diff,
+# validators, figure curation): argparse, pathlib, shutil, subprocess,
+# importlib.resources, hashlib, json, os, re.
+#
+# Decision history: see DECISIONS.md.
+#   - python-pptx: pure Python .pptx writer (mirrors paper-writer's
+#     python-docx choice). Pulls lxml transitively as a precompiled
+#     wheel; pipx-installable on every platform we care about. No
+#     system pandoc / LibreOffice required.
+#   - nbformat: notebook AST extraction for figure-source provenance
+#     and methods-summary grounding. Same as paper-writer.
+#   - Pillow: raster image inspection for figure validators (P6:
+#     resolution at 1080p, contrast checks). Standard wheel.
+#   - requests: HTTP for the optional CBORG image-gen client. Stdlib
+#     urllib works but requests gives us cleaner timeout/retry. Light.
+
+dependencies = [
+    "python-pptx>=0.6.23",
+    "nbformat>=5.7.0",
+    "Pillow>=10.0.0",
+    "requests>=2.31.0",
+]
+
+# ----------------------------------------------------------------------
+# Optional dependencies (extras)
+# ----------------------------------------------------------------------
+
+[project.optional-dependencies]
+
+# AI-image-gen extra — pulls in nothing extra at the moment; the CBORG
+# client uses requests. Reserved for v0.2 if we add Google AI Studio
+# direct or OpenAI direct as alternative providers.
+ai-diagrams = []
+
+# Optional Mermaid → PNG render via mermaid-cli (npm dep, not pip).
+# Documented in SPEC §8.3; not a Python dep.
+
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "build>=1.0.0",
+]
+
+# ----------------------------------------------------------------------
+# Console scripts
+# ----------------------------------------------------------------------
+
+[project.scripts]
+beril-presentation-maker = "beril_presentation_maker.cli:main"
+
+# Planned subcommands (per LAYOUT.md):
+#   beril-presentation-maker install-skill <BERIL_ROOT>
+#   beril-presentation-maker configure
+#   beril-presentation-maker continue <draft_dir>
+#   beril-presentation-maker assemble <draft_dir> [--format pptx|pdf]
+#
+# The drafting and review-rewrite paths are NOT Python subcommands —
+# they're handled by the planned shipped shell script
+# tools/presentation_maker.sh (which the slash command will invoke
+# directly). Same pattern as beril-paper-writer / beril-adversarial.
+
+# ----------------------------------------------------------------------
+# URLs
+# ----------------------------------------------------------------------
+
+[project.urls]
+Homepage = "https://github.com/ArkinLaboratory/beril-presentation-maker-skill"
+Issues = "https://github.com/ArkinLaboratory/beril-presentation-maker-skill/issues"
+Repository = "https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git"
+
+# ----------------------------------------------------------------------
+# Build configuration
+# ----------------------------------------------------------------------
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/beril_presentation_maker"]
+
+# The shipped skill directory (SKILL.md, prompts, references, tools,
+# templates) lives inside the package at src/beril_presentation_maker/skill/
+# and ships as package data. Accessed at runtime via importlib.resources.
+# Hatchling auto-includes non-.py files in the package; the shell
+# script's executable bit is preserved through wheel metadata.
+#
+# The KBase-branded master template (.pptx) and poster templates
+# (horizontal/vertical .pptx) ship under skill/references/templates/
+# as binary package data. See LAYOUT.md §5.
+#
+# v0.1.0-spec: skill/ tree is a stub. Full content lands with
+# implementation.
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/beril_presentation_maker",
+    "tests",
+    "README.md",
+    "SPEC.md",
+    "LAYOUT.md",
+    "DECISIONS.md",
+    "reference",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/.DS_Store",
+    # State directories never ship.
+    "src/beril_presentation_maker/skill/state",
+    # Per-draft runtime state never ships either.
+    "talks/draft_*/state.json",
+    "talks/draft_*/audit",
+    "talks/cost-log.jsonl",
+]
+
+# ----------------------------------------------------------------------
+# Tool configurations
+# ----------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: marks tests that hit live LLM CLIs (deselect with '-m \"not integration\"')",
+    "slow: marks tests that take >5s",
+    "image_gen: marks tests that call CBORG image-gen API (cost; deselect with '-m \"not image_gen\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+]
