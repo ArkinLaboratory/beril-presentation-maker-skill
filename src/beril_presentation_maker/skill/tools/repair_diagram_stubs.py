@@ -248,9 +248,65 @@ def repair_diagram(diagram: dict, slide_path: str,
     return out
 
 
+def repair_bullets(layout: str, content: dict, slide_path: str,
+                   coercions: list[str]) -> dict:
+    """Coerce bullet-count violations on bullet-bearing layouts.
+
+    Live LLM has been observed to produce out-of-cap bullet lists
+    (2026-04-26: intro slides with claim_evidence + 4 bullets,
+    methods_summary + 4 bullets). The prompt-side fix is layout
+    discipline + self-review counting; this is the defensive
+    layer.
+
+    Coercions:
+      - claim_evidence.bullets > 3 → truncate to first 3
+      - implications.bullets > 3 → truncate to first 3
+      - references.refs_short > 8 → truncate to first 8
+      - methods_summary.bullets < 5 → log warning + leave (validator
+        will fail; truncation can't pad-create content)
+
+    Returns a new content dict with coerced bullets. `coercions` is
+    appended-to with one human-readable line per change.
+    """
+    out = dict(content)
+
+    bullet_caps = {
+        "claim_evidence": ("bullets", 1, 3),
+        "implications": ("bullets", 1, 3),
+        "references": ("refs_short", 1, 8),
+        "methods_summary": ("bullets", 5, 10),
+    }
+
+    if layout not in bullet_caps:
+        return out
+
+    field, min_n, max_n = bullet_caps[layout]
+    bullets = out.get(field)
+    if not isinstance(bullets, list):
+        return out
+
+    n = len(bullets)
+    if n > max_n:
+        out[field] = bullets[:max_n]
+        coercions.append(
+            f"{slide_path}.{field}: truncated {n} → {max_n} entries "
+            f"({layout} cap is {min_n}-{max_n})"
+        )
+    elif n < min_n:
+        # Can't pad with fake content; log and let the validator fail.
+        coercions.append(
+            f"{slide_path}.{field}: {n} entries below {layout} floor "
+            f"of {min_n} — coercion impossible without fabricating "
+            f"content; validator will fail. Recommend re-running the "
+            f"composing prompt with this floor explicitly stated."
+        )
+
+    return out
+
+
 def repair_spec(spec: dict) -> tuple[dict, list[str]]:
-    """Walk the spec, repair every diagram. Returns (new_spec,
-    coercions_log)."""
+    """Walk the spec, repair every diagram + every bullet-bearing
+    layout. Returns (new_spec, coercions_log)."""
     coercions: list[str] = []
     out_spec = dict(spec)
     slides = out_spec.get("slides")
@@ -286,6 +342,13 @@ def repair_spec(spec: dict) -> tuple[dict, list[str]]:
                 f"$.slides[{i}].content.data_flow_diagram",
                 coercions,
             )
+
+        # Bullet-count repairs (claim_evidence, implications, refs, methods)
+        new_content = repair_bullets(
+            layout, new_content,
+            f"$.slides[{i}].content",
+            coercions,
+        )
 
         new_slide["content"] = new_content
         new_slides.append(new_slide)

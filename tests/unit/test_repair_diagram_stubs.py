@@ -358,6 +358,154 @@ def test_cli_idempotent_writes_empty_report(tmp_path: Path):
     assert "No coercions applied" in report
 
 
+# ----------------------------------------------------------------------
+# Bullet-count repair tests (added 2026-04-26 from intro smoke failures)
+# ----------------------------------------------------------------------
+
+def test_repair_bullets_truncates_overlong_claim_evidence():
+    coercions = []
+    content = {
+        "title": "Goal: ...",
+        "bullets": [
+            "Bullet one",
+            "Bullet two",
+            "Bullet three",
+            "Bullet four (over cap)",
+        ],
+    }
+    out = rds.repair_bullets("claim_evidence", content, "$.test", coercions)
+    assert len(out["bullets"]) == 3
+    assert out["bullets"] == ["Bullet one", "Bullet two", "Bullet three"]
+    assert any("truncated 4" in c for c in coercions)
+
+
+def test_repair_bullets_truncates_overlong_implications():
+    coercions = []
+    content = {
+        "title": "Implications",
+        "bullets": [
+            {"claim": "C1", "evidence_pointer": "P1"},
+            {"claim": "C2", "evidence_pointer": "P2"},
+            {"claim": "C3", "evidence_pointer": "P3"},
+            {"claim": "C4", "evidence_pointer": "P4"},
+        ],
+    }
+    out = rds.repair_bullets("implications", content, "$.test", coercions)
+    assert len(out["bullets"]) == 3
+    assert any("truncated 4" in c for c in coercions)
+
+
+def test_repair_bullets_truncates_overlong_references():
+    coercions = []
+    content = {
+        "refs_short": [f"ref{i}" for i in range(10)],  # 10 entries, cap is 8
+    }
+    out = rds.repair_bullets("references", content, "$.test", coercions)
+    assert len(out["refs_short"]) == 8
+    assert any("truncated 10" in c for c in coercions)
+
+
+def test_repair_bullets_logs_methods_summary_underflow():
+    """Methods_summary needs ≥5 bullets; coercion can't fabricate content."""
+    coercions = []
+    content = {
+        "title": "Methods",
+        "bullets": ["m1", "m2", "m3", "m4"],  # 4 < 5 floor
+    }
+    out = rds.repair_bullets("methods_summary", content, "$.test", coercions)
+    # Bullets unchanged (can't pad with fake content)
+    assert out["bullets"] == ["m1", "m2", "m3", "m4"]
+    # But coercion logged so user knows
+    assert any("4 entries below methods_summary floor" in c
+               for c in coercions)
+
+
+def test_repair_bullets_idempotent_on_valid():
+    """Already-valid bullet count: no coercion logged."""
+    coercions = []
+    content = {"title": "T", "bullets": ["a", "b", "c"]}
+    out = rds.repair_bullets("claim_evidence", content, "$.test", coercions)
+    assert out["bullets"] == ["a", "b", "c"]
+    assert coercions == []
+
+
+def test_repair_bullets_unaffected_layouts():
+    """Layouts without bullet caps in our table pass through."""
+    coercions = []
+    content = {"title": "Title", "presenter": "X", "date": "2026-04-26"}
+    out = rds.repair_bullets("title", content, "$.test", coercions)
+    assert out == content
+    assert coercions == []
+
+
+def test_repair_spec_runs_bullet_repair_alongside_diagram_repair():
+    """End-to-end: spec with both diagram AND bullet violations
+    gets both repaired in one pass."""
+    spec = {
+        "schema_version": slide_spec.SCHEMA_VERSION,
+        "project_id": "test",
+        "mode": "talk-30",
+        "audience": "peer",
+        "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [{"id": "S1", "punchline": "x",
+                        "slide_ids": [1]}],
+        "slides": [{
+            "id": 1,
+            "layout": "claim_evidence",
+            "substory_id": "S1",
+            "content": {
+                "title": "Goal",
+                "bullets": ["a", "b", "c", "d", "e"],  # 5 bullets, cap 3
+            },
+        }],
+    }
+    new_spec, coercions = rds.repair_spec(spec)
+    assert len(new_spec["slides"][0]["content"]["bullets"]) == 3
+    assert any("truncated 5" in c for c in coercions)
+    issues = slide_spec.validate_slide_spec(new_spec)
+    assert issues == []
+
+
+def test_repair_spec_real_world_intro_failure(tmp_path: Path):
+    """Regression for the 2026-04-26 draft_4 failure: intro produced
+    methods_summary with 4 bullets (< 5 floor). Repair logs the issue
+    but can't fix it; validator will still fail with a clear pointer."""
+    spec = {
+        "schema_version": slide_spec.SCHEMA_VERSION,
+        "project_id": "functional_dark_matter",
+        "mode": "talk-30",
+        "audience": "peer",
+        "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [{"id": "S1", "punchline": "x",
+                        "slide_ids": [2]}],
+        "slides": [
+            {"id": 1, "layout": "title",
+             "content": {"title": "T", "presenter": "X",
+                         "date": "2026-04-26"}},
+            {"id": 2, "layout": "section_divider",
+             "substory_id": "S1",
+             "content": {"punchline": "p", "substory_number": 1}},
+            {"id": 3, "layout": "methods_summary",  # 4-bullet violation
+             "content": {
+                 "title": "Approach",
+                 "bullets": ["m1", "m2", "m3", "m4"],  # < 5
+             }},
+        ],
+    }
+    new_spec, coercions = rds.repair_spec(spec)
+    assert any("methods_summary floor" in c for c in coercions)
+    # Validator still fails for this case (can't pad), per design
+    issues = slide_spec.validate_slide_spec(new_spec)
+    assert any("must be a list of 5" in i.message for i in issues), (
+        "validator should still flag underflow methods_summary; "
+        "repair cannot pad without fabricating content"
+    )
+
+
 def test_cli_fails_on_missing_input(tmp_path: Path):
     rc = subprocess.run(
         [sys.executable, str(TOOLS_DIR / "repair_diagram_stubs.py"),

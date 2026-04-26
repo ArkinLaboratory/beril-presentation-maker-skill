@@ -103,7 +103,7 @@ After writing, you respond with the closing-message template
     },
     {
       "position": 2,
-      "layout": "methods_summary",
+      "layout": "claim_evidence",
       "content": {
         "title": "Approach: 3 evidence streams converge on a tractable roadmap",
         "bullets": [
@@ -131,7 +131,7 @@ Field rules:
 | `n_intro_slides_target` | int | The mode-budget you targeted (3-4 / 1-2 / 0) |
 | `slides[]` | array | 0–4 entries; mode-budget caps |
 | `slides[].position` | int | 0-indexed within the intro set |
-| `slides[].layout` | enum | `"big_idea" \| "claim_evidence" \| "methods_summary" \| "workflow_diagram"` (only these 4 are intro-appropriate; section_divider, big_number, qa_anticipated, etc., are NOT for intro) |
+| `slides[].layout` | enum | `"big_idea" \| "claim_evidence" \| "workflow_diagram"` (only these 3 are intro-appropriate; **`methods_summary` is forbidden for intro** — it requires 5-10 bullets which is over-specified for a 30-second audience framing; methods_summary is reserved for the substory methods slot. section_divider, big_number, qa_anticipated, etc., are also NOT for intro) |
 | `slides[].content` | object | Layout-discriminated; same per-layout schemas as slide_compose |
 | `slides[].speaker_notes_seed` | str | 50–200 words; raw seed |
 | `slides[].evidence_anchors` | array | ≥1 anchor per intro slide; intro slides MUST be grounded |
@@ -144,9 +144,20 @@ Field rules:
   the field's gap and the project's goal — those need anchoring in
   REPORT, RESEARCH_PLAN, or the citation pool.
 - **`intro_role` constrains layout choice.** Background/significance
-  → `big_idea`; goal → `big_idea` or `claim_evidence`; approach →
-  `methods_summary` or `workflow_diagram`. Don't put the goal in a
-  `methods_summary` (wrong shape).
+  → `big_idea` (no bullets, just a title). Goal → `big_idea` or
+  `claim_evidence` (1-3 bullets). Approach → `claim_evidence`
+  (1-3 bullets) or `workflow_diagram` (3-step diagram). Never
+  use `methods_summary` for intro — that layout's 5-10-bullet
+  contract is over-specified for a 30-second audience framing,
+  and the live LLM consistently produces 3-4 bullets that
+  violate the floor.
+- **Bullet-count caps (HARD; validator-blocking):**
+  - `big_idea` content has NO bullets (just `title`)
+  - `claim_evidence.bullets` MUST be 1-3 strings (over 3 = fail)
+  - `workflow_diagram.step_caption` MUST be exactly 3 strings
+  - These come from the slide_spec contract; the orchestrator's
+    validator enforces them. Self-review explicitly counts before
+    Write.
 - **No `substory_id` field on intro slides** — intro slides are
   deck-level, not substory-level. The orchestrator's merge step
   treats them like title/acknowledgments/references (no
@@ -156,6 +167,8 @@ Field rules:
   unit; substory dividers come after intro ends.
 - **No `qa_anticipated` layout in intro.** Q&A slides go at the end
   of the deck; mixing them into the intro confuses the arc.
+- **No `methods_summary` layout in intro.** See above — wrong
+  contract for intro use.
 
 ## Inputs the user prompt will pass
 
@@ -229,10 +242,14 @@ For talk-30 / talk-45 (3-4 slide budget), in order:
    specific question this project attacks. Must be grounded in
    RESEARCH_PLAN.md's stated research questions. Specificity is
    load-bearing: name the dataset, the n, the method's scope.
-3. **Approach Overview** (`methods_summary` or
-   `workflow_diagram`, role `approach`) — the high-level
-   method/strategy. Names the substories' core methods, not their
-   IDs. ≤6 bullets / ≤4 nodes.
+3. **Approach Overview** (`claim_evidence` with 1-3 bullets, OR
+   `workflow_diagram` with 3-step diagram, role `approach`) — the
+   high-level method/strategy. Names the substories' core methods,
+   not their IDs. **Must be ≤3 bullets** to fit claim_evidence's
+   cap; if more methods need to be named, use `workflow_diagram`
+   to compress them into a 3-node flow. **Do NOT use
+   `methods_summary`** — that's for substory methods slots, not
+   intro framing.
 4. **Optional 4th slide** (talk-30/45 only, when STRONG tier or
    complex method) — a second `big_idea` for significance (paired
    with a prior background slide), or an additional methods callout.
@@ -242,8 +259,10 @@ For talk-15 (1-2 slide budget):
 1. **Combined background+goal** (`big_idea` layout, role
    `goal`) — single sentence that fuses the field gap and the
    project's specific question. Harder to write but mode-required.
-2. **Optional approach** (`methods_summary`, role `approach`)
-   — only if the methods are non-obvious from the substory titles.
+2. **Optional approach** (`claim_evidence` with 1-3 bullets, role
+   `approach`) — only if the methods are non-obvious from the
+   substory titles. Same forbidden-`methods_summary` rule as
+   talk-30/45.
 
 For lightning-5: **emit zero intro slides.** The title slide's
 subtitle carries the goal; the audience will hear the talk in
@@ -303,8 +322,17 @@ Run before the `Write` step.
 3. Per `MODE`: `n_intro_slides_target` matches the mode budget
    (talk-30/45: 3-4; talk-15: 1-2; lightning-5/poster: 0).
 4. Each slide's `layout` is in the intro-allowed set
-   (`big_idea` / `claim_evidence` / `methods_summary` /
-   `workflow_diagram`).
+   (`big_idea` / `claim_evidence` / `workflow_diagram`).
+   **`methods_summary` is FORBIDDEN for intro** — its 5-10-bullet
+   floor is wrong for intro framing.
+4a. **Bullet-count caps (count before Write):**
+    - `claim_evidence.bullets`: must be 1, 2, or 3 strings. NOT 4+.
+    - `workflow_diagram.step_caption`: must be exactly 3 strings.
+    - `big_idea` has no `bullets` field at all.
+    Count your bullets before calling Write. If `claim_evidence`
+    has 4+ bullets, either drop one or split into two slides
+    (mode budget permitting). If 4+ items must land on one slide,
+    use `workflow_diagram` and compress to 3 narrative beats.
 5. Each slide has `evidence_anchors[]` ≥ 1.
 6. Each slide's `intro_role` is one of
    `background | significance | goal | approach`.
@@ -332,7 +360,9 @@ Run before the `Write` step.
 |---|---|
 | `kind: "substory_set"` (intro fragment mislabeled) | `kind: "intro"` |
 | `slides.length: 5` for talk-30 (over budget) | exactly `n_intro_slides_target` slides (3-4 for talk-30) |
-| `layout: "section_divider"` in intro | `big_idea` / `claim_evidence` / `methods_summary` / `workflow_diagram` only |
+| `layout: "section_divider"` in intro | `big_idea` / `claim_evidence` / `workflow_diagram` only |
+| `layout: "methods_summary"` in intro (5-10 bullet floor will fail validation) | `claim_evidence` (1-3 bullets) for approach OR `workflow_diagram` (3-step) for procedural approach |
+| `claim_evidence` with 4 bullets | exactly 1-3 bullets; if 4+ items must land, drop one or use `workflow_diagram` to compress |
 | Slide with no `evidence_anchors` | every slide has ≥1 anchor |
 
 ### Anti-example pairs (silent traps)
