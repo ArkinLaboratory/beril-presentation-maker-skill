@@ -168,66 +168,111 @@ def test_brand_tokens_json_on_disk_matches_constant():
     assert on_disk == expected
 
 
-@requires_built_master
-def test_big_number_title_is_centered_and_large():
-    """Adam's 2026-04-26 visual review surfaced that the source .potx places
-    big_number's TITLE in a tiny strip at the top. The fix in build_master.py
-    repositions the TITLE to a large centered area with bold 66pt centered text.
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
-    See LAYOUT_FIXES['big_number'] for rationale. This test pins the fix so
-    a future regenerated master can't silently drift back to the source's
-    tiny-header-strip default.
+
+def _find_sp(layout_element, target_spec):
+    """Re-implements _find_target_shape's lookup for test verification.
+    We don't import the build_master function so the test is independent of
+    the production target-resolution logic (and would catch its bugs)."""
+    from lxml import etree as _et
+    if "by_ph" in target_spec:
+        ph_type, ph_idx = target_spec["by_ph"]
+        for sp in layout_element.iter(f"{{{P_NS}}}sp"):
+            ph = sp.find(f".//{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+            if ph is None:
+                continue
+            this_type = ph.get("type", "body")
+            this_idx = ph.get("idx", "0")
+            if ph_type == "title":
+                if this_type in ("title", "ctrTitle") or this_idx == "0":
+                    return sp
+            else:
+                if this_type == ph_type and (ph_idx is None or this_idx == ph_idx):
+                    return sp
+        return None
+    if "by_shape_index" in target_spec:
+        # Drawable = <p:sp>, <p:pic>, <p:grpSp>, <p:graphicFrame> in order.
+        sptree = layout_element.find(f".//{{{P_NS}}}cSld/{{{P_NS}}}spTree")
+        if sptree is None:
+            return None
+        drawable_locals = {"sp", "pic", "grpSp", "graphicFrame"}
+        drawables = [c for c in sptree
+                     if _et.QName(c).localname in drawable_locals]
+        n = target_spec["by_shape_index"]
+        return drawables[n] if n < len(drawables) else None
+    return None
+
+
+def _check_shape_edit_applied(layout_element, shape_edit):
+    """Assert that all change attributes in `shape_edit` are present on the
+    target shape in `layout_element`. Helper for test_layout_fix_*."""
+    sp = _find_sp(layout_element, shape_edit)
+    assert sp is not None, f"target shape not found for {shape_edit}"
+
+    if "xfrm" in shape_edit:
+        off = sp.find(f".//{{{A_NS}}}xfrm/{{{A_NS}}}off")
+        ext = sp.find(f".//{{{A_NS}}}xfrm/{{{A_NS}}}ext")
+        assert off is not None and ext is not None, "xfrm/off/ext missing"
+        for k, expected in shape_edit["xfrm"].items():
+            attr = {"off_x": ("off", "x"), "off_y": ("off", "y"),
+                    "ext_cx": ("ext", "cx"), "ext_cy": ("ext", "cy")}[k]
+            elem = off if attr[0] == "off" else ext
+            actual = int(elem.get(attr[1]))
+            assert actual == expected, f"{k}: expected {expected}, got {actual}"
+
+    if "body_pr" in shape_edit:
+        body_pr = sp.find(f".//{{{P_NS}}}txBody/{{{A_NS}}}bodyPr")
+        assert body_pr is not None, "<a:bodyPr> missing"
+        if "anchor" in shape_edit["body_pr"]:
+            assert body_pr.get("anchor") == shape_edit["body_pr"]["anchor"]
+        if "auto_fit_kind" in shape_edit["body_pr"]:
+            kind = shape_edit["body_pr"]["auto_fit_kind"]
+            assert body_pr.find(f"{{{A_NS}}}{kind}") is not None
+            for other in ("normAutofit", "noAutofit", "spAutoFit"):
+                if other != kind:
+                    assert body_pr.find(f"{{{A_NS}}}{other}") is None, (
+                        f"unexpected <a:{other}> still present"
+                    )
+
+    if "lvl1_ppr" in shape_edit:
+        lvl1 = sp.find(f".//{{{A_NS}}}lstStyle/{{{A_NS}}}lvl1pPr")
+        assert lvl1 is not None
+        if "algn" in shape_edit["lvl1_ppr"]:
+            assert lvl1.get("algn") == shape_edit["lvl1_ppr"]["algn"]
+
+    if "def_rpr" in shape_edit:
+        lvl1 = sp.find(f".//{{{A_NS}}}lstStyle/{{{A_NS}}}lvl1pPr")
+        assert lvl1 is not None
+        def_rpr = lvl1.find(f"{{{A_NS}}}defRPr")
+        assert def_rpr is not None
+        if "sz" in shape_edit["def_rpr"]:
+            assert def_rpr.get("sz") == str(shape_edit["def_rpr"]["sz"])
+        if "b" in shape_edit["def_rpr"]:
+            assert def_rpr.get("b") == str(shape_edit["def_rpr"]["b"])
+
+
+@requires_built_master
+@pytest.mark.parametrize("layout_name", [
+    "big_number", "big_idea", "section_divider",
+    "two_column_compare", "concept_illustration",
+])
+def test_layout_fix_applied(layout_name):
+    """All shape_edits in LAYOUT_FIXES[layout_name] are present on the
+    derived master. Pins Adam's 2026-04-26 visual-review fixes so a future
+    regenerated master can't drift back to the source .potx defaults.
     """
     from pptx import Presentation
     bm = _import_build_master()
 
-    A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-    P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
-
     prs = Presentation(DEST_PPTX)
     layouts = {l.name: l for l in prs.slide_masters[0].slide_layouts}
-    big = layouts["big_number"]
+    layout = layouts[layout_name]
 
-    # Find the TITLE shape (placeholder type=title or idx=0)
-    title_sp = None
-    for sp in big.element.iter(f"{{{P_NS}}}sp"):
-        ph = sp.find(f".//{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
-        if ph is not None and (ph.get("type") == "title" or ph.get("idx", "0") == "0"):
-            title_sp = sp
-            break
-    assert title_sp is not None, "big_number layout has no TITLE placeholder"
-
-    # 1. Position: large centered area (~0.7, 1.0, 8.6 × 3.6 in)
-    off = title_sp.find(f".//{{{A_NS}}}xfrm/{{{A_NS}}}off")
-    ext = title_sp.find(f".//{{{A_NS}}}xfrm/{{{A_NS}}}ext")
-    assert off is not None and ext is not None
-    expected = bm.LAYOUT_FIXES["big_number"]["title_xfrm"]
-    assert int(off.get("x")) == expected["off_x"]
-    assert int(off.get("y")) == expected["off_y"]
-    assert int(ext.get("cx")) == expected["ext_cx"]
-    assert int(ext.get("cy")) == expected["ext_cy"]
-
-    # 2. Body anchor + autofit
-    body_pr = title_sp.find(f".//{{{P_NS}}}txBody/{{{A_NS}}}bodyPr")
-    assert body_pr is not None
-    assert body_pr.get("anchor") == "ctr"
-    # Has noAutofit, not normAutofit
-    has_noautofit = body_pr.find(f"{{{A_NS}}}noAutofit") is not None
-    has_normautofit = body_pr.find(f"{{{A_NS}}}normAutofit") is not None
-    assert has_noautofit and not has_normautofit, (
-        "big_number TITLE must use <a:noAutofit/>, not <a:normAutofit/>"
-    )
-
-    # 3. Horizontal alignment
-    lvl1 = title_sp.find(f".//{{{A_NS}}}lstStyle/{{{A_NS}}}lvl1pPr")
-    assert lvl1 is not None
-    assert lvl1.get("algn") == "ctr"
-
-    # 4. Font size + bold
-    def_rpr = lvl1.find(f"{{{A_NS}}}defRPr")
-    assert def_rpr is not None
-    assert def_rpr.get("sz") == "6600"  # 66pt
-    assert def_rpr.get("b") == "1"      # bold
+    fix = bm.LAYOUT_FIXES[layout_name]
+    for shape_edit in fix["shape_edits"]:
+        _check_shape_edit_applied(layout.element, shape_edit)
 
 
 @requires_built_master

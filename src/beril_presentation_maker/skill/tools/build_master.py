@@ -107,39 +107,145 @@ assert len(set(NAMED_VOCABULARY)) == 15, "vocabulary names must be unique"
 
 INCH = 914400  # EMU per inch
 
+# Each LAYOUT_FIXES entry has a `rationale` and a list of `shape_edits`.
+# Each shape_edit identifies a target by (placeholder type+idx) or
+# (shape ordinal when no placeholder), and specifies optional changes
+# to xfrm, bodyPr, lvl1pPr, and defRPr.
+#
+# Shape identification:
+#   {"by_ph": ("title", None)}       — first placeholder of type "title"
+#   {"by_ph": ("body", "1")}         — body placeholder with idx="1"
+#   {"by_shape_index": 0}            — first <p:sp> in document order, no ph
+#
+# Change keys (all optional):
+#   "xfrm":     {"off_x": int, "off_y": int, "ext_cx": int, "ext_cy": int}
+#   "body_pr":  {"anchor": str, "auto_fit_kind": "noAutofit"|"normAutofit"|"spAutoFit"}
+#   "lvl1_ppr": {"algn": str}
+#   "def_rpr":  {"sz": int, "b": int}
+
 LAYOUT_FIXES: dict[str, dict] = {
-    # big_number: the source .potx places the TITLE in a tiny strip at
-    # the top (0.1in × 0.6in tall, 9.3in wide). For a "big number" slide
-    # where the number IS the slide, the title should be huge, bold, and
-    # centered in the slide body. Adam's fix on 2026-04-26:
+    # --- big_number ---------------------------------------------------------
+    # Source .potx has TITLE as a top header strip. For a slide where the
+    # NUMBER IS the message (27M genomes, 90% accuracy), the title belongs
+    # in a large centered area at 66pt bold.
     "big_number": {
         "rationale": (
             "Headline statistic must be visually dominant. Source layout had "
-            "the title as a top header strip; numbers like '27,000,000' or "
-            "'90% accuracy' need to be the visual focus, not a header."
+            "the title as a top header strip; numbers like '27,000,000' need "
+            "to be the visual focus, not a header."
         ),
-        "title_xfrm": {
-            # Position + size (EMUs). ~(0.7, 1.0, 8.6 × 3.6 in) — large
-            # centered area filling most of the 16:9 slide.
-            "off_x": 660902,
-            "off_y": 923453,
-            "ext_cx": 7840301,
-            "ext_cy": 3286408,
-        },
-        "title_body_pr": {
-            "anchor": "ctr",          # vertical center
-            "auto_fit_kind": "noAutofit",  # don't auto-shrink
-        },
-        "title_lvl1_ppr": {
-            "algn": "ctr",            # horizontal center
-        },
-        "title_lvl1_def_rpr": {
-            "sz": 6600,               # 66pt (PowerPoint half-points × 100)
-            "b": 1,                   # bold
-        },
+        "shape_edits": [
+            {
+                "by_ph": ("title", None),
+                "xfrm": {"off_x": 660902, "off_y": 923453,
+                         "ext_cx": 7840301, "ext_cy": 3286408},
+                "body_pr": {"anchor": "ctr", "auto_fit_kind": "noAutofit"},
+                "lvl1_ppr": {"algn": "ctr"},
+                "def_rpr": {"sz": 6600, "b": 1},
+            },
+        ],
     },
-    # Other layouts may accumulate fixes here as visual review surfaces issues.
-    # Keep each fix small and explicit — never a "while we're at it" sweep.
+
+    # --- big_idea -----------------------------------------------------------
+    # Title moves down (out of the top header) and gets explicit 36pt + no
+    # autofit so the sentence doesn't auto-shrink. Adam's edit 2026-04-26.
+    "big_idea": {
+        "rationale": (
+            "The single-sentence claim must read like a thesis statement, "
+            "not a slide title. Position lower-center, fix at 36pt, disable "
+            "autofit so long sentences don't shrink to invisibility."
+        ),
+        "shape_edits": [
+            {
+                "by_ph": ("title", None),
+                "xfrm": {"off_x": 139684, "off_y": 658650,
+                         "ext_cx": 8520600, "ext_cy": 572700},
+                "body_pr": {"auto_fit_kind": "noAutofit"},
+                "def_rpr": {"sz": 3600},
+            },
+        ],
+    },
+
+    # --- section_divider ----------------------------------------------------
+    # The substory punchline becomes a centered, vertically-middle band of
+    # large 60pt centered text — the visual cue that we're pivoting.
+    "section_divider": {
+        "rationale": (
+            "Substory transitions need the punchline to BE the slide. "
+            "Center band, 60pt centered, full slide width, no autofit."
+        ),
+        "shape_edits": [
+            {
+                "by_ph": ("title", None),
+                "xfrm": {"off_x": -83050, "off_y": 1934828,
+                         "ext_cx": 9144000, "ext_cy": 1273844},
+                "body_pr": {"auto_fit_kind": "noAutofit"},
+                "lvl1_ppr": {"algn": "ctr"},
+                "def_rpr": {"sz": 6000},
+            },
+        ],
+    },
+
+    # --- two_column_compare -------------------------------------------------
+    # Source has the columns squished into the bottom half. Adam's fix
+    # shrinks the decorative top banner from 2.7" to 0.9" tall and stretches
+    # both columns to full vertical extent — proper before/after comparison.
+    "two_column_compare": {
+        "rationale": (
+            "Source layout had columns occupying only the bottom half of "
+            "the slide; the decorative banner ate the top. Both columns "
+            "need full height for substantive comparison content."
+        ),
+        "shape_edits": [
+            # Decorative top banner — shrink to a normal header strip
+            {
+                "by_shape_index": 0,
+                "xfrm": {"off_x": -3000, "off_y": 0,
+                         "ext_cx": 9150000, "ext_cy": 832919},
+            },
+            # Left column body — move up and stretch
+            {
+                "by_ph": ("body", "1"),
+                "xfrm": {"off_x": 112523, "off_y": 981671,
+                         "ext_cx": 4386578, "ext_cy": 3479572},
+            },
+            # Right column body — move up and stretch
+            {
+                "by_ph": ("body", "2"),
+                "xfrm": {"off_x": 4572000, "off_y": 981670,
+                         "ext_cx": 4488950, "ext_cy": 3479572},
+            },
+        ],
+    },
+
+    # --- concept_illustration -----------------------------------------------
+    # Adam's edits: pull a hidden decorative shape onto the slide edge, and
+    # narrow the body so an AI-generated image has room beside it.
+    "concept_illustration": {
+        "rationale": (
+            "AI-generated illustration slides need a visible visual anchor "
+            "beside the title text. The source layout had a decorative shape "
+            "hidden far off-screen; pulling it to the edge frames the body."
+        ),
+        "shape_edits": [
+            # Hidden decorative shape — pull to slide edge
+            {
+                "by_shape_index": 0,
+                "xfrm": {"off_x": -3, "off_y": 0,
+                         "ext_cx": 9144003, "ext_cy": 5143501},
+            },
+            # Body placeholder — narrow to leave room for image on right
+            {
+                "by_ph": ("body", "1"),
+                "xfrm": {"off_x": 311700, "off_y": 1185250,
+                         "ext_cx": 4405155, "ext_cy": 3383700},
+            },
+        ],
+    },
+
+    # Other layouts may accumulate fixes here as visual review surfaces
+    # issues. Keep each fix small and explicit — never a "while we're at
+    # it" sweep.
 }
 
 
@@ -312,79 +418,144 @@ def _drop_master_ref_from_presentation_element(pres_element, master_rid: str) ->
     return n
 
 
-def _apply_big_number_fix(layout_element, fix: dict) -> None:
-    """Apply Adam's 2026-04-26 fix to the big_number layout.
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
-    Operates on the lxml element of a slideLayout XML, in place.
-    Fix targets the title placeholder (idx 0).
 
-    See LAYOUT_FIXES['big_number'] for rationale.
+def _drawables_in_sptree(layout_element):
+    """Yield drawable children of <p:cSld>/<p:spTree> in document order.
+    Drawable = <p:sp>, <p:pic>, <p:grpSp> (group shape), <p:graphicFrame>.
     """
-    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
-    p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    sptree = layout_element.find(f".//{{{P_NS}}}cSld/{{{P_NS}}}spTree")
+    if sptree is None:
+        return
+    drawable_locals = {"sp", "pic", "grpSp", "graphicFrame"}
+    for child in sptree:
+        local = etree.QName(child).localname
+        if local in drawable_locals:
+            yield child
 
-    # Find the TITLE placeholder shape (idx 0 by convention; falls back to
-    # first <p:sp> with <p:ph type="title">).
-    title_sp = None
-    for sp in layout_element.iter(f"{{{p_ns}}}sp"):
-        ph = sp.find(f".//{{{p_ns}}}nvSpPr/{{{p_ns}}}nvPr/{{{p_ns}}}ph")
-        if ph is None:
-            continue
-        if ph.get("type") == "title" or ph.get("idx", "0") == "0":
-            title_sp = sp
-            break
-    if title_sp is None:
-        raise ValueError("big_number layout: TITLE placeholder not found")
 
-    # 1. Title position + size: <a:xfrm><a:off/><a:ext/></a:xfrm>
-    xfrm = title_sp.find(f".//{{{a_ns}}}xfrm")
+def _find_target_shape(layout_element, shape_edit: dict):
+    """Resolve a shape_edit's target to a drawable element.
+
+    Targeting modes:
+      {"by_ph": ("title", None)}   — first <p:sp> whose ph.type=="title"
+      {"by_ph": ("body", "1")}     — first <p:sp> whose ph.type=="body" and idx=="1"
+      {"by_shape_index": N}        — Nth drawable in spTree document order
+                                     (covers <p:sp>, <p:pic>, <p:grpSp>,
+                                     <p:graphicFrame>)
+
+    Returns the element. Raises ValueError if not found.
+    """
+    if "by_ph" in shape_edit:
+        # Placeholder lookup is meaningful only for <p:sp> (placeholders live
+        # in <p:nvSpPr>/<p:nvPr>/<p:ph>, which only sp elements have).
+        ph_type, ph_idx = shape_edit["by_ph"]
+        for sp in layout_element.iter(f"{{{P_NS}}}sp"):
+            ph = sp.find(f".//{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+            if ph is None:
+                continue
+            this_type = ph.get("type", "body")
+            this_idx = ph.get("idx", "0")
+            if ph_type == "title":
+                # 'title' placeholder may be type="title" or "ctrTitle";
+                # also a placeholder with idx==0 implicitly.
+                if this_type == "title" or this_type == "ctrTitle" or this_idx == "0":
+                    return sp
+            else:
+                if this_type == ph_type and (ph_idx is None or this_idx == ph_idx):
+                    return sp
+        raise ValueError(f"target placeholder not found: by_ph={shape_edit['by_ph']}")
+
+    if "by_shape_index" in shape_edit:
+        n = shape_edit["by_shape_index"]
+        drawables = list(_drawables_in_sptree(layout_element))
+        if n >= len(drawables):
+            raise ValueError(
+                f"by_shape_index={n} out of range; layout has {len(drawables)} drawables"
+            )
+        return drawables[n]
+
+    raise ValueError(f"shape_edit has no target spec (by_ph or by_shape_index): {shape_edit}")
+
+
+def _apply_xfrm_change(sp, xfrm_change: dict) -> None:
+    """Apply position/size changes to a shape's <a:xfrm>."""
+    xfrm = sp.find(f".//{{{A_NS}}}xfrm")
     if xfrm is None:
-        raise ValueError("big_number TITLE has no <a:xfrm>")
-    off = xfrm.find(f"{{{a_ns}}}off")
-    ext = xfrm.find(f"{{{a_ns}}}ext")
+        raise ValueError("shape has no <a:xfrm> (inherits from master); "
+                         "cannot apply absolute position via build_master")
+    off = xfrm.find(f"{{{A_NS}}}off")
+    ext = xfrm.find(f"{{{A_NS}}}ext")
     if off is None or ext is None:
-        raise ValueError("big_number TITLE <a:xfrm> missing <a:off> or <a:ext>")
-    title_xfrm = fix["title_xfrm"]
-    off.set("x", str(title_xfrm["off_x"]))
-    off.set("y", str(title_xfrm["off_y"]))
-    ext.set("cx", str(title_xfrm["ext_cx"]))
-    ext.set("cy", str(title_xfrm["ext_cy"]))
+        raise ValueError("<a:xfrm> missing <a:off> or <a:ext>")
+    if "off_x" in xfrm_change:
+        off.set("x", str(xfrm_change["off_x"]))
+    if "off_y" in xfrm_change:
+        off.set("y", str(xfrm_change["off_y"]))
+    if "ext_cx" in xfrm_change:
+        ext.set("cx", str(xfrm_change["ext_cx"]))
+    if "ext_cy" in xfrm_change:
+        ext.set("cy", str(xfrm_change["ext_cy"]))
 
-    # 2. Title body anchor + autofit: <p:txBody><a:bodyPr anchor="ctr">
-    #    Replace child <a:normAutofit/> with <a:noAutofit/>.
-    body_pr = title_sp.find(f".//{{{p_ns}}}txBody/{{{a_ns}}}bodyPr")
+
+def _apply_body_pr_change(sp, body_pr_change: dict) -> None:
+    """Apply anchor / auto-fit changes to <p:txBody><a:bodyPr>."""
+    body_pr = sp.find(f".//{{{P_NS}}}txBody/{{{A_NS}}}bodyPr")
     if body_pr is None:
-        raise ValueError("big_number TITLE <p:txBody> missing <a:bodyPr>")
-    body_pr.set("anchor", fix["title_body_pr"]["anchor"])
+        raise ValueError("shape has no <p:txBody>/<a:bodyPr>")
+    if "anchor" in body_pr_change:
+        body_pr.set("anchor", body_pr_change["anchor"])
+    if "auto_fit_kind" in body_pr_change:
+        # Remove any existing autofit child(ren), then add the requested one.
+        for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+            for child in list(body_pr):
+                if child.tag == f"{{{A_NS}}}{tag}":
+                    body_pr.remove(child)
+        new_child = etree.SubElement(body_pr, f"{{{A_NS}}}{body_pr_change['auto_fit_kind']}")
 
-    # remove existing autofit child(ren)
-    for tag in ("normAutofit", "noAutofit", "spAutoFit"):
-        for child in list(body_pr):
-            if child.tag == f"{{{a_ns}}}{tag}":
-                body_pr.remove(child)
-    # add <a:noAutofit/>
-    body_pr.append(etree.SubElement(body_pr, f"{{{a_ns}}}{fix['title_body_pr']['auto_fit_kind']}"))
-    # the SubElement helper appends already; remove duplicate (defensive)
-    children = body_pr.findall(f"{{{a_ns}}}{fix['title_body_pr']['auto_fit_kind']}")
-    for extra in children[1:]:
-        body_pr.remove(extra)
 
-    # 3. lvl1pPr alignment: <a:lstStyle><a:lvl1pPr algn="ctr">
-    lst_style = title_sp.find(f".//{{{p_ns}}}txBody/{{{a_ns}}}lstStyle")
+def _apply_lvl1_ppr_change(sp, lvl1_change: dict) -> None:
+    """Apply paragraph-level changes to <a:lstStyle><a:lvl1pPr>."""
+    lst_style = sp.find(f".//{{{P_NS}}}txBody/{{{A_NS}}}lstStyle")
     if lst_style is None:
-        raise ValueError("big_number TITLE <p:txBody> missing <a:lstStyle>")
-    lvl1 = lst_style.find(f"{{{a_ns}}}lvl1pPr")
+        raise ValueError("shape has no <p:txBody>/<a:lstStyle>")
+    lvl1 = lst_style.find(f"{{{A_NS}}}lvl1pPr")
     if lvl1 is None:
-        raise ValueError("big_number TITLE <a:lstStyle> missing <a:lvl1pPr>")
-    lvl1.set("algn", fix["title_lvl1_ppr"]["algn"])
+        raise ValueError("<a:lstStyle> missing <a:lvl1pPr>")
+    if "algn" in lvl1_change:
+        lvl1.set("algn", lvl1_change["algn"])
 
-    # 4. defRPr font size + bold: <a:lvl1pPr>...<a:defRPr sz=N b=1/>
-    def_rpr = lvl1.find(f"{{{a_ns}}}defRPr")
+
+def _apply_def_rpr_change(sp, def_rpr_change: dict) -> None:
+    """Apply default run-property changes (font size, bold) to <a:lvl1pPr>/<a:defRPr>."""
+    lst_style = sp.find(f".//{{{P_NS}}}txBody/{{{A_NS}}}lstStyle")
+    if lst_style is None:
+        raise ValueError("shape has no <p:txBody>/<a:lstStyle>")
+    lvl1 = lst_style.find(f"{{{A_NS}}}lvl1pPr")
+    if lvl1 is None:
+        raise ValueError("<a:lstStyle> missing <a:lvl1pPr>")
+    def_rpr = lvl1.find(f"{{{A_NS}}}defRPr")
     if def_rpr is None:
-        # create one
-        def_rpr = etree.SubElement(lvl1, f"{{{a_ns}}}defRPr")
-    def_rpr.set("sz", str(fix["title_lvl1_def_rpr"]["sz"]))
-    def_rpr.set("b", str(fix["title_lvl1_def_rpr"]["b"]))
+        def_rpr = etree.SubElement(lvl1, f"{{{A_NS}}}defRPr")
+    if "sz" in def_rpr_change:
+        def_rpr.set("sz", str(def_rpr_change["sz"]))
+    if "b" in def_rpr_change:
+        def_rpr.set("b", str(def_rpr_change["b"]))
+
+
+def _apply_shape_edit(layout_element, shape_edit: dict) -> None:
+    """Apply a single shape_edit to a layout. Mutates layout_element in place."""
+    sp = _find_target_shape(layout_element, shape_edit)
+    if "xfrm" in shape_edit:
+        _apply_xfrm_change(sp, shape_edit["xfrm"])
+    if "body_pr" in shape_edit:
+        _apply_body_pr_change(sp, shape_edit["body_pr"])
+    if "lvl1_ppr" in shape_edit:
+        _apply_lvl1_ppr_change(sp, shape_edit["lvl1_ppr"])
+    if "def_rpr" in shape_edit:
+        _apply_def_rpr_change(sp, shape_edit["def_rpr"])
 
 
 def _apply_layout_fixes(prs, verbose: bool = True) -> list[str]:
@@ -400,18 +571,18 @@ def _apply_layout_fixes(prs, verbose: bool = True) -> list[str]:
                 f"is not present in the renamed master. Check LAYOUT_RENAMES."
             )
         layout = layouts[layout_name]
-        # Each layout has its own dispatcher. Currently only big_number; add
-        # more dispatchers when LAYOUT_FIXES grows.
-        if layout_name == "big_number":
-            _apply_big_number_fix(layout.element, fix)
-        else:
-            raise NotImplementedError(
-                f"LAYOUT_FIXES['{layout_name}'] has no applier registered. "
-                f"Add a _apply_<layout_name>_fix function."
-            )
+        for shape_edit in fix["shape_edits"]:
+            try:
+                _apply_shape_edit(layout.element, shape_edit)
+            except ValueError as e:
+                raise ValueError(
+                    f"LAYOUT_FIXES['{layout_name}'] shape_edit failed: {e}\n"
+                    f"  shape_edit was: {shape_edit}"
+                ) from e
         applied.append(layout_name)
         if verbose:
-            print(f"[build_master] applied layout fix: {layout_name}")
+            print(f"[build_master] applied layout fix: {layout_name} "
+                  f"({len(fix['shape_edits'])} shape edit(s))")
     return applied
 
 
