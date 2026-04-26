@@ -533,6 +533,298 @@ def test_merge_fails_on_missing_fragment(tmp_path: Path):
            "S2_slides.json" in rc.stderr
 
 
+# ----------------------------------------------------------------------
+# Intro fragment splicing tests (added 2026-04-26 with intro architecture)
+# ----------------------------------------------------------------------
+
+def _make_intro_fragment() -> dict:
+    """Synthetic talk-30 intro fragment: 3 slides covering background,
+    goal, and approach. Mirrors the shape intro.v1.md will produce."""
+    return {
+        "schema_version": "compose-fragment.v1",
+        "kind": "intro",
+        "throughline_id": "TL1",
+        "mode": "talk-30",
+        "tier": "STRONG",
+        "n_intro_slides_target": 3,
+        "slides": [
+            {
+                "position": 0,
+                "layout": "big_idea",
+                "content": {
+                    "title": "One in four bacterial genes lacks functional annotation",
+                },
+                "speaker_notes_seed": "(seed)",
+                "evidence_anchors": [
+                    {"kind": "report_section", "ref": "REPORT.md §Finding 1"},
+                ],
+                "intro_role": "background",
+            },
+            {
+                "position": 1,
+                "layout": "claim_evidence",
+                "content": {
+                    "title": "Goal: identify experimentally actionable dark genes",
+                    "bullets": [
+                        "Score 57,011 dark genes across 48 organisms",
+                        "Validate via cross-organism conservation",
+                        "Produce a tractable RB-TnSeq experimental roadmap",
+                    ],
+                },
+                "speaker_notes_seed": "(seed)",
+                "evidence_anchors": [
+                    {"kind": "report_section", "ref": "RESEARCH_PLAN.md §H1"},
+                ],
+                "intro_role": "goal",
+            },
+            {
+                "position": 2,
+                "layout": "methods_summary",
+                "content": {
+                    "title": "Approach: 3 evidence streams converge",
+                    "bullets": [
+                        "Census via fitness-effect distributions",
+                        "Cross-organism conservation via 65 ortholog groups",
+                        "Set-cover optimization across 47 RB-TnSeq libraries",
+                        "Multi-dimensional scoring across 6 evidence axes",
+                        "Pre-registered hypothesis testing with FDR correction",
+                    ],
+                },
+                "speaker_notes_seed": "(seed)",
+                "evidence_anchors": [
+                    {"kind": "report_section", "ref": "REPORT.md §Methods"},
+                ],
+                "intro_role": "approach",
+            },
+        ],
+    }
+
+
+def test_merge_splices_intro_slides_between_title_and_S1(tmp_path: Path):
+    """End-to-end: title (1) → intro × 3 (2,3,4) → S1 div+content (5,6) →
+    S2 div+content (7,8) → ack (9) → ref (10) = 10 slides."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+
+    (outdir / "00_throughline.md").write_text(
+        THROUGHLINE_MD, encoding="utf-8")
+    (outdir / "02_substories.md").write_text(
+        SUBSTORY_FIXTURE_FITS, encoding="utf-8")
+    (outdir / "03_slides" / "S1_slides.json").write_text(
+        json.dumps(_make_fragment_S1()), encoding="utf-8")
+    (outdir / "03_slides" / "S2_slides.json").write_text(
+        json.dumps(_make_fragment_S2()), encoding="utf-8")
+    intro_path = outdir / "03_slides" / "intro.json"
+    intro_path.write_text(json.dumps(_make_intro_fragment()), encoding="utf-8")
+
+    out_path = outdir / "slide_spec.json"
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "merge_compose_fragments.py"),
+         "--outdir", str(outdir),
+         "--project-id", "functional_dark_matter",
+         "--mode", "talk-30",
+         "--tier", "STRONG",
+         "--audience", "peer",
+         "--throughline-path", str(outdir / "00_throughline.md"),
+         "--substory-path", str(outdir / "02_substories.md"),
+         "--fragments-dir", str(outdir / "03_slides"),
+         "--intro-fragment-path", str(intro_path),
+         "--out", str(out_path)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+
+    spec = json.loads(out_path.read_text())
+
+    # Slide ordering: title (1), intro × 3 (2,3,4), S1 div+content (5,6),
+    # S2 div+content (7,8), ack (9), ref (10) = 10 slides.
+    slides = spec["slides"]
+    assert len(slides) == 10
+
+    assert slides[0]["layout"] == "title"
+    assert slides[0]["id"] == 1
+
+    # Intro slides at positions 1-3 (ids 2-4); no substory_id;
+    # intro_role stripped (orchestrator metadata not in slide_spec).
+    assert slides[1]["layout"] == "big_idea"
+    assert slides[1]["id"] == 2
+    assert "substory_id" not in slides[1]
+    assert "intro_role" not in slides[1]
+
+    assert slides[2]["layout"] == "claim_evidence"
+    assert slides[2]["id"] == 3
+    assert "substory_id" not in slides[2]
+
+    assert slides[3]["layout"] == "methods_summary"
+    assert slides[3]["id"] == 4
+
+    # S1 starts at slide id=5, S2 starts at id=7
+    assert slides[4]["layout"] == "section_divider"
+    assert slides[4]["substory_id"] == "S1"
+    assert slides[4]["id"] == 5
+
+    assert slides[6]["layout"] == "section_divider"
+    assert slides[6]["substory_id"] == "S2"
+    assert slides[6]["id"] == 7
+
+    assert slides[8]["layout"] == "acknowledgments"
+    assert slides[9]["layout"] == "references"
+
+    # Substory slide_ids correctly track the post-intro IDs
+    s1 = next(s for s in spec["substories"] if s["id"] == "S1")
+    s2 = next(s for s in spec["substories"] if s["id"] == "S2")
+    assert s1["slide_ids"] == [5, 6]
+    assert s2["slide_ids"] == [7, 8]
+
+    # Validate against slide_spec contract
+    issues = slide_spec.validate_slide_spec(spec)
+    assert issues == [], (
+        "merged spec must validate; got:\n  "
+        + "\n  ".join(i.format() for i in issues)
+    )
+
+
+def test_merge_handles_empty_intro_fragment_lightning_mode(tmp_path: Path):
+    """Lightning-5 / poster modes emit empty intro fragment;
+    merge should produce no intro slides (deck = title + substories +
+    ack + ref)."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+
+    (outdir / "00_throughline.md").write_text(
+        THROUGHLINE_MD, encoding="utf-8")
+    (outdir / "02_substories.md").write_text(
+        SUBSTORY_FIXTURE_FITS, encoding="utf-8")
+    (outdir / "03_slides" / "S1_slides.json").write_text(
+        json.dumps(_make_fragment_S1()), encoding="utf-8")
+    (outdir / "03_slides" / "S2_slides.json").write_text(
+        json.dumps(_make_fragment_S2()), encoding="utf-8")
+
+    # Empty intro fragment (lightning-5 / poster shape)
+    empty_intro = {
+        "schema_version": "compose-fragment.v1",
+        "kind": "intro",
+        "mode": "lightning-5",
+        "tier": "STRONG",
+        "n_intro_slides_target": 0,
+        "slides": [],
+    }
+    intro_path = outdir / "03_slides" / "intro.json"
+    intro_path.write_text(json.dumps(empty_intro), encoding="utf-8")
+
+    out_path = outdir / "slide_spec.json"
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "merge_compose_fragments.py"),
+         "--outdir", str(outdir),
+         "--project-id", "functional_dark_matter",
+         "--mode", "talk-30",  # talk-30 here just to get past validation
+         "--tier", "STRONG",
+         "--audience", "peer",
+         "--throughline-path", str(outdir / "00_throughline.md"),
+         "--substory-path", str(outdir / "02_substories.md"),
+         "--fragments-dir", str(outdir / "03_slides"),
+         "--intro-fragment-path", str(intro_path),
+         "--out", str(out_path)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+
+    spec = json.loads(out_path.read_text())
+
+    # 7 slides: title, S1 div, S1 content, S2 div, S2 content, ack, ref
+    assert len(spec["slides"]) == 7
+    assert spec["slides"][0]["layout"] == "title"
+    assert spec["slides"][1]["layout"] == "section_divider"
+    assert spec["slides"][1]["substory_id"] == "S1"
+
+
+def test_merge_handles_missing_intro_fragment_path(tmp_path: Path):
+    """If --intro-fragment-path is not passed, merge proceeds as if
+    no intro stage ran. Smoke pre-intro behavior preserved."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+
+    (outdir / "00_throughline.md").write_text(
+        THROUGHLINE_MD, encoding="utf-8")
+    (outdir / "02_substories.md").write_text(
+        SUBSTORY_FIXTURE_FITS, encoding="utf-8")
+    (outdir / "03_slides" / "S1_slides.json").write_text(
+        json.dumps(_make_fragment_S1()), encoding="utf-8")
+    (outdir / "03_slides" / "S2_slides.json").write_text(
+        json.dumps(_make_fragment_S2()), encoding="utf-8")
+
+    out_path = outdir / "slide_spec.json"
+
+    # No --intro-fragment-path
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "merge_compose_fragments.py"),
+         "--outdir", str(outdir),
+         "--project-id", "functional_dark_matter",
+         "--mode", "talk-30",
+         "--tier", "STRONG",
+         "--audience", "peer",
+         "--throughline-path", str(outdir / "00_throughline.md"),
+         "--substory-path", str(outdir / "02_substories.md"),
+         "--fragments-dir", str(outdir / "03_slides"),
+         "--out", str(out_path)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+
+    spec = json.loads(out_path.read_text())
+    assert len(spec["slides"]) == 7  # original behavior preserved
+
+
+def test_merge_handles_malformed_intro_fragment(tmp_path: Path):
+    """Malformed intro JSON should warn and proceed without intro,
+    not crash the whole merge."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+
+    (outdir / "00_throughline.md").write_text(
+        THROUGHLINE_MD, encoding="utf-8")
+    (outdir / "02_substories.md").write_text(
+        SUBSTORY_FIXTURE_FITS, encoding="utf-8")
+    (outdir / "03_slides" / "S1_slides.json").write_text(
+        json.dumps(_make_fragment_S1()), encoding="utf-8")
+    (outdir / "03_slides" / "S2_slides.json").write_text(
+        json.dumps(_make_fragment_S2()), encoding="utf-8")
+
+    # Malformed intro
+    intro_path = outdir / "03_slides" / "intro.json"
+    intro_path.write_text("{ this is not valid JSON",
+                          encoding="utf-8")
+
+    out_path = outdir / "slide_spec.json"
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "merge_compose_fragments.py"),
+         "--outdir", str(outdir),
+         "--project-id", "functional_dark_matter",
+         "--mode", "talk-30",
+         "--tier", "STRONG",
+         "--audience", "peer",
+         "--throughline-path", str(outdir / "00_throughline.md"),
+         "--substory-path", str(outdir / "02_substories.md"),
+         "--fragments-dir", str(outdir / "03_slides"),
+         "--intro-fragment-path", str(intro_path),
+         "--out", str(out_path)],
+        capture_output=True, text=True,
+    )
+    # Should succeed (warn + proceed without intro), not fail
+    assert rc.returncode == 0, rc.stderr
+    assert "Warning" in rc.stderr or "warning" in rc.stderr
+
+    spec = json.loads(out_path.read_text())
+    assert len(spec["slides"]) == 7  # no intro slices, original 7 slides
+
+
 def test_merge_fails_on_bad_throughline(tmp_path: Path):
     outdir = tmp_path / "draft_1"
     outdir.mkdir()

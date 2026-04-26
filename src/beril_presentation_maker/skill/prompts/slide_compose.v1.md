@@ -75,6 +75,29 @@ After writing, you respond with the closing-message template
     },
     {
       "position": 1,
+      "layout": "methods_summary",
+      "content": {
+        "title": "Methods: inner-loop annotation refinement against Morgan Price gold standard",
+        "bullets": [
+          "Quality-trimmed reads with fastp v0.23 (Q20)",
+          "Initial annotation pass with RAST 2.0 (default parameters)",
+          "Iterative refinement applying biosynthesis priors (3 passes)",
+          "Cross-validation against Morgan Price 2022 curated set (n=142 biosynthesis loci)",
+          "Recovery rate computed as fraction of gold-standard loci correctly annotated"
+        ],
+        "tools_versions": [
+          {"tool": "RAST", "version": "2.0"},
+          {"tool": "fastp", "version": "0.23"}
+        ]
+      },
+      "speaker_notes_seed": "{seed text}",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §3.1 Methods"},
+        {"kind": "notebook", "ref": "notebooks/02-annotation.ipynb cells 1-12"}
+      ]
+    },
+    {
+      "position": 2,
       "layout": "claim_evidence",
       "content": {
         "title": "RAST one-shot misses 23% of biosynthesis genes in DvH",
@@ -205,14 +228,26 @@ Every substory composition must hit, in order:
 
 1. **The divider** — punchline-as-title; substory_number set to the
    substory's ordinal.
-2. **A primary claim slide** — usually `claim_evidence` or
+2. **A methods/approach slide (MANDATORY at position 1)** — frames
+   *how* this substory's evidence was generated before the audience
+   sees the result. Pick layout from `{methods_summary,
+   workflow_diagram, two_column_compare}` based on evidence shape:
+   `methods_summary` for 5–10-bullet method beats with tools and
+   versions; `workflow_diagram` for procedural sequences ≥3 steps;
+   `two_column_compare` when comparing two methodological choices
+   (e.g., one-shot vs. iterative). Without this slide the audience
+   hits results before they know what was measured. The methods
+   slide counts toward the substory's content budget — it is one of
+   the per-substory content slides, not extra.
+3. **A primary claim slide** — usually `claim_evidence` or
    `big_number` or `data_figure`, depending on evidence shape.
-3. **One or more support slides** — back the primary claim with
-   complementary evidence (figure, comparison, methods callout).
-4. **Optional bridge slide** — `concept_illustration` or
+4. **One or more support slides** — back the primary claim with
+   complementary evidence (figure, comparison, additional methods
+   callout if needed).
+5. **Optional bridge slide** — `concept_illustration` or
    `two_column_compare` if a conceptual frame helps the audience
    parse the evidence; skip for tight modes.
-5. **Optional limitations callout** — if the substory's analyses
+6. **Optional limitations callout** — if the substory's analyses
    include ⚠ partial or ✗ contradicted entries from the plan
    inventory, surface that limitation honestly. Do not silently
    omit ✗ entries — either include the limitation or escalate the
@@ -528,6 +563,14 @@ evidence is the answer field).
 - **PA-9: Speaker-notes overreach.** Filling the seed with polished
   narrative. The seed is raw source material for `speaker_notes.v1`
   to expand; don't pre-empt that prompt.
+- **PA-10: Skipping the methods slot.** Substory slides go
+  `divider → claim_evidence` directly, skipping the mandatory
+  methods/approach slide at position 1. The audience hits results
+  without knowing what was measured. Even when the methods are
+  mentioned in the divider's punchline or the speaker notes, the
+  slide must be there — it's where audience eyes parse the method
+  before they parse the result. This is the lesson from the
+  2026-04-26 deck review.
 
 ## Self-review pass
 
@@ -538,17 +581,22 @@ Run before the `Write` step.
 1. Each slide has a valid `layout` (one of the 15 names).
 2. `slides[0].layout == "section_divider"` for talk modes;
    for `lightning-5` and posters, no section_divider.
-3. Each layout's required content fields are present and the
+3. **`slides[1].layout` is one of `methods_summary`,
+   `workflow_diagram`, or `two_column_compare`** for talk modes —
+   the mandatory methods/approach slot at position 1. (Lightning-5
+   and posters skip this — they have no divider, so the methods
+   slot collapses into the substory's evidence flow.)
+4. Each layout's required content fields are present and the
    correct types (str / list / object).
-4. `bullets` lengths match per-layout caps (claim_evidence 1–3,
+5. `bullets` lengths match per-layout caps (claim_evidence 1–3,
    methods_summary 5–10, implications 1–3, references refs_short
    1–8).
-5. `figure` and `figure_caption` co-occur (claim_evidence) — never
+6. `figure` and `figure_caption` co-occur (claim_evidence) — never
    one without the other.
-6. `concept_illustration` slides have placeholder
+7. `concept_illustration` slides have placeholder
    `image_path: "{TBD}"` and stub `provenance`; you do NOT fill in
    actual provenance (that's `ai_image_prompt.v1`).
-7. `position` values are 0..N-1 sequential without gaps.
+8. `position` values are 0..N-1 sequential without gaps.
 
 ### Silent traps (validator passes; downstream breaks)
 

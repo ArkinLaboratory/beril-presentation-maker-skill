@@ -353,7 +353,7 @@ gate_throughline_pick() {
 stage_substory_design() {
   local out="$OUTDIR/02_substories.md"
   echo "" >&2
-  echo "[Stage 3/4] substory_design" >&2
+  echo "[Stage 3/5] substory_design" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 PLAN_PATH=$OUTDIR/00_plan.md
@@ -408,10 +408,54 @@ gate_substory_overflow() {
   return 0
 }
 
+stage_intro() {
+  local out="$OUTDIR/03_slides/intro.json"
+  echo "" >&2
+  echo "[Stage 4/5] intro" >&2
+
+  # Mode-aware short-circuit: lightning-5 and posters skip intro entirely.
+  # Still emit a fragment with empty slides[] so the merge step has a
+  # consistent input. The prompt itself handles this case, but emitting
+  # the fragment from the orchestrator side avoids paying for an LLM
+  # call when we know the answer (lightning/poster modes always emit 0
+  # intro slides per intro.v1.md's mode-aware framing).
+  if [[ "$MODE" == "lightning-5" || "$MODE" == "poster-h" || "$MODE" == "poster-v" ]]; then
+    echo "  mode=$MODE has zero intro slide budget — emitting empty fragment" >&2
+    cat > "$out" <<EOF
+{
+  "schema_version": "compose-fragment.v1",
+  "kind": "intro",
+  "mode": "$MODE",
+  "tier": "$TIER",
+  "n_intro_slides_target": 0,
+  "slides": []
+}
+EOF
+    return 0
+  fi
+
+  local user_prompt="OUT_PATH=$out
+PROJECT_DIR=$PROJECT_DIR
+PLAN_PATH=$OUTDIR/00_plan.md
+THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+SUBSTORY_PATH=$OUTDIR/02_substories.md
+MODE=$MODE
+TIER=$TIER
+
+Run the intro stage. Read THROUGHLINE, SUBSTORIES, PLAN, and the \
+project's REPORT.md + RESEARCH_PLAN.md. Produce mode-aware intro \
+slides covering background/significance, goal, and approach overview. \
+For talk-30/45 emit 3-4 slides; for talk-15 emit 1-2. Goal must be \
+derivable from RESEARCH_PLAN; numbers verbatim from REPORT. No \
+marketing voice. Write the result to OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/intro.v1.md" "$user_prompt" "$out" "intro"
+}
+
 stage_slide_compose() {
   local substories="$OUTDIR/02_substories.md"
   echo "" >&2
-  echo "[Stage 4/4] slide_compose (per substory)" >&2
+  echo "[Stage 5/5] slide_compose (per substory)" >&2
 
   # Enumerate substory IDs from substory_design output
   local substory_ids
@@ -478,6 +522,7 @@ stage_merge_and_assemble() {
     --throughline-path "$OUTDIR/00_throughline.md" \
     --substory-path "$OUTDIR/02_substories.md" \
     --fragments-dir "$OUTDIR/03_slides" \
+    --intro-fragment-path "$OUTDIR/03_slides/intro.json" \
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
@@ -525,6 +570,7 @@ stage_throughline           || { echo "FAIL at throughline" >&2; exit 1; }
 gate_throughline_pick       || { echo "FAIL at throughline pick gate" >&2; exit 1; }
 stage_substory_design       || { echo "FAIL at substory_design" >&2; exit 1; }
 gate_substory_overflow      || { echo "FAIL at substory overflow gate" >&2; exit 1; }
+stage_intro                 || { echo "FAIL at intro" >&2; exit 1; }
 stage_slide_compose         || { echo "FAIL at slide_compose" >&2; exit 1; }
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
 

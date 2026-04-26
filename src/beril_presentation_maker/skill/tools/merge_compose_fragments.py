@@ -211,6 +211,34 @@ def build_references_slide(slide_id: int) -> dict:
     }
 
 
+def load_intro_fragment(path: Path | None) -> list[dict]:
+    """Load the intro fragment (intro.json) if present and non-empty.
+
+    Returns the list of intro slide objects (may be empty for
+    lightning-5 / posters). Returns [] if the path is None or the
+    file doesn't exist (intro stage was skipped).
+
+    Defensive against malformed JSON: logs a warning and returns []
+    rather than crashing the merge — intro is non-load-bearing in
+    smoke mode, so a parse error shouldn't break the whole pipeline.
+    """
+    if path is None or not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Warning: cannot parse intro fragment at {path}: {e}",
+              file=sys.stderr)
+        print("  proceeding without intro slides", file=sys.stderr)
+        return []
+    slides = data.get("slides", [])
+    if not isinstance(slides, list):
+        print(f"Warning: intro fragment {path} has non-list slides; "
+              f"proceeding without intro", file=sys.stderr)
+        return []
+    return slides
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--outdir", required=True)
@@ -221,6 +249,9 @@ def main() -> int:
     ap.add_argument("--throughline-path", required=True)
     ap.add_argument("--substory-path", required=True)
     ap.add_argument("--fragments-dir", required=True)
+    ap.add_argument("--intro-fragment-path", default=None,
+                    help="Optional path to intro.json (intro stage output). "
+                         "If absent or empty, no intro slides are spliced.")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -266,6 +297,10 @@ def main() -> int:
         print(f"Error loading fragments: {e}", file=sys.stderr)
         return 3
 
+    intro_path = (Path(args.intro_fragment_path)
+                  if args.intro_fragment_path else None)
+    intro_slides = load_intro_fragment(intro_path)
+
     # Build the merged slide list with global IDs.
     slides: list[dict] = []
     next_id = 1
@@ -275,7 +310,20 @@ def main() -> int:
                                     args.project_id))
     next_id += 1
 
-    # 2. Per-substory slides (in declared order)
+    # 2. Intro slides (deck-level; no substory_id; not in any substory's
+    #    slide_ids list; spliced between title and S1 divider).
+    for intro_slide in intro_slides:
+        cleaned = strip_orchestrator_metadata(intro_slide)
+        # intro slides also have an `intro_role` field that's
+        # orchestrator metadata, not in slide_spec — strip it.
+        cleaned.pop("intro_role", None)
+        cleaned["id"] = next_id
+        # Intro slides have no substory_id; clear if present (defensive)
+        cleaned.pop("substory_id", None)
+        slides.append(cleaned)
+        next_id += 1
+
+    # 3. Per-substory slides (in declared order)
     for substory in substories:
         sid = substory["id"]
         fragment = fragments[sid]
@@ -312,8 +360,9 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    print(f"  -> merged {len(slides)} slides across "
-          f"{len(substories)} substories", file=sys.stderr)
+    print(f"  -> merged {len(slides)} slides "
+          f"({len(intro_slides)} intro + per-substory across "
+          f"{len(substories)} substories)", file=sys.stderr)
     print(f"     wrote {out_path}", file=sys.stderr)
     return 0
 
