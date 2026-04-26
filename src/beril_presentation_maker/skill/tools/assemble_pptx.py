@@ -439,27 +439,31 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
 
 def _fill_workflow_diagram(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
-    # Diagram rendering is a STUB in v0.1.0-extractors-a. The full
-    # implementation lands in v0.1.0-extractors-c via diagram_render.py.
-    # For now: emit a placeholder note describing what the diagram
-    # should be, so the slide structure is preserved end-to-end.
+    # Remove the body placeholder — its region is occupied by the
+    # rendered diagram (native python-pptx shapes).
+    _remove_placeholder(slide, 1)
+    # Render the diagram via diagram_render.py (v0.1.0-extractors-c).
+    # Region: same as the body placeholder bounds, slightly inset.
     diagram = content["diagram"]
-    n_nodes = len(diagram.get("nodes", []))
-    n_edges = len(diagram.get("edges", []))
-    placeholder_text = (
-        f"[diagram placeholder — kind={diagram.get('kind')}, "
-        f"{n_nodes} nodes, {n_edges} edges; "
-        f"render lands in v0.1.0-extractors-c]"
-    )
-    _set_placeholder_bullets(slide, 1, [placeholder_text])
-    warnings.append(
-        f"workflow_diagram on slide id={slide.slide_id}: diagram "
-        f"rendering stubbed (v0.1.0-extractors-a). Full render in "
-        f"v0.1.0-extractors-c."
-    )
+    try:
+        from importlib import util as _util
+        _spec = _util.spec_from_file_location(
+            "diagram_render", _THIS_DIR / "diagram_render.py")
+        _dr = _util.module_from_spec(_spec)
+        _spec.loader.exec_module(_dr)
+        # Diagram region: most of the body, leaving room for step caption + footer.
+        region = (0.50, 1.30, 9.00, 3.10)
+        # Brand tokens for color resolution
+        tokens = _dr.load_brand_tokens()
+        _dr.render_diagram(slide, diagram, region, tokens)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(
+            f"workflow_diagram on slide id={getattr(slide, 'slide_id', '?')}: "
+            f"diagram render failed ({e}); slide will lack the diagram."
+        )
     # Step caption band below
     captions = content["step_caption"]
-    _add_textbox(slide, "  ".join(captions), *CAPTION_BAND,
+    _add_textbox(slide, "  ".join(captions), 0.50, 4.55, 9.00, 0.30,
                  font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB)
     if content.get("tool_version_footer"):
         _add_textbox(slide, content["tool_version_footer"],
@@ -608,6 +612,76 @@ LAYOUT_HANDLERS = {
 # Top-level assemble entry point
 # ---------------------------------------------------------------------------
 
+def _build_poster_spec_from_slide_spec(spec: dict, draft_dir: Path):
+    """Map a slide_spec.json (in poster mode) to a PosterSpec for poster_fill.
+    Walks the slide list and pulls the relevant content fields.
+    """
+    from importlib import util as _util
+    _spec = _util.spec_from_file_location("poster_fill", _THIS_DIR / "poster_fill.py")
+    _pf = _util.module_from_spec(_spec)
+    _spec.loader.exec_module(_pf)
+
+    title = ""
+    authors = ""
+    affiliation = ""
+    tl_dr = spec.get("throughline", {}).get("punchline", "") or ""
+    methods_summary: list[str] = []
+    figures: list[_pf.PosterFigure] = []
+    cross_tenant_summary = ""
+    implications: list[str] = []
+    references_short: list[str] = []
+    acknowledgments = ""
+    funding = ""
+
+    for slide in spec.get("slides", []):
+        layout = slide.get("layout")
+        content = slide.get("content", {}) or {}
+        if layout == "title":
+            title = content.get("title", "")
+            authors = content.get("presenter", "")
+            affiliation = content.get("affiliation", "")
+        elif layout == "methods_summary":
+            methods_summary = list(content.get("bullets", []) or [])
+        elif layout in ("data_figure", "claim_evidence", "concept_illustration"):
+            for key in ("figure", "image_path", "supporting_graphic"):
+                if key in content and content[key]:
+                    cap = (content.get("figure_caption")
+                           or content.get("caption")
+                           or "")
+                    figures.append(_pf.PosterFigure(path=content[key],
+                                                    caption=cap))
+                    break
+        elif layout == "cross_tenant_integration":
+            parts = []
+            if content.get("tenant_list"):
+                parts.append(f"Tenants: {', '.join(content['tenant_list'])}")
+            if content.get("kberdl_db_list"):
+                parts.append(f"DBs: {', '.join(content['kberdl_db_list'])}")
+            if content.get("sibling_project_refs"):
+                refs = ", ".join(r["project_id"] for r in content["sibling_project_refs"])
+                parts.append(f"Sibling projects: {refs}")
+            if not parts and content.get("no_signal_fallback"):
+                parts.append("All data sourced from a single tenant; no cross-tenant integration.")
+            cross_tenant_summary = "; ".join(parts) if parts else (content.get("title", ""))
+        elif layout == "implications":
+            implications = [b.get("claim", "") if isinstance(b, dict) else str(b)
+                            for b in content.get("bullets", []) or []]
+        elif layout == "references":
+            references_short = list(content.get("refs_short", []) or [])
+        elif layout == "acknowledgments":
+            ack_parts = list(content.get("contributors", []) or [])
+            acknowledgments = " · ".join(ack_parts)
+            funding = content.get("tenant_attribution", "") or ""
+
+    return _pf, _pf.PosterSpec(
+        title=title, authors=authors, affiliation=affiliation,
+        tl_dr=tl_dr, methods_summary=methods_summary, figures=figures[:4],
+        cross_tenant_summary=cross_tenant_summary,
+        implications=implications, references_short=references_short,
+        acknowledgments=acknowledgments, funding=funding,
+    )
+
+
 def assemble(slide_spec_path: str | Path,
              out_path: str | Path,
              *,
@@ -647,7 +721,28 @@ def assemble(slide_spec_path: str | Path,
             + ("\n  ..." if len(issues) > 20 else "")
         )
 
-    # Master
+    # Poster mode dispatches to poster_fill (separate render path per
+    # SPEC §12 / D-013). Posters skip the slide-by-slide handler loop.
+    mode = spec.get("mode", "")
+    if mode in ("poster-h", "poster-v"):
+        pf_module, poster_spec = _build_poster_spec_from_slide_spec(
+            spec, slide_spec_path.parent)
+        orientation = "horizontal" if mode == "poster-h" else "vertical"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            pf_module.fill_poster(
+                poster_spec, out_path,
+                orientation=orientation,
+                draft_dir=slide_spec_path.parent,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            raise AssemblyError(f"poster_fill failed: {e}") from e
+        return AssemblyResult(
+            out_path=out_path, n_slides=1,
+            warnings=[],
+        )
+
+    # Master (talk modes)
     master = Path(master_path) if master_path else default_master_path()
     if not master.is_file():
         raise AssemblyError(f"master template not found: {master}")
