@@ -175,6 +175,29 @@ def _set_placeholder_bullets(slide, idx: int, bullets: list[str]) -> bool:
     return True
 
 
+def _remove_placeholder(slide, idx: int) -> bool:
+    """Remove a placeholder from the slide entirely (not just clear its text).
+
+    Setting `ph.text = ""` does NOT suppress an empty placeholder's "Click to
+    add text" prompt in PowerPoint — the prompt is layout-defined and shows
+    whenever the placeholder shape is on the slide. The only reliable way
+    to hide it is to remove the placeholder element from the slide's spTree.
+
+    Returns True if a placeholder with the given idx was removed, False if
+    none was found.
+
+    Use this for layouts where the body placeholder's region is occupied by
+    a freeform figure (data_figure, concept_illustration) — the placeholder
+    serves no purpose and its empty prompt visually overlaps the figure.
+    """
+    ph = _find_placeholder(slide, idx)
+    if ph is None:
+        return False
+    sptree = slide.shapes._spTree
+    sptree.remove(ph._element)
+    return True
+
+
 def _set_speaker_notes(slide, text: str) -> None:
     if not text:
         return
@@ -223,14 +246,21 @@ def _add_textbox(slide, text: str,
 # region beyond placeholders). Inches.
 # ---------------------------------------------------------------------------
 
-# Slide is 10.0 × 5.625 inches (16:9). Coordinates put figures in the right
-# half (claim_evidence, big_idea, concept_illustration) or main body
-# (data_figure).
+# Slide is 10.0 × 5.625 inches (16:9). Logos sit at y=5.00–5.55 (bottom-
+# right) so figure regions stay clear of that band. Body placeholders are
+# removed via _remove_placeholder for layouts where the body region is
+# occupied by a freeform figure — the placeholder's "Click to add text"
+# prompt would otherwise show through.
 FIGURE_REGIONS = {
-    "claim_evidence":       (5.30, 1.30, 4.50, 3.50),  # right side
-    "big_idea":             (6.50, 2.50, 3.20, 2.50),  # lower-right
-    "data_figure":          (1.00, 1.20, 8.00, 3.50),  # main body
-    "concept_illustration": (5.10, 1.20, 4.70, 3.50),  # right side
+    # Bullets in body placeholder (full width); figure right-side overlay.
+    "claim_evidence":       (5.30, 1.30, 4.50, 3.50),
+    # Title is in the accent banner (round 3); supporting graphic fills
+    # the body area below banner, ABOVE the logos at y=5.00.
+    "big_idea":             (1.00, 1.10, 8.00, 3.85),
+    # Body placeholder removed; figure fills former body region.
+    "data_figure":          (0.50, 1.40, 9.00, 3.10),
+    # Body placeholder removed; image on the right of the slide.
+    "concept_illustration": (5.30, 1.30, 4.50, 3.70),
 }
 
 # Caption/footer regions (overlaid on slide)
@@ -388,15 +418,22 @@ def _fill_two_column_compare(slide, content, draft_dir, warnings):
 
 def _fill_data_figure(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
+    # Remove the body placeholder entirely — the body region is occupied
+    # by the freeform figure + caption + data_source. Setting ph.text = ""
+    # is insufficient: the layout-defined "Click to add text" prompt
+    # still shows in PowerPoint when the placeholder is present.
+    _remove_placeholder(slide, 1)
     path = _resolve_asset_path(content["figure"], draft_dir, warnings,
                                 "data_figure.figure")
     if path:
         _add_picture(slide, path, *FIGURE_REGIONS["data_figure"])
-    _add_textbox(slide, content["caption"], *CAPTION_BAND,
+    # Caption + data source go in the body region just below the figure,
+    # above the bottom logos at y=5.00.
+    _add_textbox(slide, content["caption"], 0.50, 4.55, 9.00, 0.30,
                  font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB)
     if content.get("data_source"):
         _add_textbox(slide, content["data_source"],
-                     0.30, 5.30, 9.40, 0.20,
+                     0.50, 4.85, 9.00, 0.13,
                      font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
 
 
@@ -442,13 +479,18 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
 
 def _fill_concept_illustration(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
+    # The body placeholder on the left is narrowed (per Adam's
+    # build_master fix) but v0.1 schema has no body-text field for this
+    # layout — remove the placeholder so its empty prompt doesn't show
+    # alongside the AI-generated image.
+    _remove_placeholder(slide, 1)
     path = _resolve_asset_path(content["image_path"], draft_dir, warnings,
                                 "concept_illustration.image_path")
     if path:
         _add_picture(slide, path, *FIGURE_REGIONS["concept_illustration"])
     if content.get("caption"):
         _add_textbox(slide, content["caption"],
-                     5.10, 4.75, 4.70, 0.30,
+                     5.30, 5.05, 4.50, 0.25,
                      font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB)
     if content.get("ai_disclosure_footer", True):
         _add_textbox(slide, "AI-generated illustration", *AI_DISCLOSURE_BAND,

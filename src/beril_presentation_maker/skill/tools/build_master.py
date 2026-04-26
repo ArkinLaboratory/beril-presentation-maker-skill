@@ -147,20 +147,33 @@ LAYOUT_FIXES: dict[str, dict] = {
     },
 
     # --- big_idea -----------------------------------------------------------
-    # Title moves down (out of the top header) and gets explicit 36pt + no
-    # autofit so the sentence doesn't auto-shrink. Adam's edit 2026-04-26.
+    # Round 1 (2026-04-26): title repositioned + 36pt + noAutofit.
+    # Round 2 (2026-04-26 visual review): banner shrunk so the content area
+    # has room.
+    # Round 3 (2026-04-26 visual review): title was supposed to BE IN the
+    # accent region (banner). Adam's original y=0.72 made sense in the
+    # 2.69" banner; with the 0.91" banner the title needs y=0.16 to land
+    # inside the accent. Below-banner title was wrong design.
     "big_idea": {
         "rationale": (
-            "The single-sentence claim must read like a thesis statement, "
-            "not a slide title. Position lower-center, fix at 36pt, disable "
-            "autofit so long sentences don't shrink to invisibility."
+            "The single-sentence claim sits inside the accent banner — "
+            "title-on-color treatment, like the source intent. Banner "
+            "shrunk to 0.91\" so the body area below is available for a "
+            "supporting graphic."
         ),
         "shape_edits": [
+            # Banner: shrink from 2.69" to 0.91" (rev2 — Adam visual review)
+            {
+                "by_kind_index": ("sp", 0),
+                "xfrm": {"off_x": -3000, "off_y": 0,
+                         "ext_cx": 9150000, "ext_cy": 832919},
+            },
+            # Title: in the accent banner (y=0.16 fits inside 0.91" banner)
             {
                 "by_ph": ("title", None),
-                "xfrm": {"off_x": 139684, "off_y": 658650,
-                         "ext_cx": 8520600, "ext_cy": 572700},
-                "body_pr": {"auto_fit_kind": "noAutofit"},
+                "xfrm": {"off_x": 137160, "off_y": 146304,
+                         "ext_cx": 8522208, "ext_cy": 576072},
+                "body_pr": {"anchor": "ctr", "auto_fit_kind": "noAutofit"},
                 "def_rpr": {"sz": 3600},
             },
         ],
@@ -187,9 +200,15 @@ LAYOUT_FIXES: dict[str, dict] = {
     },
 
     # --- two_column_compare -------------------------------------------------
-    # Source has the columns squished into the bottom half. Adam's fix
-    # shrinks the decorative top banner from 2.7" to 0.9" tall and stretches
-    # both columns to full vertical extent — proper before/after comparison.
+    # Source has columns squished into the bottom half; banner SP is 2.7"
+    # tall (eats the top). Adam's edit shrinks the banner to 0.9" and
+    # stretches both columns to full vertical extent.
+    #
+    # BUG FIX 2026-04-26 round 2: the banner is at drawable index 2 in source
+    # (after two pic logos at indices 0–1). The original encoding used
+    # by_shape_index: 0, which moved a LOGO to the top — leaving the actual
+    # banner SP unshrunk. Switched to by_kind_index: ("sp", 0) which targets
+    # the first NON-PLACEHOLDER <p:sp> regardless of pic/sp ordering.
     "two_column_compare": {
         "rationale": (
             "Source layout had columns occupying only the bottom half of "
@@ -197,9 +216,11 @@ LAYOUT_FIXES: dict[str, dict] = {
             "need full height for substantive comparison content."
         ),
         "shape_edits": [
-            # Decorative top banner — shrink to a normal header strip
+            # Decorative top banner SP — shrink to a normal header strip.
+            # by_kind_index: ("sp", 0) targets the first non-placeholder sp
+            # (the banner) regardless of where logos sit in document order.
             {
-                "by_shape_index": 0,
+                "by_kind_index": ("sp", 0),
                 "xfrm": {"off_x": -3000, "off_y": 0,
                          "ext_cx": 9150000, "ext_cy": 832919},
             },
@@ -440,13 +461,28 @@ def _find_target_shape(layout_element, shape_edit: dict):
     """Resolve a shape_edit's target to a drawable element.
 
     Targeting modes:
-      {"by_ph": ("title", None)}   — first <p:sp> whose ph.type=="title"
-      {"by_ph": ("body", "1")}     — first <p:sp> whose ph.type=="body" and idx=="1"
-      {"by_shape_index": N}        — Nth drawable in spTree document order
-                                     (covers <p:sp>, <p:pic>, <p:grpSp>,
-                                     <p:graphicFrame>)
+      {"by_ph": ("title", None)}    — first <p:sp> whose ph.type=="title"
+      {"by_ph": ("body", "1")}      — first <p:sp> whose ph.type=="body" and idx=="1"
+      {"by_shape_index": N}         — Nth drawable in spTree document order
+                                      (covers <p:sp>, <p:pic>, <p:grpSp>,
+                                      <p:graphicFrame>)
+      {"by_kind_index": ("sp", N)}  — Nth NON-PLACEHOLDER drawable of kind 'sp'
+                                      (decorative shapes only — placeholders
+                                      excluded). Use this to target banners,
+                                      decorative bars, etc., independent of
+                                      the document order of pics/sps which
+                                      varies across source layouts.
+      {"by_kind_index": ("pic", N)} — Nth drawable of kind 'pic'
 
     Returns the element. Raises ValueError if not found.
+
+    Why by_kind_index exists: the source .potx has different drawable
+    orderings across layouts (pic-first in some, sp-first in others). A
+    naive `by_shape_index: 0` ends up targeting a logo in one layout and
+    a banner in another. by_kind_index makes targeting robust against
+    drawable-order shuffles by filtering on kind first. Lesson learned
+    on 2026-04-26 when by_shape_index: 0 in two_column_compare moved a
+    logo to (0,0) instead of shrinking the banner SP.
     """
     if "by_ph" in shape_edit:
         # Placeholder lookup is meaningful only for <p:sp> (placeholders live
@@ -477,7 +513,31 @@ def _find_target_shape(layout_element, shape_edit: dict):
             )
         return drawables[n]
 
-    raise ValueError(f"shape_edit has no target spec (by_ph or by_shape_index): {shape_edit}")
+    if "by_kind_index" in shape_edit:
+        kind, n = shape_edit["by_kind_index"]
+        drawables = list(_drawables_in_sptree(layout_element))
+        matching = []
+        for d in drawables:
+            local = etree.QName(d).localname
+            if local != kind:
+                continue
+            # For 'sp' kind, exclude placeholders — we target decorative shapes.
+            if local == "sp":
+                ph = d.find(f".//{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+                if ph is not None:
+                    continue
+            matching.append(d)
+        if n >= len(matching):
+            raise ValueError(
+                f"by_kind_index=({kind!r}, {n}) out of range; "
+                f"only {len(matching)} non-placeholder {kind!r} drawables found"
+            )
+        return matching[n]
+
+    raise ValueError(
+        f"shape_edit has no target spec "
+        f"(by_ph, by_shape_index, or by_kind_index): {shape_edit}"
+    )
 
 
 def _apply_xfrm_change(sp, xfrm_change: dict) -> None:
