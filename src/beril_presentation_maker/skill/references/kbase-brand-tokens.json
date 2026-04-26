@@ -1,0 +1,215 @@
+{
+  "contrast_minima_wcag": {
+    "body_text_aa_ratio": 4.5,
+    "body_text_aaa_ratio": 7.0,
+    "large_text_aa_ratio": 3.0,
+    "large_text_aaa_ratio": 4.5
+  },
+  "logo": {
+    "clear_space_x_factor": 0.5,
+    "min_height_pt": 36
+  },
+  "palette": {
+    "contrast_warnings": [
+      {
+        "pair": [
+          "spring_green",
+          "golden_yellow"
+        ],
+        "reason": "KBase Style Guide \u00a75: forbidden as contrasting colors."
+      }
+    ],
+    "neutral": {
+      "black": {
+        "hex": "#000000"
+      },
+      "white": {
+        "hex": "#FFFFFF"
+      }
+    },
+    "primary": {
+      "freshwater_blue": {
+        "hex": "#007DC3",
+        "rgb": [
+          0,
+          125,
+          195
+        ],
+        "tints": {
+          "20": "#CCE5F3",
+          "40": "#99CBE7",
+          "60": "#66B1DB",
+          "80": "#3397CF"
+        }
+      },
+      "golden_yellow": {
+        "hex": "#FFD200",
+        "rgb": [
+          255,
+          210,
+          0
+        ],
+        "tints": {
+          "20": "#FFF6CC",
+          "40": "#FFED99",
+          "60": "#FFE466",
+          "80": "#FFDB33"
+        }
+      },
+      "grass_green": {
+        "hex": "#5E9732",
+        "rgb": [
+          94,
+          151,
+          50
+        ],
+        "tints": {
+          "20": "#DFEAD6",
+          "40": "#BED5AD",
+          "60": "#9EC184",
+          "80": "#7EAC5B"
+        }
+      },
+      "microbe_orange": {
+        "hex": "#F78E1E",
+        "rgb": [
+          247,
+          142,
+          30
+        ],
+        "tints": {
+          "20": "#FFE5CB",
+          "40": "#FDD0BB",
+          "60": "#FBBA8C",
+          "80": "#F9A455"
+        }
+      },
+      "ocean_blue": {
+        "hex": "#72CCD2",
+        "rgb": [
+          114,
+          204,
+          210
+        ],
+        "tints": {
+          "20": "#E3F5F6",
+          "40": "#C6EAED",
+          "60": "#AAE0E4",
+          "80": "#8ED6DB"
+        }
+      },
+      "spring_green": {
+        "hex": "#C1CD23",
+        "rgb": [
+          193,
+          205,
+          35
+        ],
+        "tints": {
+          "20": "#F3F5D6",
+          "40": "#E6EBAC",
+          "60": "#DAE183",
+          "80": "#CDD659"
+        }
+      }
+    },
+    "secondary": {
+      "cyanobacteria_teal": {
+        "hex": "#009688",
+        "rgb": [
+          0,
+          150,
+          136
+        ]
+      },
+      "frost_blue": {
+        "hex": "#C7DBEE",
+        "rgb": [
+          199,
+          219,
+          238
+        ]
+      },
+      "graphite_gray": {
+        "hex": "#9D9389",
+        "rgb": [
+          157,
+          146,
+          135
+        ]
+      },
+      "lupine_purple": {
+        "hex": "#66489D",
+        "rgb": [
+          102,
+          72,
+          157
+        ]
+      },
+      "rainier_cherry_red": {
+        "hex": "#D2232A",
+        "rgb": [
+          210,
+          35,
+          42
+        ]
+      }
+    }
+  },
+  "source": "KBase Style Guidelines \u2014 PRINT & PRESENTATION, June 2022",
+  "typography": {
+    "code": {
+      "family": "Courier",
+      "weights": [
+        "Regular",
+        "Bold"
+      ]
+    },
+    "fallback": {
+      "family": "Calibri",
+      "weights": [
+        "Regular",
+        "Light",
+        "Italic",
+        "Bold"
+      ]
+    },
+    "primary": {
+      "family": "Oxygen",
+      "weights": [
+        "Regular",
+        "Bold",
+        "Italic",
+        "Bold Italic"
+      ]
+    },
+    "sizes_pt": {
+      "ai_disclosure": 8,
+      "big_idea": 60,
+      "big_number": 96,
+      "body": 24,
+      "caption": 14,
+      "content_title": 36,
+      "deck_title": 60,
+      "section_divider": 48
+    }
+  },
+  "version": "1.0",
+  "vocabulary": [
+    "title",
+    "section_divider",
+    "big_idea",
+    "big_number",
+    "claim_evidence",
+    "two_column_compare",
+    "data_figure",
+    "workflow_diagram",
+    "methods_summary",
+    "concept_illustration",
+    "cross_tenant_integration",
+    "implications",
+    "acknowledgments",
+    "references",
+    "qa_anticipated"
+  ]
+}

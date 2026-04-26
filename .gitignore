@@ -35,3 +35,8 @@ talks/cost-log.jsonl
 # Generated derivatives of the master template (we ship the source .pptx,
 # not the rendered drafts)
 *.bak.pptx
+
+# Source .potx — user-supplied, never redistributed.
+# See reference/master-template-source-notes.md §1.
+reference/master-template-source/*.potx
+reference/master-template-source/*.pptx
