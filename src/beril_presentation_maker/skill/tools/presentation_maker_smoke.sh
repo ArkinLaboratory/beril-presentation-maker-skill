@@ -596,11 +596,13 @@ stage_curate_figures() {
   echo "" >&2
   echo "[Stage 3.5/5] curate_figures (no LLM)" >&2
 
+  # NB: --no-md is a store_true flag (no value); omitting it = produce
+  # markdown output, which is what we want.
   if "$PYTHON_BIN" "$TOOLS_DIR/curate_figures.py" curate \
       "$PROJECT_DIR" \
       --mode "$MODE" \
       --output-dir "$OUTDIR" \
-      --no-md=false >/dev/null 2>"$OUTDIR/curate_figures.stderr"; then
+      >/dev/null 2>"$OUTDIR/curate_figures.stderr"; then
     # The script writes figures_curated.md AND figures_inventory.md to
     # --output-dir. slide_compose's CURATED_FIGURES_PATH input expects
     # a single file; point it at figures_curated.md.
