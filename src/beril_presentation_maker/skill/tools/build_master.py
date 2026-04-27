@@ -185,14 +185,20 @@ LAYOUT_FIXES: dict[str, dict] = {
     "section_divider": {
         "rationale": (
             "Substory transitions need the punchline to BE the slide. "
-            "Center band, 60pt centered, full slide width, no autofit."
+            "Center band, 60pt centered, full slide width. The universal "
+            "title-autofit sweep (Step 5b in build_master) runs AFTER this "
+            "fix and overrides body_pr to normAutofit + anchor=t — the "
+            "noAutofit setting here was the original 2026-04-26 design "
+            "but caused 220-260 char punchlines to overflow ~1.8-2.2x. "
+            "The defensive autofit layer is the v0.1.1 fix; substory_design "
+            "punchline cap (≤14 words) is the upstream prompt fix (T2.4)."
         ),
         "shape_edits": [
             {
                 "by_ph": ("title", None),
                 "xfrm": {"off_x": -83050, "off_y": 1934828,
                          "ext_cx": 9144000, "ext_cy": 1273844},
-                "body_pr": {"auto_fit_kind": "noAutofit"},
+                "body_pr": {"auto_fit_kind": "normAutofit"},
                 "lvl1_ppr": {"algn": "ctr"},
                 "def_rpr": {"sz": 6000},
             },
@@ -573,7 +579,19 @@ def _apply_body_pr_change(sp, body_pr_change: dict) -> None:
             for child in list(body_pr):
                 if child.tag == f"{{{A_NS}}}{tag}":
                     body_pr.remove(child)
-        new_child = etree.SubElement(body_pr, f"{{{A_NS}}}{body_pr_change['auto_fit_kind']}")
+        kind = body_pr_change["auto_fit_kind"]
+        new_child = etree.SubElement(body_pr, f"{{{A_NS}}}{kind}")
+        # PowerPoint requires explicit fontScale + lnSpcReduction on
+        # normAutofit to actually shrink at render time. Bare normAutofit
+        # is treated as "autofit-eligible" but no scale is computed,
+        # leaving long text to overflow. Defaults are 80% font / 20% line
+        # spacing reduction; PowerPoint shrinks further as needed.
+        if kind == "normAutofit":
+            # Allow caller override via body_pr_change["norm_autofit"] dict
+            af_params = body_pr_change.get("norm_autofit", {})
+            new_child.set("fontScale", str(af_params.get("fontScale", 80000)))
+            new_child.set("lnSpcReduction",
+                          str(af_params.get("lnSpcReduction", 20000)))
 
 
 def _apply_lvl1_ppr_change(sp, lvl1_change: dict) -> None:
@@ -644,6 +662,73 @@ def _apply_layout_fixes(prs, verbose: bool = True) -> list[str]:
             print(f"[build_master] applied layout fix: {layout_name} "
                   f"({len(fix['shape_edits'])} shape edit(s))")
     return applied
+
+
+# Layouts where LAYOUT_FIXES intentionally sets noAutofit on the title and
+# we should NOT override (the title font size is part of the design intent).
+# big_number: 96pt headline that must NEVER shrink (the number IS the slide).
+# big_idea: 36pt single-line claim in the accent banner — designed to be tight.
+# These layouts depend on the prompts capping title length; if titles overflow
+# here, the prompt is the bug, not the master.
+_LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE = frozenset({
+    "big_number",
+    "big_idea",
+})
+
+
+def _ensure_title_autofit_universal(prs, verbose: bool = True) -> list[str]:
+    """For every layout EXCEPT those in _LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE,
+    ensure the title placeholder's <a:bodyPr> has an explicit
+    <a:normAutofit fontScale="80000" lnSpcReduction="20000"/> child + anchor="t".
+
+    Why explicit fontScale: PowerPoint treats a bare `<a:normAutofit/>` as
+    "autofit-eligible" but does NOT compute a scale at render time. Without
+    fontScale set explicitly, long titles overflow the placeholder. With
+    fontScale=80000 (80%) + lnSpcReduction=20000 (20%), PowerPoint applies
+    those defaults at render and shrinks further as needed.
+
+    Why anchor="t": text overflow grows downward only. Centered (anchor="ctr")
+    overflow grows in BOTH directions, so a long title bleeds UPWARD into the
+    logo region (live failure mode on draft_4 slide 1, 2026-04-26).
+
+    Returns list of layout names that received the autofit sweep.
+    """
+    swept: list[str] = []
+    for layout in prs.slide_masters[0].slide_layouts:
+        if layout.name in _LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE:
+            continue
+        # Find the title placeholder (type "title" or "ctrTitle"; idx may vary)
+        title_sp = None
+        for sp in layout.element.iter(f"{{{P_NS}}}sp"):
+            ph = sp.find(f"{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+            if ph is None:
+                continue
+            ph_type = ph.get("type", "body")
+            if ph_type in ("title", "ctrTitle"):
+                title_sp = sp
+                break
+        if title_sp is None:
+            continue
+        body_pr = title_sp.find(
+            f"{{{P_NS}}}txBody/{{{A_NS}}}bodyPr"
+        )
+        if body_pr is None:
+            continue
+        # Remove any existing autofit child
+        for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+            for child in list(body_pr):
+                if child.tag == f"{{{A_NS}}}{tag}":
+                    body_pr.remove(child)
+        # Add normAutofit with explicit attributes
+        autofit = etree.SubElement(body_pr, f"{{{A_NS}}}normAutofit")
+        autofit.set("fontScale", "80000")
+        autofit.set("lnSpcReduction", "20000")
+        # Set anchor=t so overflow grows downward, not into logo region
+        body_pr.set("anchor", "t")
+        swept.append(layout.name)
+        if verbose:
+            print(f"[build_master] title autofit set on layout: {layout.name}")
+    return swept
 
 
 def _drop_all_slide_refs_from_presentation_element(pres_element) -> int:
@@ -766,6 +851,15 @@ def build_master(source_potx: Path, dest_pptx: Path, brand_tokens_dest: Path,
     # Step 5b: apply hand-tuned layout fixes (Adam's visual review).
     applied_fixes = _apply_layout_fixes(prs, verbose=verbose)
     report["applied_fixes"] = applied_fixes
+
+    # Step 5b: universal title-autofit sweep — every layout except those
+    # in _LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE gets explicit
+    # normAutofit + anchor=t on its title placeholder. Fixes the
+    # 2026-04-26 visual review finding that 19/21 slides had title text
+    # 1.6-5.0x oversize because PowerPoint doesn't auto-shrink with bare
+    # normAutofit.
+    autofit_swept = _ensure_title_autofit_universal(prs, verbose=verbose)
+    report["title_autofit_swept"] = autofit_swept
 
     # Step 6: drop slide_masters[1:] (Google Slides round-trip duplicates)
     pres_part = prs.part

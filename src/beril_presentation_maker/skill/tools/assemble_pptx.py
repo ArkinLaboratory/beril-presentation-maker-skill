@@ -480,7 +480,29 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
 def _fill_methods_summary(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
     _set_placeholder_bullets(slide, 1, content["bullets"])
-    # tools_versions list and see_notes_footer: rendered as footers if present
+
+    # 2026-04-26 fix #59: render tools_versions as a footer band.
+    # Prior version dropped this structured data entirely, leaving only
+    # a hardcoded "(see speaker notes)" hint. The schema field is named
+    # `version` and the slide_compose prompt now (T2.7) requires real
+    # version pins; even before that fix, surfacing whatever the model
+    # produced is more honest than dropping it.
+    tools_versions = content.get("tools_versions") or []
+    if tools_versions:
+        # Format as comma-separated "Tool ver" pairs:
+        #   "RAST 2.0 · fastp 0.23 · DRAM 1.4"
+        formatted = " · ".join(
+            f"{tv.get('tool', '?')} {tv.get('version', '?')}"
+            for tv in tools_versions
+            if isinstance(tv, dict)
+        )
+        if formatted:
+            _add_textbox(slide, formatted,
+                         0.30, 5.18, 9.40, 0.28,
+                         font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+            return  # tools_versions footer takes the speaker-notes hint slot
+
+    # No tools_versions populated — fall back to the speaker-notes hint
     if content.get("see_notes_footer", True):
         _add_textbox(slide, "(see speaker notes for full detail)",
                      0.30, 5.20, 9.40, 0.30,

@@ -468,6 +468,12 @@ def test_merge_writes_valid_slide_spec(tmp_path: Path):
     assert len(slides) == 7
     assert slides[0]["layout"] == "title"
     assert slides[0]["id"] == 1
+    # 2026-04-26 fix #52: title slide uses project_id title-case, NOT the
+    # throughline punchline (which would overrun the title placeholder 5x).
+    # Throughline punchline lives in the subtitle field instead.
+    assert slides[0]["content"]["title"] == "Functional Dark Matter"
+    assert slides[0]["content"].get("subtitle") == \
+        "Inner-loop wins on Morgan Price gold standard"
     assert slides[1]["layout"] == "section_divider"
     assert slides[1]["substory_id"] == "S1"
     assert slides[2]["layout"] == "claim_evidence"

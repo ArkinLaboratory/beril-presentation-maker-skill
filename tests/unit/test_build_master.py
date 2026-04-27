@@ -296,6 +296,78 @@ def test_layout_fix_applied(layout_name):
 
 
 @requires_built_master
+def test_title_autofit_universal_sweep():
+    """Every layout EXCEPT big_number/big_idea has explicit normAutofit
+    with fontScale + lnSpcReduction on its title placeholder, plus
+    anchor=t. Regression for the 2026-04-26 visual review where 19/21
+    slides had 1.6-5.0x title overrun because PowerPoint doesn't honor
+    bare normAutofit at render time.
+    """
+    from pptx import Presentation
+    bm = _import_build_master()
+    prs = Presentation(DEST_PPTX)
+
+    P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+    intentional = bm._LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE
+    failures = []
+
+    for layout in prs.slide_masters[0].slide_layouts:
+        # Find the title placeholder
+        title_sp = None
+        for sp in layout.element.iter(f"{{{P_NS}}}sp"):
+            ph = sp.find(f"{{{P_NS}}}nvSpPr/{{{P_NS}}}nvPr/{{{P_NS}}}ph")
+            if ph is not None and ph.get("type", "body") in ("title", "ctrTitle"):
+                title_sp = sp
+                break
+        if title_sp is None:
+            failures.append(f"{layout.name}: no title placeholder")
+            continue
+        body_pr = title_sp.find(f"{{{P_NS}}}txBody/{{{A_NS}}}bodyPr")
+        if body_pr is None:
+            failures.append(f"{layout.name}: title has no bodyPr")
+            continue
+
+        norm = body_pr.find(f"{{{A_NS}}}normAutofit")
+        no_af = body_pr.find(f"{{{A_NS}}}noAutofit")
+        sp_af = body_pr.find(f"{{{A_NS}}}spAutoFit")
+
+        if layout.name in intentional:
+            # Intentional: must have noAutofit (font size pinned)
+            if no_af is None:
+                failures.append(
+                    f"{layout.name}: intentional-no-autofit layout missing "
+                    f"<a:noAutofit/> (got norm={norm is not None}, sp={sp_af is not None})"
+                )
+            continue
+
+        # Universal: must have normAutofit with explicit fontScale + lnSpcReduction
+        if norm is None:
+            failures.append(
+                f"{layout.name}: missing <a:normAutofit/> "
+                f"(got noAutofit={no_af is not None}, spAutoFit={sp_af is not None})"
+            )
+            continue
+        font_scale = norm.get("fontScale")
+        ln_spc = norm.get("lnSpcReduction")
+        if font_scale is None:
+            failures.append(f"{layout.name}: normAutofit lacks fontScale attr")
+        if ln_spc is None:
+            failures.append(f"{layout.name}: normAutofit lacks lnSpcReduction attr")
+        anchor = body_pr.get("anchor")
+        if anchor != "t":
+            failures.append(
+                f"{layout.name}: anchor must be 't' (top — overflow grows "
+                f"downward only), got {anchor!r}"
+            )
+
+    assert not failures, (
+        "title autofit sweep failures:\n  " + "\n  ".join(failures)
+    )
+
+
+@requires_built_master
 def test_two_column_compare_has_two_body_placeholders():
     """The two_column_compare layout is the only one with 2 BODY placeholders;
     failure here means we mapped the wrong source layout."""

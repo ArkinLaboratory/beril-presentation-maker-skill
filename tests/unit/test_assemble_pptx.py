@@ -251,6 +251,96 @@ def test_each_layout_renders(ss, asm, tmp_path, layout):
         assert rendered.shapes.title.text != ""
 
 
+@requires_master
+def test_methods_summary_renders_tools_versions(ss, asm, tmp_path):
+    """2026-04-26 fix #59: tools_versions now renders as a footer band
+    (was silently dropped before). Build a methods_summary slide with
+    real tool/version pairs and assert the formatted footer text appears
+    on the rendered slide.
+    """
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "id": 1,
+            "layout": "methods_summary",
+            "content": {
+                "title": "Methods overview",
+                "bullets": [
+                    "Quality-trim with fastp at Q20",
+                    "Annotate with RAST default parameters",
+                    "Cross-validate against Morgan Price gold standard",
+                    "FDR correction via Benjamini-Hochberg",
+                    "Recovery rate computed across n=142 loci",
+                ],
+                "tools_versions": [
+                    {"tool": "RAST", "version": "2.0"},
+                    {"tool": "fastp", "version": "0.23"},
+                    {"tool": "DRAM", "version": "1.4"},
+                ],
+            },
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    prs = Presentation(out)
+    slide = prs.slides[0]
+
+    # Walk all text-bearing shapes; check for the tools_versions footer
+    all_text = " | ".join(
+        shape.text_frame.text for shape in slide.shapes
+        if shape.has_text_frame
+    )
+    assert "RAST 2.0" in all_text, f"RAST version missing; got: {all_text}"
+    assert "fastp 0.23" in all_text, f"fastp version missing; got: {all_text}"
+    assert "DRAM 1.4" in all_text, f"DRAM version missing; got: {all_text}"
+    # The "see speaker notes" fallback should NOT appear when tools_versions present
+    assert "see speaker notes" not in all_text, (
+        "fallback footer should be suppressed when tools_versions populated"
+    )
+
+
+@requires_master
+def test_methods_summary_falls_back_to_speaker_notes_hint(ss, asm, tmp_path):
+    """When tools_versions is absent, the see-notes footer renders."""
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "id": 1,
+            "layout": "methods_summary",
+            "content": {
+                "title": "Methods overview",
+                "bullets": ["b1", "b2", "b3", "b4", "b5"],
+                # No tools_versions
+            },
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+
+    asm.assemble(spec_path, out)
+    from pptx import Presentation
+    slide = Presentation(out).slides[0]
+    all_text = " | ".join(
+        shape.text_frame.text for shape in slide.shapes
+        if shape.has_text_frame
+    )
+    assert "see speaker notes" in all_text
+
+
 # ---------------------------------------------------------------------------
 # Speaker notes
 # ---------------------------------------------------------------------------

@@ -171,21 +171,51 @@ def strip_orchestrator_metadata(slide: dict) -> dict:
 
 def build_title_slide(slide_id: int, throughline_punchline: str,
                       project_id: str) -> dict:
-    """Stub title slide. Production orchestrator populates from project
-    metadata; smoke uses placeholders + the throughline punchline as a
-    starting title."""
+    """Build the title slide.
+
+    2026-04-26 visual review found the prior version used the full
+    throughline punchline (often 200-300 chars) as the title, causing
+    catastrophic overrun on the title placeholder (5x oversize) — text
+    spilled over the KBase logo. The fix:
+
+      - Title  = project_id rendered title-case (e.g. `functional_dark_matter`
+                 → `Functional Dark Matter`). Short, fits the placeholder
+                 cleanly.
+      - Subtitle = throughline punchline (the full claim). Larger
+                 placeholder + autofit on the master handles longer text.
+
+    Production orchestrator will eventually replace this with a project-
+    metadata-driven title (RESEARCH_PLAN-derived short title), but the
+    project_id title-case is the reasonable v0.1 stub.
+    """
     today = dt.date.today().isoformat()
+
+    # Render project_id as a human-readable title:
+    # `functional_dark_matter` → `Functional Dark Matter`
+    # `cf-formulation-design`  → `Cf Formulation Design`
+    title_text = project_id.replace("_", " ").replace("-", " ").title().strip()
+    if not title_text:
+        title_text = f"BERDL project: {project_id}"
+
+    # Subtitle carries the throughline punchline (the load-bearing claim).
+    # If throughline punchline is the placeholder "TBD", subtitle is empty.
+    subtitle = (throughline_punchline
+                if throughline_punchline and throughline_punchline != "TBD"
+                else "")
+
+    content = {
+        "title": title_text,
+        "presenter": "TBD",
+        "date": today,
+        "affiliation": "TBD",
+    }
+    if subtitle:
+        content["subtitle"] = subtitle
+
     return {
         "id": slide_id,
         "layout": "title",
-        "content": {
-            "title": throughline_punchline if throughline_punchline != "TBD"
-                     else f"BERDL project: {project_id}",
-            "presenter": "TBD",
-            "date": today,
-            "subtitle": f"smoke draft for {project_id}",
-            "affiliation": "TBD",
-        },
+        "content": content,
     }
 
 
