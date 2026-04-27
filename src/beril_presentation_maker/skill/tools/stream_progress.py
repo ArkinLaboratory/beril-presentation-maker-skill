@@ -100,6 +100,15 @@ def parse_stream(
     write_paths: list[str] = []
     usage: dict | None = None
     parse_errors = 0
+    # 2026-04-27 #71: detect Anthropic API transient errors
+    # (overloaded_error, rate_limit_error) in the result event so the
+    # orchestrator can retry instead of giving up. Live failure: smoke
+    # draft_6 throughline emitted Write tool_use successfully but
+    # the next API call returned overloaded_error before the
+    # client-side Write completed; result is_error=True with
+    # type=overloaded_error message.
+    transient_api_error = False
+    transient_error_message = ""
     start = time.time()
 
     log_fh = open(log_path, "w", encoding="utf-8") if log_path else None
@@ -145,6 +154,18 @@ def parse_stream(
             u = event.get("usage") or event.get("message", {}).get("usage")
             if u:
                 usage = u
+            # Detect transient API errors so the orchestrator can retry
+            if event.get("is_error"):
+                err_text = str(event.get("result", "") or "")
+                # Check for known transient error markers; case-insensitive
+                lower = err_text.lower()
+                if ("overloaded_error" in lower
+                        or "rate_limit" in lower
+                        or "503" in lower
+                        or "service unavailable" in lower):
+                    transient_api_error = True
+                    # Trim to ~200 chars for the diagnostic line
+                    transient_error_message = err_text[:200]
 
     if log_fh:
         log_fh.close()
@@ -173,6 +194,23 @@ def parse_stream(
         print("  " + "  ·  ".join(bits), file=sys.stderr)
         print("─" * 50, file=sys.stderr)
         print("", file=sys.stderr)
+
+    # Transient API error detection — return code 4 so orchestrator
+    # retries (different from rc=2 'Write not invoked' to allow
+    # different retry semantics, e.g., backoff sleep).
+    if transient_api_error:
+        print("", file=sys.stderr)
+        print(
+            f"⚠ Anthropic API transient error: "
+            f"{transient_error_message}",
+            file=sys.stderr,
+        )
+        print(
+            f"  This is retryable (overloaded / rate_limit / 503). "
+            f"Orchestrator should backoff + retry.",
+            file=sys.stderr,
+        )
+        return 4
 
     # Programmatic Write verification
     if expected_write_path is not None:

@@ -430,6 +430,16 @@ ${base_user_prompt}"
       echo "Error: $label invoked Write on the wrong path (not retryable)" >&2
       return 1
     fi
+    if [[ $rc -eq 4 ]]; then
+      # 2026-04-27 #71: Anthropic API transient error
+      # (overloaded_error / rate_limit / 503). Backoff + retry.
+      local backoff=$(( 5 * attempt ))   # 5s, 10s, 15s
+      echo "  API transient error — sleeping ${backoff}s before retry $((attempt + 1))/$MAX" >&2
+      sleep "$backoff"
+      rm -f "$expected_path"
+      attempt=$((attempt + 1))
+      continue
+    fi
     echo "Error: $label failed (exit $rc)" >&2
     return 1
   done
