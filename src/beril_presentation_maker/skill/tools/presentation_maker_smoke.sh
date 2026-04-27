@@ -32,6 +32,17 @@
 #   --model <model>          Override claude model (default: sonnet)
 #   --no-stream              Disable stream-json parser pipe (loses
 #                            programmatic Write verification + cost summary)
+#   --resume-from <stage>    Skip earlier stages; reuse their on-disk artifacts
+#                            in --draft-dir. Stages in order:
+#                              plan | throughline | substory_design |
+#                              intro | slide_compose | merge
+#                            Cost savings on prompt-iteration:
+#                              from intro:         ~$1.50 (saves plan+throughline+substory)
+#                              from slide_compose: ~$1.20 (saves plan+throughline+substory+intro)
+#                              from merge:         FREE (no LLM; assembly only)
+#                            Requires --draft-dir.
+#   --draft-dir <path>       Existing draft_N directory to resume into.
+#                            Required when --resume-from is set.
 #   --help                   Show this message
 
 set -euo pipefail
@@ -46,6 +57,8 @@ AUTO_ADVANCE=0
 SKIP_ASSEMBLY=0
 MODEL="claude-sonnet-4-20250514"
 NO_STREAM=0
+RESUME_FROM=""        # 2026-04-26 #58: skip earlier stages on prompt iteration
+DRAFT_DIR_OVERRIDE="" # required when RESUME_FROM is set
 
 CLAUDE_TOOLS="Read,Write,Bash,Grep,Glob,WebSearch,Agent,ToolSearch"
 
@@ -67,6 +80,8 @@ while [[ $# -gt 0 ]]; do
     --skip-assembly)     SKIP_ASSEMBLY=1; shift ;;
     --model)             MODEL="$2"; shift 2 ;;
     --no-stream)         NO_STREAM=1; shift ;;
+    --resume-from)       RESUME_FROM="$2"; shift 2 ;;
+    --draft-dir)         DRAFT_DIR_OVERRIDE="$2"; shift 2 ;;
     --help)              usage ;;
     -*)                  echo "Error: Unknown option $1" >&2; usage 1 ;;
     *)
@@ -94,6 +109,27 @@ case "$TIER" in
   STRONG|THIN|EXPLORATORY) ;;
   *) echo "Error: invalid --tier '$TIER'" >&2; exit 1 ;;
 esac
+
+# Validate --resume-from + --draft-dir pairing
+case "$RESUME_FROM" in
+  ""|plan|throughline|substory_design|intro|slide_compose|merge) ;;
+  *)
+    echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
+    echo "       valid stages: plan|throughline|substory_design|intro|slide_compose|merge" >&2
+    exit 1 ;;
+esac
+if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
+  echo "Error: --resume-from requires --draft-dir <path>" >&2
+  exit 1
+fi
+if [[ -n "$DRAFT_DIR_OVERRIDE" && -z "$RESUME_FROM" ]]; then
+  echo "Error: --draft-dir requires --resume-from <stage>" >&2
+  exit 1
+fi
+if [[ -n "$DRAFT_DIR_OVERRIDE" && ! -d "$DRAFT_DIR_OVERRIDE" ]]; then
+  echo "Error: --draft-dir '$DRAFT_DIR_OVERRIDE' does not exist" >&2
+  exit 1
+fi
 
 # --- Resolve BERIL_ROOT ---
 if [[ -n "$BERIL_ROOT_OVERRIDE" ]]; then
@@ -124,28 +160,112 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md slide_compose.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md slide_compose.v1.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
   fi
 done
 
+# --- Pre-flight: verify python deps before paying for LLM stages ---
+# Burned ~$6 across two smoke runs (2026-04-26) discovering python-pptx
+# wasn't on the python3 the orchestrator resolves to — assembly failed
+# at the LAST stage after $3 of LLM costs. This pre-flight catches the
+# missing-dep case at second 0, before stage 1 fires.
+echo "[pre-flight] verifying python deps..." >&2
+if ! python3 -c "
+import sys
+missing = []
+for mod, install_name in [
+    ('pptx', 'python-pptx'),
+    ('PIL', 'Pillow'),
+    ('nbformat', 'nbformat'),
+]:
+    try:
+        __import__(mod)
+    except ImportError:
+        missing.append((mod, install_name))
+if missing:
+    sys.stderr.write('FAIL: missing python deps:\n')
+    for mod, name in missing:
+        sys.stderr.write(f'  - {name} (import {mod})\n')
+    sys.stderr.write('\nInstall with:\n')
+    sys.stderr.write('  python3 -m pip install --user ' +
+                     ' '.join(name for _, name in missing) + '\n')
+    sys.stderr.write('OR install the package editable:\n')
+    sys.stderr.write('  pip3 install --user -e .\n')
+    sys.exit(1)
+" 2>&1; then
+  echo "" >&2
+  echo "Error: pre-flight check failed. Fix the missing deps above before running smoke." >&2
+  echo "       The smoke makes ~6 LLM calls totaling ~\$3.00 — failing at the final" >&2
+  echo "       assembly step wastes that. Install deps first." >&2
+  exit 1
+fi
+echo "[pre-flight] OK" >&2
+
 # --- Output dir setup ---
 DRAFTS_DIR="$PROJECT_DIR/talks"
 mkdir -p "$DRAFTS_DIR"
 
-# Pick next draft_N atomically
-DRAFT_N=1
-while [[ -d "$DRAFTS_DIR/draft_$DRAFT_N" ]]; do
-  DRAFT_N=$((DRAFT_N + 1))
-  if [[ $DRAFT_N -gt 9999 ]]; then
-    echo "Error: cannot allocate draft directory under $DRAFTS_DIR" >&2
+if [[ -n "$DRAFT_DIR_OVERRIDE" ]]; then
+  # Resume mode: reuse the existing draft directory
+  OUTDIR="$(cd "$DRAFT_DIR_OVERRIDE" && pwd -P)"
+  mkdir -p "$OUTDIR/03_slides"
+else
+  # Fresh-run mode: pick next draft_N atomically
+  DRAFT_N=1
+  while [[ -d "$DRAFTS_DIR/draft_$DRAFT_N" ]]; do
+    DRAFT_N=$((DRAFT_N + 1))
+    if [[ $DRAFT_N -gt 9999 ]]; then
+      echo "Error: cannot allocate draft directory under $DRAFTS_DIR" >&2
+      exit 1
+    fi
+  done
+  OUTDIR="$DRAFTS_DIR/draft_$DRAFT_N"
+  mkdir -p "$OUTDIR/03_slides"
+fi
+
+# --- Resume validation: verify required files exist for the resume point ---
+# Each stage has prerequisites that must already be on disk; fail fast if
+# they're missing rather than running the LLM and then crashing in merge.
+validate_resume_prereqs() {
+  local stage="$1"
+  local missing=()
+  case "$stage" in
+    throughline)
+      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md") ;;
+    substory_design)
+      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
+      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md") ;;
+    intro)
+      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
+      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
+      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md") ;;
+    slide_compose)
+      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
+      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
+      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md")
+      [[ -f "$OUTDIR/03_slides/intro.json" ]] || missing+=("03_slides/intro.json") ;;
+    merge)
+      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
+      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
+      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md")
+      [[ -f "$OUTDIR/03_slides/intro.json" ]] || missing+=("03_slides/intro.json")
+      # Per-substory fragments validated dynamically in stage_merge_and_assemble
+      ;;
+  esac
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Error: --resume-from $stage requires the following files in --draft-dir," >&2
+    echo "       but they are missing:" >&2
+    for f in "${missing[@]}"; do echo "         - $OUTDIR/$f" >&2; done
+    echo "       Pick an earlier --resume-from stage or use a different draft." >&2
     exit 1
   fi
-done
-OUTDIR="$DRAFTS_DIR/draft_$DRAFT_N"
-mkdir -p "$OUTDIR/03_slides"
+}
+if [[ -n "$RESUME_FROM" && "$RESUME_FROM" != "plan" ]]; then
+  validate_resume_prereqs "$RESUME_FROM"
+fi
 
 echo "==================================================================" >&2
 echo "BERIL Presentation Maker — Smoke Run" >&2
@@ -156,6 +276,9 @@ echo "  tier:         $TIER" >&2
 echo "  draft dir:    $OUTDIR" >&2
 echo "  auto-advance: $AUTO_ADVANCE" >&2
 echo "  model:        $MODEL" >&2
+if [[ -n "$RESUME_FROM" ]]; then
+  echo "  resume from:  $RESUME_FROM (skipping all earlier stages)" >&2
+fi
 echo "==================================================================" >&2
 
 # ==============================================================================
@@ -390,15 +513,20 @@ gate_substory_overflow() {
     echo "  (a) drop substories — re-run substory_design with picks" >&2
     echo "  (b) escalate mode (talk-15 → talk-30, etc.) — re-run from throughline" >&2
     echo "  (c) merge substories — re-run substory_design with merge directive" >&2
-    echo -n "Choice (a/b/c) [or 'abort']: " >&2
+    echo "  (d) PROCEED ANYWAY — accept overrun; budgets are guidelines (2026-04-26)" >&2
+    echo -n "Choice (a/b/c/d) [or 'abort']: " >&2
     local choice
     read -r choice </dev/tty
     case "$choice" in
+      d|proceed|proceed-anyway)
+        echo "  [proceed-anyway] continuing despite mode overflow." >&2
+        echo "  The deck will run longer than the mode's typical window." >&2
+        return 0 ;;
       a|drop|b|escalate|c|merge)
-        echo "  Smoke v1 does not implement re-routing for overflow." >&2
+        echo "  Smoke v1 does not implement re-routing for drop/escalate/merge." >&2
         echo "  The substory_design output stands; subsequent stages will" >&2
-        echo "  surface the overflow gap. To proceed cleanly, re-run with a" >&2
-        echo "  larger --mode or smaller-scope project." >&2
+        echo "  surface the overflow gap. To proceed cleanly, choose (d)" >&2
+        echo "  proceed-anyway, OR re-run from scratch with a larger --mode." >&2
         return 1 ;;
       *)
         echo "  Aborting on overflow." >&2
@@ -565,13 +693,47 @@ stage_merge_and_assemble() {
 # Main flow
 # ==============================================================================
 
-stage_plan                  || { echo "FAIL at plan" >&2; exit 1; }
-stage_throughline           || { echo "FAIL at throughline" >&2; exit 1; }
-gate_throughline_pick       || { echo "FAIL at throughline pick gate" >&2; exit 1; }
-stage_substory_design       || { echo "FAIL at substory_design" >&2; exit 1; }
-gate_substory_overflow      || { echo "FAIL at substory overflow gate" >&2; exit 1; }
-stage_intro                 || { echo "FAIL at intro" >&2; exit 1; }
-stage_slide_compose         || { echo "FAIL at slide_compose" >&2; exit 1; }
+# --- Resume-aware stage execution ---
+# Each stage runs unless RESUME_FROM names a later stage. Gates that
+# follow a skipped stage are also skipped (the user's prior choice
+# already wrote the canonical file). Order:
+#   plan → throughline → (gate) → substory_design → (gate)
+#         → intro → slide_compose → merge
+
+# Compute "should we run stage X" for each stage.
+should_run() {
+  local stage="$1"
+  if [[ -z "$RESUME_FROM" ]]; then return 0; fi
+  # Map stages to ordinals so we can compare
+  local order_resume order_stage
+  for o in plan:1 throughline:2 substory_design:3 intro:4 slide_compose:5 merge:6; do
+    case "$o" in
+      "$RESUME_FROM":*) order_resume="${o#*:}" ;;
+      "$stage":*)       order_stage="${o#*:}" ;;
+    esac
+  done
+  if [[ -z "$order_resume" || -z "$order_stage" ]]; then return 0; fi
+  [[ $order_stage -ge $order_resume ]]
+}
+
+if should_run plan;             then stage_plan            || { echo "FAIL at plan" >&2; exit 1; }
+                                else echo "[skip] plan (resume from $RESUME_FROM)" >&2; fi
+
+if should_run throughline;      then stage_throughline     || { echo "FAIL at throughline" >&2; exit 1; }
+                                     gate_throughline_pick || { echo "FAIL at throughline pick gate" >&2; exit 1; }
+                                else echo "[skip] throughline + pick (resume from $RESUME_FROM)" >&2; fi
+
+if should_run substory_design;  then stage_substory_design  || { echo "FAIL at substory_design" >&2; exit 1; }
+                                     gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
+                                else echo "[skip] substory_design + overflow gate (resume from $RESUME_FROM)" >&2; fi
+
+if should_run intro;            then stage_intro           || { echo "FAIL at intro" >&2; exit 1; }
+                                else echo "[skip] intro (resume from $RESUME_FROM)" >&2; fi
+
+if should_run slide_compose;    then stage_slide_compose   || { echo "FAIL at slide_compose" >&2; exit 1; }
+                                else echo "[skip] slide_compose (resume from $RESUME_FROM)" >&2; fi
+
+# merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
 
 exit 0

@@ -250,24 +250,68 @@ For talk-30 / talk-45 (3-4 slide budget), in order:
    The audience is reading "Goal:" — they want to hear what we set
    out to learn, not what we did.
 
-   **Acceptable goal bullets** (questions or objectives):
+   **The structural test for a goal bullet:**
 
-   - "Can experimental fitness data identify dark genes worth
-     experimentally characterizing?"
-   - "Do lab phenotypes predict ecological function in field
-     samples?"
-   - "Identify the top 100 dark gene candidates for RB-TnSeq follow-up"
-   - "Quantify lab-field concordance for fitness phenotypes"
+   A goal bullet either:
 
-   **Forbidden goal bullets** (live failure mode 2026-04-26 —
-   describing what was done, not what was sought):
+   (a) **Asks a question.** Starts with "Can", "Do", "How", "Whether",
+       "What", or contains a "?". Examples:
+       - "Can experimental fitness data identify dark genes worth
+         experimentally characterizing?"
+       - "Do lab phenotypes predict ecological function in field
+         samples?"
+       - "How does cross-organism conservation distinguish actionable
+         dark genes from ones likely to remain uncharacterizable?"
 
-   - "Systematically integrate six evidence layers" — this is the
-     METHOD, not a goal
-   - "Identify the 17,344 dark genes with measurable phenotypes" —
-     this is a FINDING (already done)
-   - "Validate prioritization using biogeographic patterns" — also
-     a method description
+   (b) **States a measurable objective with a specific NOUN target.**
+       Starts with "Identify N…", "Quantify…", "Determine…",
+       "Establish…", "Estimate…", "Measure…". The verb names what
+       we set out to PRODUCE or LEARN, with a specific numeric or
+       categorical target. Examples:
+       - "Identify the top 100 dark gene candidates for RB-TnSeq
+         follow-up"
+       - "Quantify lab-field concordance for fitness phenotypes
+         across 47 condition classes"
+       - "Determine whether dark genes show pre-registered
+         biogeographic patterns predictable from lab data"
+
+   **Forbidden goal bullet shapes (live failure modes):**
+
+   These are imperative method descriptions — they describe HOW we
+   did something, not WHAT QUESTION WE ASKED. The forbidden
+   patterns:
+
+   - **"Score X by/using Y"** — method description, not a goal
+     - ✗ "Score dark genes by experimental tractability using
+       multi-layered evidence integration" (draft_5 actual failure)
+     - ✓ "Identify the top 100 actionable dark genes via composite
+       scoring" — same content, but the verb names the OBJECTIVE
+       (identify candidates), not the method (score by tractability)
+
+   - **"Validate X with/using Y"** — method, not a goal
+     - ✗ "Validate prioritization with cross-organism fitness
+       concordance and biogeographic patterns" (draft_5 actual
+       failure)
+     - ✓ "Determine whether the prioritization is robust to
+       cross-organism and biogeographic perturbations" — names
+       the question
+
+   - **"Produce optimized/refined X"** — outcome description, not goal
+     - ✗ "Produce optimized experimental roadmaps for systematic
+       functional characterization" (draft_5 actual failure)
+     - ✓ "Quantify the minimum experiment-set required to cover
+       95% of actionable dark genes" — names the measurable target
+
+   - **"Integrate/Apply/Combine X"** — method
+     - ✗ "Systematically integrate six evidence layers"
+     - ✓ "Determine whether evidence integration outperforms any
+       single signal for prioritization"
+
+   **The diagnostic test:** could you write the bullet as a
+   question without changing its meaning? If yes, it's a goal. If
+   converting to a question fundamentally changes what's being
+   said, it's a method/finding description and DOESN'T BELONG ON
+   THE GOAL SLIDE.
 
    **If RESEARCH_PLAN.md has a `## Research Question` or `## Hypothesis`
    section, pull verbatim from there.** If absent, frame the goal as

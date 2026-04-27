@@ -136,6 +136,32 @@ Merge candidates:
 - Merge S2 + S3 into S2' "{broader cluster name}" — punchline
   becomes "{broader claim covering both}"
 - (Other merge candidates if applicable)
+
+### Option (d) — Proceed anyway (accept overrun)
+
+Mode budgets are GUIDELINES for typical content density, not hard
+caps. If the substories are well-justified and dropping/escalating/
+merging would damage the storytelling, proceed with overflow.
+Slide_compose will compose all substories at their natural sizes;
+the rendered deck will run longer than the mode's typical window.
+
+When this is appropriate:
+
+- All substories carry essential evidence the talk cannot defer.
+- Drop/escalate/merge would lose a load-bearing piece (e.g., merging
+  causes a partial-strength caveat to disappear from the audience's
+  view).
+- The audience-time window is flexible (informal seminar; lab-meeting
+  follow-up; the speaker can cut at delivery time).
+
+When this is NOT appropriate:
+
+- Conference-talk hard slot (drop/escalate/merge required for time).
+- Audience attention budget is tight (e.g., 5-min lightning).
+
+Choosing (d) means: substory_design records `overflow_action:
+proceed_anyway` in the closing message and writes the substory file
+as-is. Downstream slide_compose runs without budget enforcement.
 ```
 
 The "Mode-capacity overflow" section is omitted when `capacity
@@ -196,6 +222,38 @@ Good clustering signals:
 - The cluster's evidence shape (the strength glyphs of its analyses)
   is consistent — mostly ✓ direct OR mostly ⚠ partial. Mixing
   confidence levels within a substory is a structural smell.
+
+### Punchline length — guideline, not hard cap
+
+**Recommended target: ≤14 words / ≤90 chars** for substory divider
+punchlines. Section dividers render at large font (40pt master,
+~32pt after autofit); 14 words fits cleanly in 2 lines. Longer
+punchlines render small or wrap awkwardly.
+
+This is a GUIDELINE, not a validator. If the substory's claim
+genuinely requires more words, write the longer version — the
+master-level autofit shrinks gracefully and the discipline gradient
+(integrity > visual polish) means we never sacrifice substance
+to fit a word count. **But if you exceed 14 words, do so for a
+specific reason and note it briefly in the cluster's rationale.**
+
+**Length-shaping examples (live failure mode 2026-04-26 draft_5,
+S2 substory):**
+
+- ✗ 38 words: "Six independent evidence sources — fitness phenotypes,
+  pangenome conservation, cross-organism concordance, gene
+  neighborhoods, biogeographic patterns, and domain annotations —
+  can be systematically integrated to generate high-confidence
+  functional hypotheses for dark genes."
+  — this is a list of methods masquerading as a punchline; rewrite.
+- ✓ 12 words: "Multi-source evidence integration generates
+  high-confidence functional hypotheses for dark genes."
+- Same claim, more memorable, fits the divider.
+
+**Self-review item:** count the words in each cluster's punchline.
+If >14, ask whether the extra words add a NEW claim (keep) or
+list methods (rewrite shorter). Methods belong in the per-substory
+methods slide, not in the divider.
 
 Bad clustering signals (split or re-cluster):
 

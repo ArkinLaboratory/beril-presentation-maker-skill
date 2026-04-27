@@ -315,6 +315,37 @@ adversarial review surfaced. If you cannot find a strength glyph
 for the analysis in `00_plan.md`, default to assuming `partial` —
 better to under-claim than overclaim.
 
+**MANDATORY per-slide procedure (do this BEFORE writing each slide,
+not after):**
+
+1. **Identify which analysis IDs (A1, A2, ...) this slide presents.**
+   Open `00_plan.md`'s critical-analysis inventory. Find the rows
+   whose source/notes match what your slide is about.
+2. **Read the Strength column for each matched analysis.** If ANY
+   are `partial` or `preliminary`, treat the slide as partial.
+3. **If partial: open the Notes column** for the matched analysis.
+   The Notes paraphrase the limitation (e.g., "L#8: compositional
+   coupling inflates significance"). The slide must surface this
+   caveat — either in a bullet or speaker_notes_seed.
+4. **Scan the slide title + bullets for forbidden verbs**
+   (validates / demonstrates / confirms / proves / establishes /
+   shows definitively). If found on a partial-analysis slide,
+   replace with a required substitute (consistent with /
+   marginally supports / preliminary evidence for / suggestive
+   of / compatible with).
+5. **A live failure example from 2026-04-26 draft_5:** the lab-
+   field concordance slide presented A7 (plan-tagged `partial`
+   with "L#2: NMDC genus-level resolution may miss species
+   signals; L#8: compositional coupling inflates significance"),
+   but the slide title still said "Lab-field concordance analysis
+   demonstrates 61.7% correspondence". The model didn't run the
+   procedure. **Run it. The plan inventory's Notes column is
+   load-bearing.**
+
+This procedure runs FOR EVERY SLIDE. It is not a self-review
+afterthought — strength-glyph awareness is what makes the slide
+title get drafted correctly the first time.
+
 ## Layout-selection discipline (top-level, before per-layout details)
 
 For each content slide, pick a layout by matching evidence shape to
@@ -527,6 +558,40 @@ in a BULLET (where it belongs as a method beat — "FB integration:
 phrases). The schema field's name is `version`; the user reads the
 rendered footer expecting versions.
 
+**Live failures from 2026-04-26 draft_5 (S3 substory):**
+
+- ✗ `{"tool": "greedy set-cover", "version": "optimization heuristic"}`
+  — "greedy set-cover" is a METHOD/algorithm, not a tool. Drop the
+  entry entirely; the method belongs in a bullet.
+- ✗ `{"tool": "Fitness Browser", "version": "48 organisms"}` — "48
+  organisms" is a cohort size, not a version. Either look up the
+  Fitness Browser snapshot/release date, or use `"unknown"`.
+
+**Tool-name discipline (companion rule):** the `tool` field is the
+NAME of a software package, database, or service that has a versioned
+release. Algorithms, methods, and approaches (e.g., "greedy
+set-cover", "Bayesian inference", "set-cover optimization") are NOT
+tools. They belong in bullets describing the method, not in the
+tools_versions footer.
+
+**Acceptable tool-name examples:**
+
+  - `"RAST"`, `"DRAM"`, `"GapMind"`, `"eggNOG"`, `"GTDB"` (named services/databases)
+  - `"fastp"`, `"bowtie2"`, `"BLAST"`, `"DIAMOND"` (named tools)
+  - `"NMDC"`, `"Fitness Browser"`, `"PaperBLAST"` (named services with releases)
+
+**Forbidden tool-name examples** (these are methods, not tools):
+
+  - "greedy set-cover" → describes the algorithm; put in a bullet
+  - "covering set optimization" → method; put in a bullet
+  - "multi-dimensional scoring" → method; not a tool
+  - "Bayesian network inference" → method; not a tool
+  - "set-cover heuristic" → method; not a tool
+
+**If a method has no underlying tool, omit it from
+tools_versions entirely.** Don't force-fit a method into the
+tools_versions schema. Methods belong in bullets.
+
 ### `concept_illustration`
 
 - **Required:** `title`, `image_path`, `image_prompt`, `style`
@@ -729,6 +794,23 @@ Run before the `Write` step.
     titles, or STRONG substory with hedged language — register
     must match tier.
 13. **`speaker_notes_seed` exceeds 200 words.** Trim to seed-only.
+14. **Title length guideline (soft).** Recommended ≤14 words / ≤90
+    chars. If exceeded, autofit shrinks the title — but very long
+    titles render at small font and are harder to read. Ask whether
+    the extra words add a load-bearing claim or are filler. Live
+    failure mode (2026-04-26 draft_5 slide 19, 19 words):
+    "Experimental roadmap optimization: 10 RB-TnSeq experiments
+    cover 45% of top 500 candidates, with covering-set strategy
+    for systematic characterization" — the "with covering-set
+    strategy for systematic characterization" tail adds nothing
+    the body bullets won't repeat. ≤14-word version: "Experimental
+    roadmap: 10 experiments cover 45% of top 500 candidates."
+15. **methods_summary bullet count guideline (soft).** Slide_spec
+    hard cap is 5-10. Recommended sweet spot is 5-7 bullets. 8+
+    bullets at 80+ chars/each overflow the body placeholder height
+    even with autofit. If you have 8+ method beats, split into two
+    methods slides OR consolidate related beats into single bullets
+    with semicolons.
 
 ### Anti-example pairs (validator-blocking)
 
