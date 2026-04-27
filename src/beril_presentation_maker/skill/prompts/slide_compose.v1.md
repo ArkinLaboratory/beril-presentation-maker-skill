@@ -272,6 +272,49 @@ A memoryless agent who reads "EXPLORATORY" as "be vague" produces
 unverifiable slides. EXPLORATORY tier means *honest about
 uncertainty*, not *loose about grounding*.
 
+### Strength-glyph language discipline (analysis-level, overrides tier)
+
+Tier sets the BASELINE language register; the per-analysis
+strength glyph from `00_plan.md` (✓ direct / ⚠ partial / ◇
+orthogonal / ✗ contradicted) OVERRIDES the tier baseline for any
+slide presenting that analysis. Analysis strength is what plan.v1
+records when REPORT.md's Limitations call out a methodological
+caveat — for those analyses, the slide must use language consistent
+with the caveat, REGARDLESS of the deck's overall tier.
+
+**Forbidden verb list when the underlying analysis is `partial` or
+`preliminary`** (these claim more certainty than the data supports):
+
+  - "validates", "validated", "validation"
+  - "demonstrates", "demonstrated"
+  - "confirms", "confirmed", "confirmation"
+  - "proves", "proven"
+  - "establishes", "established"
+  - "shows definitively", "definitively shows"
+
+**Required-substitute verbs for `partial` / `preliminary` analyses:**
+
+  - "consistent with"
+  - "marginally supports"
+  - "preliminary evidence for"
+  - "suggestive of" (only if data is genuinely directional but underpowered)
+  - "is compatible with the hypothesis that"
+
+**Worked example** (the 2026-04-26 live failure on `functional_dark_matter`):
+
+| Analysis | Plan strength | Forbidden | Required |
+|---|---|---|---|
+| Lab-field concordance 61.7% (binomial p=0.072, CI [0.474, 0.742] — Wilson includes null) | `partial` | "61.7% validates fitness phenotypes as proxies for ecological function" | "61.7% concordance is consistent with fitness phenotypes proxying ecological function (binomial p=0.072, marginal — CI includes null)" |
+| 4/4 NMDC abiotic predictions (compositional coupling per Limitation #8) | `partial` | "NMDC validation confirms 4/4 predictions" | "All 4 pre-registered predictions hold; aggregate inflation factor (Limitation #8) means individual effect sizes are likely overstated" |
+| Top 100 candidates 82% testable hypotheses | `partial` (Limitation #11: weight sensitivity) | "82% testable hypotheses" | "82% testable hypotheses across the top 100 — note 36% of top-50 differ across alternative weight configurations (L#11)" |
+
+**Anti-pattern PA-12: Overclaim verb on partial analysis.** Using a
+forbidden verb on a slide presenting an analysis that plan flagged
+`partial` or `preliminary`. This is THE failure mode the 2026-04-26
+adversarial review surfaced. If you cannot find a strength glyph
+for the analysis in `00_plan.md`, default to assuming `partial` —
+better to under-claim than overclaim.
+
 ## Layout-selection discipline (top-level, before per-layout details)
 
 For each content slide, pick a layout by matching evidence shape to
@@ -447,6 +490,43 @@ for the user to see; treat coercions as bugs, not flexibility.
   structured list to inline text. `see_notes_footer: true` when the
   speaker notes will expand the methods further.
 
+**`tools_versions.version` discipline (2026-04-26 — fixes
+adversarial-review S2):**
+
+The `version` field is a STRING that names a release/build identifier.
+**Cohort sizes, row counts, dataset descriptions, and method
+descriptions are NOT versions.** The renderer (assemble_pptx) shows
+the version footer on the slide; non-version content there is visibly
+broken.
+
+**Acceptable version strings:**
+
+  - Semantic versions: `"2.0"`, `"v1.4.2"`, `"0.23.4"`
+  - Date-based releases: `"2024-03"`, `"2024-03 release"`, `"r214"`
+  - Commit / build IDs: `"git@a3f9d2b"`, `"build 24151"`
+  - Snapshot dates if no version: `"snapshot 2026-04-15"`
+  - "Unknown" if genuinely not pinnable: `"unknown"` (still a real
+    string answering the question "what version did you use?")
+
+**Forbidden version strings (live failure mode 2026-04-26):**
+
+  - `"48 organisms"` — that's a cohort size, not a version
+  - `"305M pathway rows"` — row count, not version
+  - `"ortholog hierarchies"` — method description, not version
+  - `"6,365 samples"` — dataset size, not version
+  - `"pathway analysis"` — domain description, not version
+  - `"cofit 13.6M pairs"` — dataset shape, not version
+
+**If you don't know the version:** put the cohort/dataset descriptor
+in a BULLET (where it belongs as a method beat — "FB integration:
+228,709 genes across 48 organisms"), NOT in tools_versions. Use
+`"unknown"` for the version field, or omit `tools_versions` entirely.
+
+**Anti-pattern PA-13: tools_versions misuse.** Populating the
+`version` field with non-version content (sizes, row counts, method
+phrases). The schema field's name is `version`; the user reads the
+rendered footer expecting versions.
+
 ### `concept_illustration`
 
 - **Required:** `title`, `image_path`, `image_prompt`, `style`
@@ -571,6 +651,41 @@ evidence is the answer field).
   slide must be there — it's where audience eyes parse the method
   before they parse the result. This is the lesson from the
   2026-04-26 deck review.
+- **PA-11: Denominator conflation.** A single slide carries two or
+  more percentages / ratios / rates whose denominators differ, with
+  no annotation that they differ. The audience reads them as
+  laddering up a single argument when they're describing different
+  populations. This is a high-rate failure on quantitative slides
+  and a top-3 finding from the 2026-04-26 adversarial review.
+
+  **Examples from the live failure** (`functional_dark_matter`):
+  - Slide 9 mixed "82% testable hypotheses" (denominator: top-100,
+    n=100) with "83.7% Bakta reclassification" (denominator: all
+    pangenome-linked dark genes, n=39,532). Audience hears
+    laddered evidence; reality is two different populations.
+  - Slide 14 mixed "4/4 pre-registered NMDC predictions" with
+    "441/449 exploratory tests" — REPORT Limitation #8 explicitly
+    says exploratory tests are NOT additional validation due to
+    20× compositional inflation.
+
+  **Discipline:** when a slide has ≥2 quantitative bullets, ALL
+  must either share a denominator OR each must explicitly name its
+  population in the bullet text. Acceptable forms:
+
+  - "82% of top 100 candidates have testable hypotheses; 83.7% of
+    all 39,532 pangenome-linked dark genes reclassify under Bakta"
+    ← each bullet names its population; OK to share a slide.
+  - "Of the top 100 candidates: 82% have testable hypotheses, 64%
+    are robust to scoring weights, 90% pass cross-organism
+    concordance" ← shared denominator (top 100); OK.
+  - "82% testable hypotheses, 83.7% Bakta reclassification, 61.7%
+    lab-field concordance" ← three different populations conflated;
+    NOT OK. Split across slides OR annotate each.
+
+  **Self-review item:** for every claim_evidence / big_number /
+  data_figure slide with ≥2 bullets containing percentages or
+  ratios, scan the denominators. If they differ, either split the
+  slide or annotate each bullet's population inline.
 
 ## Self-review pass
 

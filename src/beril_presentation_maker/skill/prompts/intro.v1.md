@@ -242,6 +242,36 @@ For talk-30 / talk-45 (3-4 slide budget), in order:
    specific question this project attacks. Must be grounded in
    RESEARCH_PLAN.md's stated research questions. Specificity is
    load-bearing: name the dataset, the n, the method's scope.
+
+   **Goal-slot bullet discipline (2026-04-26 — fixes adversarial-
+   review S1):** if using `claim_evidence` with bullets, the bullets
+   MUST be RESEARCH QUESTIONS or MEASURABLE OBJECTIVES from
+   RESEARCH_PLAN.md, NOT method descriptions or finding summaries.
+   The audience is reading "Goal:" — they want to hear what we set
+   out to learn, not what we did.
+
+   **Acceptable goal bullets** (questions or objectives):
+
+   - "Can experimental fitness data identify dark genes worth
+     experimentally characterizing?"
+   - "Do lab phenotypes predict ecological function in field
+     samples?"
+   - "Identify the top 100 dark gene candidates for RB-TnSeq follow-up"
+   - "Quantify lab-field concordance for fitness phenotypes"
+
+   **Forbidden goal bullets** (live failure mode 2026-04-26 —
+   describing what was done, not what was sought):
+
+   - "Systematically integrate six evidence layers" — this is the
+     METHOD, not a goal
+   - "Identify the 17,344 dark genes with measurable phenotypes" —
+     this is a FINDING (already done)
+   - "Validate prioritization using biogeographic patterns" — also
+     a method description
+
+   **If RESEARCH_PLAN.md has a `## Research Question` or `## Hypothesis`
+   section, pull verbatim from there.** If absent, frame the goal as
+   the throughline punchline phrased as a question.
 3. **Approach Overview** (`claim_evidence` with 1-3 bullets, OR
    `workflow_diagram` with 3-step diagram, role `approach`) — the
    high-level method/strategy. Names the substories' core methods,

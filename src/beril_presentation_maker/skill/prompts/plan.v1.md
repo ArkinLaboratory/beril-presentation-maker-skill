@@ -95,11 +95,16 @@ The substory_design agent groups these into substories. **List every
 analysis in REPORT.md that bears on a finding.** Do not group, rank, or
 filter here — that's substory_design's job. Each entry is one row.
 
-| ID | Analysis | Source | Strength of finding |
-|---|---|---|---|
-| A1 | {short name} | REPORT.md §{section} | `direct` / `partial` / `preliminary` |
-| A2 | ... | notebook 03_X.ipynb cell 12 | ... |
-| ... | ... | ... | ... |
+| ID | Analysis | Source | Strength of finding | Notes |
+|---|---|---|---|---|
+| A1 | {short name} | REPORT.md §{section} | `direct` / `partial` / `preliminary` | (caveat or empty) |
+| A2 | ... | notebook 03_X.ipynb cell 12 | ... | L#N: 1-line paraphrase if affected |
+| ... | ... | ... | ... | ... |
+
+**Notes column rule:** if a REPORT.md `## Limitations` entry affects
+the analysis, the Notes field MUST cite the Limitation number + a
+1-line paraphrase. Empty Notes are fine for analyses no Limitation
+affects. See "Strength-of-finding tagging" below for the procedure.
 
 ## Throughline candidate seeds (input to throughline agent)
 
@@ -250,6 +255,60 @@ The inventory is exhaustive — every analysis in REPORT.md goes in,
 even ones you think are weak. Substory_design decides which to keep
 in clusters; it is responsible for `cover-all-critical-analyses`
 discipline (D-002 rev1 / SPEC §4.2).
+
+### Strength-of-finding tagging — REPORT Limitations are load-bearing
+
+The strength column (`direct` / `partial` / `preliminary`) is what
+downstream prompts use to decide caveat language, layout discipline,
+and overclaim avoidance. **The REPORT's `## Limitations` section is
+the single most important input to strength tagging.** Every analysis
+that a Limitation explicitly affects MUST be tagged at most `partial`
+strength, with the limitation paraphrased in the `notes` field.
+
+**Procedure:**
+
+1. Locate the `## Limitations` section in REPORT.md (or
+   `### Limitations` under Interpretation). If absent, mark every
+   analysis at face value.
+2. Read each numbered limitation. Each one names a specific concern
+   about a specific analysis or class of analyses.
+3. For every analysis in your inventory, ask: "is there a REPORT
+   Limitation that names this analysis or its underlying method?"
+4. If yes: downgrade strength to `partial` (or `preliminary` for
+   severe limitations like "compositional coupling explains the
+   significance" or "control was not run"). Add a `notes` field
+   citing the Limitation number + 1-line paraphrase.
+5. If a Limitation describes a methodological gap (e.g., "we used
+   a single-genome heuristic where DOOR/STRING use multi-genome
+   training"), the affected analyses are `partial` even if their
+   numerical results are precise — the gap is about generalizability,
+   not within-dataset accuracy.
+
+**Worked example (from `functional_dark_matter`'s Limitations):**
+
+| ID | Analysis | Source | Strength | Notes |
+|---|---|---|---|---|
+| A4 | Pangenome conservation links | REPORT.md §Finding 2 | `direct` | (no Limitation cites this) |
+| A14 | Biogeographic carrier vs non-carrier | REPORT.md §Finding 6 | `partial` | L#1: AlphaEarth 28% genome coverage limits power |
+| A18 | NMDC abiotic correlations | REPORT.md §Finding 7 | `partial` | L#2: genus-level resolution may miss species signals; L#8: compositional coupling inflates exploratory tests |
+| A23 | High-confidence functional hypotheses (82%) | REPORT.md §Finding 8 | `partial` | L#11: scoring weight sensitivity; only 18/50 always-top across configs |
+| A30 | Improved gene neighborhood analysis | REPORT.md §Finding 12 | `partial` | L#10: single-genome heuristic vs DOOR/STRING multi-genome |
+
+**Why this matters:** the live 2026-04-26 deck on `functional_dark_matter`
+shipped 19 content slides, ALL claiming `direct` strength even though
+12 explicit Limitations affected at least 5 of those analyses. The
+audience never saw the caveats. Downstream prompts (slide_compose,
+speaker_notes) use the strength column to decide whether to use
+"validates"/"demonstrates" (only on `direct`) vs. "consistent with"/
+"marginally supports" (on `partial`/`preliminary`). Without the
+glyphs, the language defaults to overclaim.
+
+**Anti-pattern PA-6: Limitations-blind plan.** Listing every analysis
+as `direct` when a `## Limitations` section exists. This is the
+silent-failure mode that lets the deck overclaim. If REPORT has a
+Limitations section, expect ≥30% of analyses to land at `partial`
+or `preliminary`. If your inventory has 0% partial after a thorough
+read, re-read the Limitations section.
 
 ## Tool use
 
