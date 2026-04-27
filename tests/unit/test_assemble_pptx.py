@@ -252,6 +252,60 @@ def test_each_layout_renders(ss, asm, tmp_path, layout):
 
 
 @requires_master
+def test_slide_level_title_autofit_landed(ss, asm, tmp_path):
+    """2026-04-26 fix #63: slide-level normAutofit must be set on title
+    placeholders (layout-level autofit alone doesn't trigger at render).
+    Verify every slide except big_number/big_idea has slide-level
+    normAutofit fontScale=80000 + anchor=t on its title placeholder.
+    """
+    spec = ss.example_slide_spec()
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+    prs = Presentation(out)
+    failures = []
+    intentional_no_autofit = {"big_number", "big_idea"}
+
+    for i, slide in enumerate(prs.slides, 1):
+        if slide.slide_layout.name in intentional_no_autofit:
+            continue
+        if not slide.shapes.title:
+            continue
+        title = slide.shapes.title
+        body_pr = title.element.find(f"{{{P_NS}}}txBody/{{{A_NS}}}bodyPr")
+        if body_pr is None:
+            failures.append(
+                f"slide {i} ({slide.slide_layout.name}): title has no bodyPr"
+            )
+            continue
+        norm = body_pr.find(f"{{{A_NS}}}normAutofit")
+        if norm is None:
+            failures.append(
+                f"slide {i} ({slide.slide_layout.name}): "
+                f"missing slide-level <a:normAutofit/>"
+            )
+            continue
+        if norm.get("fontScale") != "80000":
+            failures.append(
+                f"slide {i} ({slide.slide_layout.name}): "
+                f"fontScale={norm.get('fontScale')!r}, expected '80000'"
+            )
+        if body_pr.get("anchor") != "t":
+            failures.append(
+                f"slide {i} ({slide.slide_layout.name}): "
+                f"anchor={body_pr.get('anchor')!r}, expected 't'"
+            )
+
+    assert not failures, "\n  ".join(failures)
+
+
+@requires_master
 def test_methods_summary_renders_tools_versions(ss, asm, tmp_path):
     """2026-04-26 fix #59: tools_versions now renders as a footer band
     (was silently dropped before). Build a methods_summary slide with

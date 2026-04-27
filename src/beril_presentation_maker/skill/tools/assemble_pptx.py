@@ -138,10 +138,74 @@ def _get_layout_by_name(prs: Presentation, name: str):
     )
 
 
+# OOXML namespaces — needed for slide-level bodyPr autofit fix.
+_PML_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def _ensure_slide_text_autofit(text_frame_element,
+                                font_scale: int = 80000,
+                                ln_spc_reduction: int = 20000,
+                                anchor: str = "t") -> None:
+    """Force normAutofit + anchor on a slide-level text frame's <a:bodyPr>.
+
+    PowerPoint quirk: layout-level <a:normAutofit/> on a title placeholder
+    governs initial layout but does NOT trigger runtime text-shrinking on
+    rendered slides. The autofit MUST be set on the slide's own bodyPr
+    for PowerPoint to compute fontScale at render time.
+
+    The 2026-04-26 v0.1.1-visual master template fix (#53) wrote autofit
+    on every layout's title placeholder, but verification showed slides
+    1/5/7/10/12/15 still overran because the slide-level bodyPr was
+    missing entirely (placeholders inherit text properties from layout
+    BUT the bodyPr's autofit child is layout-init-only). This helper
+    inserts the slide-level bodyPr autofit to make the inheritance
+    actually apply at render.
+
+    Pass an lxml Element (the <p:sp> for a placeholder OR the inner
+    <p:txBody> directly). Looks up <a:bodyPr> under it, replaces any
+    existing autofit child with <a:normAutofit fontScale="..." lnSpcReduction="..."/>,
+    sets anchor attribute.
+    """
+    # If we got a <p:sp>, find <p:txBody>; if we got <p:txBody>, use it.
+    if text_frame_element.tag.endswith("}sp"):
+        tx_body = text_frame_element.find(f"{{{_PML_NS}}}txBody")
+    else:
+        tx_body = text_frame_element
+    if tx_body is None:
+        return
+    body_pr = tx_body.find(f"{{{_DML_NS}}}bodyPr")
+    if body_pr is None:
+        return
+    # Remove any existing autofit child(ren)
+    for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+        for child in list(body_pr):
+            if child.tag == f"{{{_DML_NS}}}{tag}":
+                body_pr.remove(child)
+    # Add normAutofit with explicit fontScale + lnSpcReduction
+    from lxml import etree as _et
+    af = _et.SubElement(body_pr, f"{{{_DML_NS}}}normAutofit")
+    af.set("fontScale", str(font_scale))
+    af.set("lnSpcReduction", str(ln_spc_reduction))
+    # Set anchor (overflow-grows-down for top-anchored)
+    body_pr.set("anchor", anchor)
+
+
 def _set_title(slide, text: str) -> None:
     if not slide.shapes.title:
         return
-    slide.shapes.title.text = text
+    title_shape = slide.shapes.title
+    title_shape.text = text
+    # 2026-04-26 #63 fix: write slide-level normAutofit so PowerPoint
+    # actually shrinks long titles at render. Layout-level autofit isn't
+    # honored at render; the slide's own bodyPr must carry the autofit
+    # element. Skip layouts where the master pins font size by design
+    # (big_number, big_idea — those depend on prompt-side title-length
+    # caps, not autofit, and forcing autofit here would override the
+    # master's intentional pinning).
+    layout_name = slide.slide_layout.name
+    if layout_name not in ("big_number", "big_idea"):
+        _ensure_slide_text_autofit(title_shape.element)
 
 
 def _find_placeholder(slide, idx: int):
@@ -315,6 +379,14 @@ def _fill_title(slide, content, draft_dir, warnings):
         parts.append(content["venue"])
     parts.append(content["date"])
     _set_placeholder_text(slide, 1, "\n".join(parts))
+    # 2026-04-26 #63 fix: subtitle placeholder also needs slide-level
+    # autofit. With the v0.1.1 title-slide stub fix, the subtitle now
+    # carries the throughline punchline (often 200+ chars) — the layout's
+    # autofit doesn't trigger at render unless the slide's own bodyPr
+    # has it.
+    subtitle_ph = _find_placeholder(slide, 1)
+    if subtitle_ph is not None:
+        _ensure_slide_text_autofit(subtitle_ph.element)
 
 
 def _fill_section_divider(slide, content, draft_dir, warnings):
