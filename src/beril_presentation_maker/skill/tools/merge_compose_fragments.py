@@ -197,11 +197,23 @@ def build_title_slide(slide_id: int, throughline_punchline: str,
     if not title_text:
         title_text = f"BERDL project: {project_id}"
 
-    # Subtitle carries the throughline punchline (the load-bearing claim).
-    # If throughline punchline is the placeholder "TBD", subtitle is empty.
-    subtitle = (throughline_punchline
-                if throughline_punchline and throughline_punchline != "TBD"
-                else "")
+    # Subtitle carries a TRUNCATED version of the throughline punchline.
+    # 2026-04-26 followup: full punchline (200-300 chars) overflowed the
+    # subtitle placeholder even with autofit (which fontScale=80% can't
+    # rescue at 30%-required shrink). Truncate at the last word boundary
+    # ≤120 chars + ellipsis — the full claim lives in 00_throughline.md
+    # for the speaker; the subtitle is just an audience teaser.
+    SUBTITLE_CAP = 120
+    if not throughline_punchline or throughline_punchline == "TBD":
+        subtitle = ""
+    elif len(throughline_punchline) <= SUBTITLE_CAP:
+        subtitle = throughline_punchline
+    else:
+        # Truncate at last word boundary ≤ cap-3 (room for "...")
+        cut = throughline_punchline.rfind(" ", 0, SUBTITLE_CAP - 3)
+        if cut < 0:
+            cut = SUBTITLE_CAP - 3
+        subtitle = throughline_punchline[:cut].rstrip(" ,;") + "…"
 
     content = {
         "title": title_text,

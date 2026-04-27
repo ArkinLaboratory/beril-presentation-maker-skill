@@ -185,13 +185,15 @@ LAYOUT_FIXES: dict[str, dict] = {
     "section_divider": {
         "rationale": (
             "Substory transitions need the punchline to BE the slide. "
-            "Center band, 60pt centered, full slide width. The universal "
-            "title-autofit sweep (Step 5b in build_master) runs AFTER this "
-            "fix and overrides body_pr to normAutofit + anchor=t — the "
-            "noAutofit setting here was the original 2026-04-26 design "
-            "but caused 220-260 char punchlines to overflow ~1.8-2.2x. "
-            "The defensive autofit layer is the v0.1.1 fix; substory_design "
-            "punchline cap (≤14 words) is the upstream prompt fix (T2.4)."
+            "Center band, 40pt centered, full slide width. Original "
+            "2026-04-26 design used 60pt + noAutofit; that combination "
+            "caused 220-260 char punchlines to overflow ~1.8-2.2x even "
+            "after the v0.1.1-visual autofit fix (60pt × 80% = 48pt is "
+            "still too big for 200+ chars). Lowered to 40pt so autofit "
+            "at 80% gives 32pt — fits 14-word punchlines once T2.4 caps "
+            "them. The universal title-autofit sweep (Step 5b in "
+            "build_master) runs AFTER this fix and overrides body_pr "
+            "to normAutofit + anchor=t."
         ),
         "shape_edits": [
             {
@@ -200,7 +202,7 @@ LAYOUT_FIXES: dict[str, dict] = {
                          "ext_cx": 9144000, "ext_cy": 1273844},
                 "body_pr": {"auto_fit_kind": "normAutofit"},
                 "lvl1_ppr": {"algn": "ctr"},
-                "def_rpr": {"sz": 6000},
+                "def_rpr": {"sz": 4000},
             },
         ],
     },
