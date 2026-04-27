@@ -242,13 +242,53 @@ def build_acknowledgments_slide(slide_id: int) -> dict:
     }
 
 
-def build_references_slide(slide_id: int) -> dict:
+def build_references_slide(slide_id: int,
+                           citation_pool_path: Path | None = None) -> dict:
+    """Build the references slide.
+
+    2026-04-27 #72: if citation_pool.json exists, populate refs_short
+    with the top-N (≤8) entries formatted as compact citation strings.
+    Falls back to the TBD stub if pool is absent or malformed.
+    """
+    refs_short: list[str] = []
+    if citation_pool_path is not None and citation_pool_path.is_file():
+        try:
+            pool = json.loads(citation_pool_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: cannot parse citation pool at "
+                  f"{citation_pool_path}: {e}", file=sys.stderr)
+            pool = None
+        if isinstance(pool, list):
+            entries = pool
+        elif isinstance(pool, dict):
+            entries = pool.get("entries", []) or []
+        else:
+            entries = []
+        # Take up to 8 entries; format as "{authors} ({year}). {title}.
+        # {venue}." compact form. Tolerate missing fields.
+        for entry in entries[:8]:
+            if not isinstance(entry, dict):
+                continue
+            authors = entry.get("authors") or entry.get("author") or "?"
+            if isinstance(authors, list):
+                authors = (authors[0] + " et al."
+                           if len(authors) > 1 else authors[0])
+            year = entry.get("year") or "?"
+            title = entry.get("title") or "?"
+            venue = entry.get("venue") or entry.get("journal") or ""
+            short = f"{authors} ({year}). {title}."
+            if venue:
+                short += f" {venue}."
+            refs_short.append(short[:200])  # cap per-entry length
+
+    if not refs_short:
+        refs_short = ["TBD - citation_pool not available"]
     return {
         "id": slide_id,
         "layout": "references",
         "content": {
-            "refs_short": ["TBD - citation_pool not run in smoke"],
-            "full_pool_in_speaker_notes": False,
+            "refs_short": refs_short,
+            "full_pool_in_speaker_notes": True if refs_short[0] != "TBD - citation_pool not available" else False,
         },
     }
 
@@ -333,6 +373,20 @@ def main() -> int:
                          "If present, speaker_notes are injected into "
                          "per-substory slides at merge time. Absent → "
                          "slides ship without speaker notes.")
+    ap.add_argument("--citation-pool-path", default=None,
+                    help="Optional path to citation_pool.json. If "
+                         "present and non-empty, the references slide "
+                         "is populated with the top ≤8 entries. Absent "
+                         "or empty → slide ships with TBD stub.")
+    ap.add_argument("--cross-tenant-fragment-path", default=None,
+                    help="Optional path to cross_tenant_integration "
+                         "slide JSON fragment. If present, splice as a "
+                         "deck-level slide before acknowledgments.")
+    ap.add_argument("--qa-fragment-path", default=None,
+                    help="Optional path to qa_anticipated.json fragment "
+                         "(qa_prep stage output). If present, splice "
+                         "qa_anticipated slides at deck end before "
+                         "acknowledgments.")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -429,12 +483,60 @@ def main() -> int:
             slides.append(cleaned)
             next_id += 1
 
-    # 3. Acknowledgments stub
+    # 4. Cross-tenant slide (optional, deck-level — between last substory
+    #    and acknowledgments). Per cross_tenant.v1.md, this is a single
+    #    slide describing the project's K-BERDL platform integration if
+    #    signals were detected.
+    cross_tenant_path = (Path(args.cross_tenant_fragment_path)
+                         if args.cross_tenant_fragment_path else None)
+    if cross_tenant_path is not None and cross_tenant_path.is_file():
+        try:
+            ct_data = json.loads(cross_tenant_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: cannot parse cross_tenant fragment at "
+                  f"{cross_tenant_path}: {e}", file=sys.stderr)
+            ct_data = None
+        if isinstance(ct_data, dict):
+            ct_slides = ct_data.get("slides", [])
+            for ct_slide in ct_slides:
+                cleaned = strip_orchestrator_metadata(ct_slide)
+                cleaned["id"] = next_id
+                cleaned.pop("substory_id", None)
+                slides.append(cleaned)
+                next_id += 1
+
+    # 5. Q&A anticipated slides (optional, deck-level — at end before
+    #    acknowledgments). Per qa_prep.v1.md, 0-4 slides depending on
+    #    QA_SLIDE_BUDGET (mode-default).
+    qa_path = (Path(args.qa_fragment_path)
+               if args.qa_fragment_path else None)
+    if qa_path is not None and qa_path.is_file():
+        try:
+            qa_data = json.loads(qa_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: cannot parse qa fragment at {qa_path}: {e}",
+                  file=sys.stderr)
+            qa_data = None
+        if isinstance(qa_data, dict):
+            qa_slides = qa_data.get("slides", [])
+            for qa_slide in qa_slides:
+                cleaned = strip_orchestrator_metadata(qa_slide)
+                # Strip qa_prep-specific orchestrator metadata
+                cleaned.pop("weakness_target", None)
+                cleaned.pop("tier_evidence_at_risk", None)
+                cleaned["id"] = next_id
+                cleaned.pop("substory_id", None)
+                slides.append(cleaned)
+                next_id += 1
+
+    # 6. Acknowledgments stub
     slides.append(build_acknowledgments_slide(next_id))
     next_id += 1
 
     # 4. References stub
-    slides.append(build_references_slide(next_id))
+    citation_pool_path = (Path(args.citation_pool_path)
+                          if args.citation_pool_path else None)
+    slides.append(build_references_slide(next_id, citation_pool_path))
 
     # Build the top-level spec object
     spec = {

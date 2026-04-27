@@ -112,10 +112,10 @@ esac
 
 # Validate --resume-from + --draft-dir pairing
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|curate_figures|intro|slide_compose|speaker_notes|merge) ;;
+  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|curate_figures|intro|slide_compose|speaker_notes|merge" >&2
+    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -624,6 +624,115 @@ stage_curate_figures() {
   fi
 }
 
+stage_citation_pool() {
+  # 2026-04-27 #72 (Phase 2B.1): build a verified citation pool for
+  # the deck. Runs after substory_design / parallel to curate_figures.
+  # If PROJECT_DIR has a sibling papers/draft_*/ with an existing
+  # citation_pool.json, reuse it (saves verify-by-resolution cost).
+  # Otherwise, run citation_pool.v1.md to verify-by-resolution every
+  # claim's source per its 9-field schema. Output:
+  # {OUTDIR}/citation_pool.json. slide_compose's CITATION_POOL_PATH
+  # points here; merge populates the references slide from it.
+  echo "" >&2
+  echo "[Stage 3.7/5] citation_pool" >&2
+
+  local pool_path="$OUTDIR/citation_pool.json"
+
+  # Check for sibling paper draft to reuse from
+  local paper_dir=""
+  if [[ -d "$PROJECT_DIR/papers" ]]; then
+    # Find latest paper draft with a citation_pool.json or pool.json
+    local latest_paper
+    latest_paper=$(ls -1d "$PROJECT_DIR/papers/draft_"* 2>/dev/null | sort -V | tail -1)
+    if [[ -n "$latest_paper" ]] && \
+       { [[ -f "$latest_paper/citation_pool.json" ]] || [[ -f "$latest_paper/pool.json" ]]; }; then
+      paper_dir="$latest_paper"
+      echo "  -> found sibling paper draft: $latest_paper (reuse-from-paper enabled)" >&2
+      "$PYTHON_BIN" "$TOOLS_DIR/citation_pool.py" reuse-from-paper \
+        "$paper_dir" "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || \
+        echo "    warning: reuse-from-paper failed; will start fresh" >&2
+    fi
+  fi
+
+  local user_prompt="PROJECT_ROOT=$PROJECT_DIR
+DRAFT_DIR=$OUTDIR
+POOL_JSON_PATH=$pool_path
+MODE=paper
+TIER=$TIER
+THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+EXISTING_POOL_PATH=$pool_path
+
+Run the citation_pool stage. Build a verify-by-resolution pool of \
+citations supporting the throughline + critical-analysis inventory. \
+Cap at 80 entries (D-009). If EXISTING_POOL_PATH already exists \
+(reuse-from-paper landed), trust those entries verbatim and ADD only \
+talk-needed entries with notes='added by talk'. Write the result as \
+JSON to POOL_JSON_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/citation_pool.v1.md" \
+    "$user_prompt" "$pool_path" "citation_pool"
+}
+
+stage_cross_tenant() {
+  # 2026-04-27 #73 (Phase 2B.2): two-step.
+  # (a) Run extract_cross_tenant.py to detect signal — pure Python.
+  #     If no signal, skip the LLM call entirely (saves ~\$0.30).
+  # (b) If signal present, run cross_tenant.v1.md to compose a single
+  #     cross_tenant_integration slide (deck-level; spliced between
+  #     last substory and acknowledgments at merge time).
+  echo "" >&2
+  echo "[Stage 3.8/5] cross_tenant" >&2
+
+  local signal_md="$OUTDIR/cross_tenant_signal.md"
+  local signal_json="$OUTDIR/cross_tenant_signal.json"
+  local fragment_path="$OUTDIR/03_slides/cross_tenant.json"
+
+  # Step (a): detect signal
+  "$PYTHON_BIN" "$TOOLS_DIR/extract_cross_tenant.py" \
+    "$PROJECT_DIR" \
+    --out "$signal_md" \
+    --json "$signal_json" \
+    --quiet 2>&1 | sed 's/^/    /' >&2
+
+  # Step (b): check if we have signal
+  local has_signal
+  has_signal=$("$PYTHON_BIN" -c "
+import json, sys
+try:
+    d = json.load(open('$signal_json'))
+    print('false' if d.get('no_signal_fallback') else 'true')
+except Exception as e:
+    print('false', file=sys.stderr)  # if extract fails, skip
+    print('false')
+")
+
+  if [[ "$has_signal" != "true" ]]; then
+    echo "  no cross-tenant signal detected — skipping LLM call" >&2
+    return 0
+  fi
+
+  echo "  cross-tenant signal detected — composing slide" >&2
+
+  local user_prompt="OUT_PATH=$fragment_path
+PROJECT_DIR=$PROJECT_DIR
+SIGNAL_PATH=$signal_md
+PLAN_PATH=$OUTDIR/00_plan.md
+THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+SUBSTORY_PATH=$OUTDIR/02_substories.md
+CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+MODE=$MODE
+TIER=$TIER
+
+Run the cross_tenant stage. The signal file lists detected K-BERDL \
+tenants, databases, sibling-project references, and KBase URLs. \
+Compose a SINGLE cross_tenant_integration slide presenting honestly \
+what cross-tenant integration the project leverages. Write the result \
+as a JSON fragment with kind='cross_tenant_set' to OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/cross_tenant.v1.md" \
+    "$user_prompt" "$fragment_path" "cross_tenant"
+}
+
 stage_intro() {
   local out="$OUTDIR/03_slides/intro.json"
   echo "" >&2
@@ -721,6 +830,66 @@ cover this). Write the result to OUT_PATH."
   return 0
 }
 
+stage_qa_prep() {
+  # 2026-04-27 #74 (Phase 2B.3): whole-deck pass after slide_compose × N.
+  # Reads all substory fragments + plan + throughline + substory_design;
+  # picks 2-4 hardest audience questions ranked by priority
+  # (generalizability > methodology > limitation > consistency >
+  # practical) per qa_prep.v1.md. Output is one fragment with
+  # kind='qa_anticipated_set'; spliced at deck end before acks.
+  echo "" >&2
+  echo "[Stage 5.7/7] qa_prep" >&2
+
+  # Mode-aware QA budget: skip for posters (qa makes no sense in poster)
+  if [[ "$MODE" == "poster-h" || "$MODE" == "poster-v" ]]; then
+    echo "  mode=$MODE — skipping qa_prep (posters don't have Q&A)" >&2
+    return 0
+  fi
+
+  # Mode-default budget per qa_prep.v1.md
+  local qa_budget
+  case "$MODE" in
+    talk-30)        qa_budget=3 ;;
+    talk-15)        qa_budget=2 ;;
+    talk-45)        qa_budget=4 ;;
+    lightning-5)    qa_budget=1 ;;
+    *)              qa_budget=3 ;;
+  esac
+
+  local fragment_path="$OUTDIR/03_slides/qa_anticipated.json"
+
+  # Build comma-separated FRAGMENT_PATHS list (all substory composes)
+  local fragment_paths=""
+  for f in "$OUTDIR/03_slides/"S?_slides.json; do
+    if [[ -f "$f" ]]; then
+      fragment_paths="${fragment_paths}${f},"
+    fi
+  done
+  fragment_paths="${fragment_paths%,}"  # strip trailing comma
+
+  local user_prompt="OUT_PATH=$fragment_path
+PROJECT_DIR=$PROJECT_DIR
+SUBSTORY_PATH=$OUTDIR/02_substories.md
+THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+PLAN_PATH=$OUTDIR/00_plan.md
+FRAGMENT_PATHS=$fragment_paths
+CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+MODE=$MODE
+TIER=$TIER
+QA_SLIDE_BUDGET=$qa_budget
+
+Run the qa_prep stage. Build a weakness inventory from all substory \
+fragments + plan inventory's ⚠/✗ glyphs + throughline scope-gap list. \
+Pick the top $qa_budget hardest audience questions, weighted toward \
+generalizability + methodology + limitation. Each anticipated question \
+gets answer_summary (slide body) + answer_detail (speaker reference) + \
+specific evidence_pointer. Write the result as a JSON fragment with \
+kind='qa_anticipated_set' to OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/qa_prep.v1.md" \
+    "$user_prompt" "$fragment_path" "qa_prep"
+}
+
 stage_speaker_notes() {
   # 2026-04-27 #70: invoke speaker_notes.v1.md per substory after
   # slide_compose runs. The prompt produces markdown with strict H2
@@ -812,6 +981,9 @@ stage_merge_and_assemble() {
     --fragments-dir "$OUTDIR/03_slides" \
     --intro-fragment-path "$OUTDIR/03_slides/intro.json" \
     --speaker-notes-dir "$OUTDIR/04_speaker_notes" \
+    --citation-pool-path "$OUTDIR/citation_pool.json" \
+    --cross-tenant-fragment-path "$OUTDIR/03_slides/cross_tenant.json" \
+    --qa-fragment-path "$OUTDIR/03_slides/qa_anticipated.json" \
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
@@ -868,7 +1040,7 @@ should_run() {
   # Map stages to integer ordinals (curate_figures inserted at 4;
   # later stages shifted by 1).
   local order_resume order_stage
-  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 intro:5 slide_compose:6 speaker_notes:7 merge:8; do
+  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 merge:11; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -892,11 +1064,20 @@ if should_run substory_design;  then stage_substory_design  || { echo "FAIL at s
 if should_run curate_figures;   then stage_curate_figures  || { echo "FAIL at curate_figures" >&2; exit 1; }
                                 else echo "[skip] curate_figures (resume from $RESUME_FROM)" >&2; fi
 
+if should_run citation_pool;    then stage_citation_pool   || { echo "FAIL at citation_pool" >&2; exit 1; }
+                                else echo "[skip] citation_pool (resume from $RESUME_FROM)" >&2; fi
+
+if should_run cross_tenant;     then stage_cross_tenant    || { echo "FAIL at cross_tenant" >&2; exit 1; }
+                                else echo "[skip] cross_tenant (resume from $RESUME_FROM)" >&2; fi
+
 if should_run intro;            then stage_intro           || { echo "FAIL at intro" >&2; exit 1; }
                                 else echo "[skip] intro (resume from $RESUME_FROM)" >&2; fi
 
 if should_run slide_compose;    then stage_slide_compose   || { echo "FAIL at slide_compose" >&2; exit 1; }
                                 else echo "[skip] slide_compose (resume from $RESUME_FROM)" >&2; fi
+
+if should_run qa_prep;          then stage_qa_prep         || { echo "FAIL at qa_prep" >&2; exit 1; }
+                                else echo "[skip] qa_prep (resume from $RESUME_FROM)" >&2; fi
 
 if should_run speaker_notes;    then stage_speaker_notes   || { echo "FAIL at speaker_notes" >&2; exit 1; }
                                 else echo "[skip] speaker_notes (resume from $RESUME_FROM)" >&2; fi
