@@ -167,13 +167,53 @@ for f in plan.v1.md throughline.v1.md substory_design.v1.md slide_compose.v1.md 
   fi
 done
 
-# --- Pre-flight: verify python deps before paying for LLM stages ---
-# Burned ~$6 across two smoke runs (2026-04-26) discovering python-pptx
+# --- Discover the pipx venv's Python interpreter ---
+# 2026-04-27 fix #67: bare `python3` in bash resolves differently than
+# in zsh on macOS (Anaconda vs Homebrew Python 3.14 — different
+# site-packages). Pin to whatever Python the user installed
+# `beril-presentation-maker` into via pipx. The console script's
+# shebang points at the pipx venv's interpreter; reading it gives us
+# a deploy-portable Python that has python-pptx + Pillow + nbformat
+# pre-installed. Pattern adapted from beril-paper-writer's
+# paper_writer.sh discover_python_bin helper.
+discover_python_bin() {
+  local cli_path
+  cli_path="$(command -v beril-presentation-maker 2>/dev/null || true)"
+  if [[ -z "$cli_path" ]]; then
+    return 1
+  fi
+  local shebang
+  shebang="$(head -n 1 "$cli_path" | sed 's|^#!||')"
+  if [[ -z "$shebang" || ! -x "$shebang" ]]; then
+    return 1
+  fi
+  echo "$shebang"
+}
+
+PYTHON_BIN="$(discover_python_bin)" || PYTHON_BIN=""
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "Error: cannot discover the package's Python interpreter." >&2
+  echo "       The orchestrator needs a deploy-portable Python that has" >&2
+  echo "       python-pptx, Pillow, and nbformat installed. Install via:" >&2
+  echo "" >&2
+  echo "         cd $(dirname "$(dirname "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")")")" >&2
+  echo "         pipx install --force -e ." >&2
+  echo "" >&2
+  echo "       Then re-run this script. \`beril-presentation-maker\` should" >&2
+  echo "       be on PATH; this script reads its shebang to find the right" >&2
+  echo "       python." >&2
+  exit 1
+fi
+
+echo "[orchestrator] using python: $PYTHON_BIN" >&2
+
+# --- Pre-flight: verify python deps in the discovered interpreter ---
+# Burned ~\$6 across two smoke runs (2026-04-26) discovering python-pptx
 # wasn't on the python3 the orchestrator resolves to — assembly failed
-# at the LAST stage after $3 of LLM costs. This pre-flight catches the
+# at the LAST stage after \$3 of LLM costs. This pre-flight catches the
 # missing-dep case at second 0, before stage 1 fires.
 echo "[pre-flight] verifying python deps..." >&2
-if ! python3 -c "
+if ! "$PYTHON_BIN" -c "
 import sys
 missing = []
 for mod, install_name in [
@@ -186,14 +226,12 @@ for mod, install_name in [
     except ImportError:
         missing.append((mod, install_name))
 if missing:
-    sys.stderr.write('FAIL: missing python deps:\n')
+    sys.stderr.write('FAIL: missing python deps in ' + sys.executable + ':\n')
     for mod, name in missing:
         sys.stderr.write(f'  - {name} (import {mod})\n')
-    sys.stderr.write('\nInstall with:\n')
-    sys.stderr.write('  python3 -m pip install --user ' +
-                     ' '.join(name for _, name in missing) + '\n')
-    sys.stderr.write('OR install the package editable:\n')
-    sys.stderr.write('  pip3 install --user -e .\n')
+    sys.stderr.write('\nThis is unexpected — these are pyproject.toml deps.\n')
+    sys.stderr.write('Re-run the pipx install:\n')
+    sys.stderr.write('  pipx install --force -e .\n')
     sys.exit(1)
 " 2>&1; then
   echo "" >&2
@@ -331,7 +369,7 @@ invoke_claude() {
       --verbose \
       "$user_prompt" \
       < /dev/null \
-      | python3 "$TOOLS_DIR/stream_progress.py" \
+      | "$PYTHON_BIN" "$TOOLS_DIR/stream_progress.py" \
           --expected-write-path "$expected_path" \
           --log "$log_file" \
           --model "$MODEL" \
@@ -467,7 +505,7 @@ gate_throughline_pick() {
     read -r pick </dev/tty
   fi
 
-  python3 "$TOOLS_DIR/parse_throughline_candidates.py" \
+  "$PYTHON_BIN" "$TOOLS_DIR/parse_throughline_candidates.py" \
     --candidates "$candidates" \
     --pick "$pick" \
     --out "$out"
@@ -496,7 +534,7 @@ Write the result to OUT_PATH."
 gate_substory_overflow() {
   local substories="$OUTDIR/02_substories.md"
   local verdict
-  verdict="$(python3 "$TOOLS_DIR/parse_substories.py" \
+  verdict="$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
     --path "$substories" --field capacity_verdict)"
 
   echo "  capacity verdict: $verdict" >&2
@@ -587,7 +625,7 @@ stage_slide_compose() {
 
   # Enumerate substory IDs from substory_design output
   local substory_ids
-  substory_ids=$(python3 "$TOOLS_DIR/parse_substories.py" \
+  substory_ids=$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
     --path "$substories" --field substory_ids)
 
   if [[ -z "$substory_ids" ]]; then
@@ -641,7 +679,7 @@ stage_merge_and_assemble() {
   local spec="$OUTDIR/slide_spec.json"
   local repair_report="$OUTDIR/diagram_repair_report.md"
 
-  python3 "$TOOLS_DIR/merge_compose_fragments.py" \
+  "$PYTHON_BIN" "$TOOLS_DIR/merge_compose_fragments.py" \
     --outdir "$OUTDIR" \
     --project-id "$PROJECT_ID" \
     --mode "$MODE" \
@@ -654,13 +692,13 @@ stage_merge_and_assemble() {
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
-  python3 "$TOOLS_DIR/repair_diagram_stubs.py" \
+  "$PYTHON_BIN" "$TOOLS_DIR/repair_diagram_stubs.py" \
     --in "$spec_raw" \
     --out "$spec" \
     --report "$repair_report"
 
   echo "  validating slide_spec.json..." >&2
-  python3 "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
+  "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
     echo "  validation FAILED — see $spec" >&2
     echo "  repair report: $repair_report" >&2
     return 1
@@ -672,7 +710,7 @@ stage_merge_and_assemble() {
   fi
 
   local pptx="$OUTDIR/draft.pptx"
-  python3 "$TOOLS_DIR/assemble_pptx.py" \
+  "$PYTHON_BIN" "$TOOLS_DIR/assemble_pptx.py" \
     "$spec" \
     --out "$pptx" \
     --master "$SKILL_DIR/references/templates/kbase-presentation-master.pptx" || {
