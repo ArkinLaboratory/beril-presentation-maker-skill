@@ -253,6 +253,39 @@ def build_references_slide(slide_id: int) -> dict:
     }
 
 
+def load_speaker_notes_for_substory(
+    notes_dir: Path | None, substory_id: str
+) -> dict[int, str]:
+    """Load parsed speaker notes for a substory.
+
+    Reads `{notes_dir}/{substory_id}_notes.json` (the parsed output
+    from parse_speaker_notes.py). Returns a dict mapping per-substory
+    position (0-indexed within the substory's slides) → notes text.
+
+    Returns {} if the file is absent (speaker_notes stage skipped) or
+    malformed (warns and proceeds without notes).
+    """
+    if notes_dir is None:
+        return {}
+    notes_path = notes_dir / f"{substory_id}_notes.json"
+    if not notes_path.is_file():
+        return {}
+    try:
+        data = json.loads(notes_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Warning: cannot parse speaker notes at {notes_path}: {e}",
+              file=sys.stderr)
+        return {}
+    raw = data.get("notes_by_position", {}) or {}
+    out: dict[int, str] = {}
+    for k, v in raw.items():
+        try:
+            out[int(k)] = str(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def load_intro_fragment(path: Path | None) -> list[dict]:
     """Load the intro fragment (intro.json) if present and non-empty.
 
@@ -294,6 +327,12 @@ def main() -> int:
     ap.add_argument("--intro-fragment-path", default=None,
                     help="Optional path to intro.json (intro stage output). "
                          "If absent or empty, no intro slides are spliced.")
+    ap.add_argument("--speaker-notes-dir", default=None,
+                    help="Optional directory containing parsed speaker "
+                         "notes JSON files ({substory_id}_notes.json). "
+                         "If present, speaker_notes are injected into "
+                         "per-substory slides at merge time. Absent → "
+                         "slides ship without speaker notes.")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -366,14 +405,27 @@ def main() -> int:
         next_id += 1
 
     # 3. Per-substory slides (in declared order)
+    speaker_notes_dir = (Path(args.speaker_notes_dir)
+                         if args.speaker_notes_dir else None)
+    n_notes_injected = 0
     for substory in substories:
         sid = substory["id"]
         fragment = fragments[sid]
-        for slide in fragment["slides"]:
+        # 2026-04-27 #70: load parsed speaker notes for this substory
+        # (if speaker_notes stage ran). Notes are keyed by per-substory
+        # position (0-indexed within fragment.slides).
+        notes_for_substory = load_speaker_notes_for_substory(
+            speaker_notes_dir, sid
+        )
+        for fragment_position, slide in enumerate(fragment["slides"]):
             cleaned = strip_orchestrator_metadata(slide)
             cleaned["id"] = next_id
             cleaned["substory_id"] = sid
             substory["slide_ids"].append(next_id)
+            # Inject speaker_notes for this position if available
+            if fragment_position in notes_for_substory:
+                cleaned["speaker_notes"] = notes_for_substory[fragment_position]
+                n_notes_injected += 1
             slides.append(cleaned)
             next_id += 1
 
@@ -405,6 +457,9 @@ def main() -> int:
     print(f"  -> merged {len(slides)} slides "
           f"({len(intro_slides)} intro + per-substory across "
           f"{len(substories)} substories)", file=sys.stderr)
+    if n_notes_injected > 0:
+        print(f"  -> injected speaker_notes on {n_notes_injected} slide(s)",
+              file=sys.stderr)
     print(f"     wrote {out_path}", file=sys.stderr)
     return 0
 

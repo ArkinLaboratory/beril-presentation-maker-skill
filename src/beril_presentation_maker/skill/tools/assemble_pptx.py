@@ -539,10 +539,22 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
             f"workflow_diagram on slide id={getattr(slide, 'slide_id', '?')}: "
             f"diagram render failed ({e}); slide will lack the diagram."
         )
-    # Step caption band below
+    # Step caption band below — 3 boxes side-by-side under the diagram
+    # (one per step_caption entry). 2026-04-27 fix #55: previous version
+    # joined all 3 captions with double-space and crammed them into a
+    # single 9.0x0.30in textbox, which ran off the right edge for any
+    # caption longer than ~30 chars (live failure draft_2 slide 11).
+    # Splitting into 3 columns gives each caption ~3.0in width and
+    # 0.50in height for word-wrap.
     captions = content["step_caption"]
-    _add_textbox(slide, "  ".join(captions), 0.50, 4.55, 9.00, 0.30,
-                 font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB)
+    n_captions = len(captions)
+    if n_captions > 0:
+        column_w = 9.0 / n_captions
+        for i, caption in enumerate(captions):
+            x = 0.50 + i * column_w
+            _add_textbox(slide, caption,
+                         x + 0.05, 4.50, column_w - 0.10, 0.55,
+                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB)
     if content.get("tool_version_footer"):
         _add_textbox(slide, content["tool_version_footer"],
                      0.30, 5.30, 9.40, 0.20,

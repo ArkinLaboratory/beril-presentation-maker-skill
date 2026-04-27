@@ -127,13 +127,22 @@ def coerce_edge_kind(raw: Any) -> tuple[str, str | None]:
     return coerced, str(raw) if raw is not None else "<missing>"
 
 
-def compute_linear_geometry(n_nodes: int, node_idx: int) -> dict:
+def compute_linear_geometry(n_nodes: int, node_idx: int,
+                            label: str = "") -> dict:
     """Linear horizontal flow geometry. Used when slide_compose omitted
     x/y/w/h. Mirrors the default in diagram_design.v1's
     'Geometry-authoring discipline' section.
 
     For N nodes: gap = 0.4", node_w = (CONTENT_WIDTH - (N+1)*gap) / N,
-    node_h = 0.9, y = CONTENT_TOP + 0.4.
+    node_h = 0.9 default; 1.1 if label has >2 words OR explicit "\n"
+    OR is >25 chars (a multi-line label needs vertical room).
+    y = CONTENT_TOP + 0.4.
+
+    2026-04-27 fix #55: node_h was a constant 0.9", which clipped
+    text on multi-word labels (live failure draft_2 workflow_diagram:
+    "FB organisms with RB TnSeq libraries" wrapped to 3 lines but
+    only 2 lines of vertical room). Adaptive height based on label
+    length / explicit newlines fixes the clip.
     """
     gap = 0.4
     if n_nodes <= 0:
@@ -141,7 +150,11 @@ def compute_linear_geometry(n_nodes: int, node_idx: int) -> dict:
     node_w = (CONTENT_WIDTH - (n_nodes + 1) * gap) / n_nodes
     if node_w < 0.6:
         node_w = 0.6  # floor — assemble_pptx prefers >= 0.5
-    node_h = 0.9
+    # Adaptive node height for multi-line labels
+    word_count = len(label.split())
+    has_newline = "\n" in label
+    long_label = len(label) > 25
+    node_h = 1.1 if (word_count > 2 or has_newline or long_label) else 0.9
     x = CONTENT_LEFT + (node_idx + 1) * gap + node_idx * node_w
     y = CONTENT_TOP + 0.4
     return {"x": round(x, 3), "y": round(y, 3),
@@ -202,7 +215,10 @@ def repair_diagram(diagram: dict, slide_path: str,
                 not isinstance(new_node.get(k), (int, float))
                 for k in ("x", "y", "w", "h")
             ):
-                geom = compute_linear_geometry(n_total, i)
+                # Pass the label so compute_linear_geometry can adapt
+                # node_h to multi-word / multi-line labels (#55).
+                node_label = new_node.get("label", "") or ""
+                geom = compute_linear_geometry(n_total, i, node_label)
                 missing = [k for k in ("x", "y", "w", "h")
                            if k not in node or not isinstance(node.get(k), (int, float))]
                 if missing:

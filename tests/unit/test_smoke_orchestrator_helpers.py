@@ -831,6 +831,177 @@ def test_merge_handles_malformed_intro_fragment(tmp_path: Path):
     assert len(spec["slides"]) == 7  # no intro slices, original 7 slides
 
 
+# ----------------------------------------------------------------------
+# parse_speaker_notes tests (Phase 2A.3 — 2026-04-27)
+# ----------------------------------------------------------------------
+
+import importlib.util as _ilu
+_psn_spec = _ilu.spec_from_file_location(
+    "parse_speaker_notes", TOOLS_DIR / "parse_speaker_notes.py"
+)
+_psn = _ilu.module_from_spec(_psn_spec)
+_psn_spec.loader.exec_module(_psn)
+
+
+SPEAKER_NOTES_FIXTURE = """\
+# Speaker notes — substory `S1`
+
+**Substory punchline:** Inner-loop wins on Morgan Price gold standard
+**Throughline:** Inner-loop annotation outperforms one-shot RAST
+**Tier:** STRONG
+**Mode:** talk-30
+
+---
+
+## position 0 — section_divider — `Inner-loop wins`
+
+This is the divider's notes. The substory opens by establishing the
+core claim: inner-loop annotation outperforms RAST one-shot on the
+curated Morgan Price gold standard.
+
+---
+
+## position 1 — methods_summary — `Methods: 3-pass refinement`
+
+The methods slide explains the procedure. We start with RAST 2.0,
+apply biosynthesis priors via inner-loop, and validate against
+Morgan Price 2022 (n=142 biosynthesis loci).
+
+---
+
+## position 2 — claim_evidence — `97.2% recovery`
+
+The headline result: 138/142 = 97.2% recovery. RAST one-shot only
+recovered 109/142 = 76.8%. The 23-percentage-point gap is the
+substory's load-bearing claim.
+"""
+
+
+def test_parse_speaker_notes_extracts_substory_id():
+    result = _psn.parse_speaker_notes_md(SPEAKER_NOTES_FIXTURE)
+    assert result["substory_id"] == "S1"
+
+
+def test_parse_speaker_notes_captures_all_sections():
+    result = _psn.parse_speaker_notes_md(SPEAKER_NOTES_FIXTURE)
+    assert result["header_count"] == 3
+    assert set(result["notes_by_position"].keys()) == {0, 1, 2}
+
+
+def test_parse_speaker_notes_body_correct():
+    result = _psn.parse_speaker_notes_md(SPEAKER_NOTES_FIXTURE)
+    assert "RAST 2.0" in result["notes_by_position"][1]
+    assert "138/142 = 97.2%" in result["notes_by_position"][2]
+    # Trailing --- separator stripped
+    assert not result["notes_by_position"][1].endswith("---")
+
+
+def test_parse_speaker_notes_handles_dash_variants():
+    """Live LLM may produce em-dash, en-dash, or hyphen in headers."""
+    variants = [
+        "## position 0 — section_divider — `T`\n\nBody.\n",
+        "## position 0 – section_divider – `T`\n\nBody.\n",  # en-dash
+        "## position 0 - section_divider - `T`\n\nBody.\n",
+    ]
+    for v in variants:
+        r = _psn.parse_speaker_notes_md(v)
+        assert r["header_count"] == 1, f"failed on variant: {v[:30]!r}"
+        assert r["notes_by_position"][0].strip() == "Body."
+
+
+def test_parse_speaker_notes_cli(tmp_path: Path):
+    notes_file = tmp_path / "S1_speaker_notes.md"
+    notes_file.write_text(SPEAKER_NOTES_FIXTURE, encoding="utf-8")
+    out_file = tmp_path / "S1_notes.json"
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "parse_speaker_notes.py"),
+         "--notes", str(notes_file),
+         "--out", str(out_file)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+
+    parsed = json.loads(out_file.read_text())
+    assert parsed["substory_id"] == "S1"
+    assert "0" in parsed["notes_by_position"]
+    assert "1" in parsed["notes_by_position"]
+    assert "2" in parsed["notes_by_position"]
+
+
+def test_parse_speaker_notes_cli_fails_on_no_headers(tmp_path: Path):
+    notes_file = tmp_path / "bad.md"
+    notes_file.write_text("# Speaker notes\n\nNo H2 sections.\n",
+                          encoding="utf-8")
+    out_file = tmp_path / "out.json"
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "parse_speaker_notes.py"),
+         "--notes", str(notes_file),
+         "--out", str(out_file)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 2, f"expected exit 2, got {rc.returncode}: {rc.stderr}"
+
+
+def test_merge_injects_speaker_notes(tmp_path: Path):
+    """End-to-end: merge with --speaker-notes-dir injects parsed notes
+    into the appropriate per-substory slides."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    notes_dir = outdir / "04_speaker_notes"
+    notes_dir.mkdir()
+
+    (outdir / "00_throughline.md").write_text(
+        THROUGHLINE_MD, encoding="utf-8")
+    (outdir / "02_substories.md").write_text(
+        SUBSTORY_FIXTURE_FITS, encoding="utf-8")
+    (outdir / "03_slides" / "S1_slides.json").write_text(
+        json.dumps(_make_fragment_S1()), encoding="utf-8")
+    (outdir / "03_slides" / "S2_slides.json").write_text(
+        json.dumps(_make_fragment_S2()), encoding="utf-8")
+
+    # Pre-populate parsed notes for S1 (positions 0 + 1)
+    (notes_dir / "S1_notes.json").write_text(json.dumps({
+        "substory_id": "S1",
+        "notes_by_position": {
+            "0": "S1 divider notes — 30 words.",
+            "1": "S1 content notes — 50 words.",
+        },
+    }), encoding="utf-8")
+
+    out_path = outdir / "slide_spec.json"
+    rc = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "merge_compose_fragments.py"),
+         "--outdir", str(outdir),
+         "--project-id", "test",
+         "--mode", "talk-30",
+         "--tier", "STRONG",
+         "--audience", "peer",
+         "--throughline-path", str(outdir / "00_throughline.md"),
+         "--substory-path", str(outdir / "02_substories.md"),
+         "--fragments-dir", str(outdir / "03_slides"),
+         "--speaker-notes-dir", str(notes_dir),
+         "--out", str(out_path)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+    # Stderr should report 2 notes injected
+    assert "injected speaker_notes on 2" in rc.stderr
+
+    spec = json.loads(out_path.read_text())
+    s1_slides = [s for s in spec["slides"] if s.get("substory_id") == "S1"]
+    assert len(s1_slides) == 2
+    assert s1_slides[0]["speaker_notes"] == "S1 divider notes — 30 words."
+    assert s1_slides[1]["speaker_notes"] == "S1 content notes — 50 words."
+
+    # S2 has no notes file; should not have speaker_notes injected
+    s2_slides = [s for s in spec["slides"] if s.get("substory_id") == "S2"]
+    for s in s2_slides:
+        assert "speaker_notes" not in s
+
+
 def test_merge_fails_on_bad_throughline(tmp_path: Path):
     outdir = tmp_path / "draft_1"
     outdir.mkdir()

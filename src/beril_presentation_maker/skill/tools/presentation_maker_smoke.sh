@@ -112,10 +112,10 @@ esac
 
 # Validate --resume-from + --draft-dir pairing
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|intro|slide_compose|merge) ;;
+  ""|plan|throughline|substory_design|curate_figures|intro|slide_compose|speaker_notes|merge) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|intro|slide_compose|merge" >&2
+    echo "       valid stages: plan|throughline|substory_design|curate_figures|intro|slide_compose|speaker_notes|merge" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -574,6 +574,44 @@ gate_substory_overflow() {
   return 0
 }
 
+stage_curate_figures() {
+  # 2026-04-27 #68 (Phase 2A.1): scan REPORT.md + notebooks for figure
+  # references, produce curated_figures.md with mode-bounded shortlist.
+  # Runs between substory_design and intro so slide_compose can pick
+  # data_figure layouts from real figure paths instead of skipping
+  # them per the escape hatch.
+  #
+  # Pure Python — no LLM cost. The figure inventory is deterministic
+  # from REPORT.md / notebook scans.
+  echo "" >&2
+  echo "[Stage 3.5/5] curate_figures (no LLM)" >&2
+
+  if "$PYTHON_BIN" "$TOOLS_DIR/curate_figures.py" curate \
+      "$PROJECT_DIR" \
+      --mode "$MODE" \
+      --output-dir "$OUTDIR" \
+      --no-md=false >/dev/null 2>"$OUTDIR/curate_figures.stderr"; then
+    # The script writes figures_curated.md AND figures_inventory.md to
+    # --output-dir. slide_compose's CURATED_FIGURES_PATH input expects
+    # a single file; point it at figures_curated.md.
+    if [[ -f "$OUTDIR/figures_curated.md" ]]; then
+      cp "$OUTDIR/figures_curated.md" "$OUTDIR/curated_figures.md"
+      local n_curated
+      n_curated="$(grep -c '^### [0-9]\+\.' "$OUTDIR/curated_figures.md" 2>/dev/null || echo 0)"
+      echo "  -> wrote $OUTDIR/curated_figures.md ($n_curated figure(s) curated)" >&2
+    else
+      echo "  warning: curate_figures.py produced no figures_curated.md" >&2
+      # Don't fail — slide_compose's escape hatch handles missing figures
+    fi
+    return 0
+  else
+    echo "  warning: curate_figures.py exited non-zero — see $OUTDIR/curate_figures.stderr" >&2
+    cat "$OUTDIR/curate_figures.stderr" >&2 || true
+    # Don't fail the run; figures are an enrichment, not a blocker
+    return 0
+  fi
+}
+
 stage_intro() {
   local out="$OUTDIR/03_slides/intro.json"
   echo "" >&2
@@ -671,6 +709,78 @@ cover this). Write the result to OUT_PATH."
   return 0
 }
 
+stage_speaker_notes() {
+  # 2026-04-27 #70: invoke speaker_notes.v1.md per substory after
+  # slide_compose runs. The prompt produces markdown with strict H2
+  # headers (`## position N — layout — `title``); parse_speaker_notes.py
+  # converts to JSON keyed by position; merge_compose_fragments injects
+  # into slide_spec.json's per-slide speaker_notes field.
+  echo "" >&2
+  echo "[Stage 5.5/7] speaker_notes (per substory)" >&2
+
+  local notes_dir="$OUTDIR/04_speaker_notes"
+  mkdir -p "$notes_dir"
+
+  local substory_ids
+  substory_ids=$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
+    --path "$OUTDIR/02_substories.md" --field substory_ids)
+  if [[ -z "$substory_ids" ]]; then
+    echo "Error: no substory IDs parsed from $OUTDIR/02_substories.md" >&2
+    return 1
+  fi
+
+  for sid in $substory_ids; do
+    echo "" >&2
+    echo "  -> notes for $sid" >&2
+    local notes_md="$notes_dir/${sid}_speaker_notes.md"
+    local notes_json="$notes_dir/${sid}_notes.json"
+    local fragment_path="$OUTDIR/03_slides/${sid}_slides.json"
+
+    # Build prior-notes path list for voice consistency (read-only)
+    local prior_notes=""
+    for prior in "$notes_dir"/S*_speaker_notes.md; do
+      if [[ -f "$prior" && "$prior" != "$notes_md" ]]; then
+        prior_notes="${prior_notes}${prior},"
+      fi
+    done
+    prior_notes="${prior_notes%,}"  # strip trailing comma
+
+    local user_prompt="OUT_PATH=$notes_md
+PROJECT_DIR=$PROJECT_DIR
+FRAGMENT_PATH=$fragment_path
+SUBSTORY_PATH=$OUTDIR/02_substories.md
+THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+PLAN_PATH=$OUTDIR/00_plan.md
+CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+MODE=$MODE
+TIER=$TIER
+PRIOR_NOTES=$prior_notes
+
+Run the speaker_notes stage for substory $sid. Read the slide_compose \
+fragment at FRAGMENT_PATH; for each slide in fragment.slides[], author \
+200-400 words of speaker notes using the 5-step scaffold (opening, \
+grounding, supporting, caveat, transition). Quantitative claims must \
+be REPORT-verbatim. Caveats from plan inventory ⚠/✗ glyphs surface in \
+notes. Output as markdown with strict H2 headers per the prompt's \
+schema. Write the result to OUT_PATH."
+
+    invoke_claude_with_retry "$PROMPTS_DIR/speaker_notes.v1.md" \
+      "$user_prompt" "$notes_md" "speaker_notes-$sid"
+
+    # Parse the markdown to JSON for merge-step injection
+    if [[ -f "$notes_md" ]]; then
+      "$PYTHON_BIN" "$TOOLS_DIR/parse_speaker_notes.py" \
+        --notes "$notes_md" --out "$notes_json" 2>&1 | sed 's/^/    /' >&2 || {
+          echo "    warning: parse_speaker_notes failed for $sid; notes won't inject" >&2
+      }
+    else
+      echo "    warning: no notes file written for $sid" >&2
+    fi
+  done
+
+  return 0
+}
+
 stage_merge_and_assemble() {
   echo "" >&2
   echo "[Final] merge fragments + validate + assemble" >&2
@@ -689,6 +799,7 @@ stage_merge_and_assemble() {
     --substory-path "$OUTDIR/02_substories.md" \
     --fragments-dir "$OUTDIR/03_slides" \
     --intro-fragment-path "$OUTDIR/03_slides/intro.json" \
+    --speaker-notes-dir "$OUTDIR/04_speaker_notes" \
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
@@ -742,9 +853,10 @@ stage_merge_and_assemble() {
 should_run() {
   local stage="$1"
   if [[ -z "$RESUME_FROM" ]]; then return 0; fi
-  # Map stages to ordinals so we can compare
+  # Map stages to integer ordinals (curate_figures inserted at 4;
+  # later stages shifted by 1).
   local order_resume order_stage
-  for o in plan:1 throughline:2 substory_design:3 intro:4 slide_compose:5 merge:6; do
+  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 intro:5 slide_compose:6 speaker_notes:7 merge:8; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -765,11 +877,17 @@ if should_run substory_design;  then stage_substory_design  || { echo "FAIL at s
                                      gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
                                 else echo "[skip] substory_design + overflow gate (resume from $RESUME_FROM)" >&2; fi
 
+if should_run curate_figures;   then stage_curate_figures  || { echo "FAIL at curate_figures" >&2; exit 1; }
+                                else echo "[skip] curate_figures (resume from $RESUME_FROM)" >&2; fi
+
 if should_run intro;            then stage_intro           || { echo "FAIL at intro" >&2; exit 1; }
                                 else echo "[skip] intro (resume from $RESUME_FROM)" >&2; fi
 
 if should_run slide_compose;    then stage_slide_compose   || { echo "FAIL at slide_compose" >&2; exit 1; }
                                 else echo "[skip] slide_compose (resume from $RESUME_FROM)" >&2; fi
+
+if should_run speaker_notes;    then stage_speaker_notes   || { echo "FAIL at speaker_notes" >&2; exit 1; }
+                                else echo "[skip] speaker_notes (resume from $RESUME_FROM)" >&2; fi
 
 # merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }

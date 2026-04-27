@@ -270,19 +270,39 @@ def _render_edge(
         "graphite_gray", brand_tokens, "graphite_gray",
     )
 
-    # Edge labels: render as a small text box at the midpoint
+    # Edge labels: render as a small text box positioned ABOVE the line
+    # (not at center y). Original 2026-04-26 implementation centered the
+    # label at (mid_x, mid_y) where mid_y == node center y, so labels
+    # rendered ON the nodes themselves (live failure draft_2). 2026-04-27
+    # fix #54: offset label upward by 0.30in (above line) and shrink
+    # textbox width to 0.7in so it fits in the inter-node gap rather
+    # than spanning into adjacent nodes.
     label = edge.get("label", "")
     if label:
         mid_x = (src.cx + dst.cx) / 2
         mid_y = (src.cy + dst.cy) / 2
+        # Heuristic: if endpoints are roughly horizontal (|dy|<0.3),
+        # offset label above by 0.30in. If vertical (|dx|<0.3), offset
+        # right. Otherwise (diagonal), offset above-and-right by half each.
+        dy = abs(dst.cy - src.cy)
+        dx = abs(dst.cx - src.cx)
+        if dy < 0.3:
+            label_x = mid_x - 0.35
+            label_y = mid_y - 0.40   # above the line
+        elif dx < 0.3:
+            label_x = mid_x + 0.10   # right of the line
+            label_y = mid_y - 0.15
+        else:
+            label_x = mid_x - 0.20
+            label_y = mid_y - 0.30
         tb = slide.shapes.add_textbox(
-            Inches(mid_x - 0.5), Inches(mid_y - 0.15),
-            Inches(1.0), Inches(0.3),
+            Inches(label_x), Inches(label_y),
+            Inches(0.70), Inches(0.25),
         )
         tb.text_frame.text = label
         for paragraph in tb.text_frame.paragraphs:
             for run in paragraph.runs:
-                run.font.size = Pt(10)
+                run.font.size = Pt(9)
                 run.font.color.rgb = resolve_color(
                     "graphite_gray", brand_tokens, "graphite_gray",
                 )
@@ -320,13 +340,41 @@ def render_diagram(
             f"see SPEC §6 / DECISIONS D-028 for v0.2 plans)"
         )
 
+    # 2026-04-27 fix #54: render order matters for visual quality.
+    # python-pptx z-order = paint order (later shapes on top). When
+    # nodes were rendered first then edges second, the connector lines
+    # painted OVER the node box fills — endpoints appeared to bisect
+    # the boxes (live failure draft_2 visual review).
+    #
+    # Fix: pre-compute node centers from node geometry (without adding
+    # shapes to the slide), render edges using those centers, THEN
+    # render node shapes on top. Node fills now occlude edge endpoints
+    # cleanly — the line appears to "enter" the node edge.
+    nodes = diagram.get("nodes", []) or []
+    edges = diagram.get("edges", []) or []
+
+    # Pre-compute centers (no slide mutation yet)
+    centers_by_id: dict[str, tuple[float, float]] = {}
+    for node in nodes:
+        node_id = node.get("id", "")
+        x, y = _transform_coords(float(node["x"]), float(node["y"]), region)
+        w = float(node["w"])
+        h = float(node["h"])
+        centers_by_id[node_id] = (x + w / 2, y + h / 2)
+
+    # Pass 1: render edges using computed centers
+    edge_proxy: dict[str, _RenderedShape] = {
+        nid: _RenderedShape(node_id=nid, shape=None, cx=cx, cy=cy)
+        for nid, (cx, cy) in centers_by_id.items()
+    }
+    for edge in edges:
+        _render_edge(slide, edge, edge_proxy, brand_tokens)
+
+    # Pass 2: render node shapes on top of edges
     rendered_by_id: dict[str, _RenderedShape] = {}
-    for node in diagram.get("nodes", []) or []:
+    for node in nodes:
         rs = _render_node(slide, node, region, brand_tokens)
         rendered_by_id[rs.node_id] = rs
-
-    for edge in diagram.get("edges", []) or []:
-        _render_edge(slide, edge, rendered_by_id, brand_tokens)
 
 
 # ---------------------------------------------------------------------------

@@ -258,6 +258,59 @@ appear as evidence on at least one slide. If you cannot honor that
 within the budget, halt with `coverage_overflow` and let the
 orchestrator escalate.
 
+### Layout diversity rule (2026-04-27 — fixes adversarial-review S3)
+
+Live failure: the 2026-04-26 deck on `functional_dark_matter` had
+0 of 19 content slides using `workflow_diagram`, `data_figure`,
+`big_number`, `concept_illustration`, `two_column_compare`, OR
+`implications`. Every content slide was `claim_evidence` (or the
+mandatory methods_summary at position 1). The audience saw a wall
+of bullet-point slides — visually monotonous and underserved by
+the layout vocabulary the deck has.
+
+**Mandatory diversity discipline:**
+
+Each substory's content slides (positions 2..N — i.e., AFTER the
+divider AND the mandatory methods_summary at position 1) MUST
+include AT LEAST ONE non-`claim_evidence` slide. Eligible diverse
+layouts (in roughly decreasing frequency-of-use):
+
+  - `data_figure` — when REPORT or curated_figures.md provides a
+    figure that IS the evidence for a substory claim. **Use this
+    when you have a curated figure path available.**
+  - `workflow_diagram` — when the substory's evidence is procedural
+    (≥3 steps with ordering). Method-pipeline slides are great
+    candidates.
+  - `big_number` — when the substory's punchline reduces to a
+    single grounded headline quantity (e.g., "97.2% recovery").
+    Use sparingly — at most 1 per substory.
+  - `two_column_compare` — when comparing two methods, conditions,
+    or states (lab vs. field, before vs. after, baseline vs.
+    intervention). Frequent fit for methodology substories.
+  - `implications` — when the substory ends with consequences or
+    next-step claims that don't fit into a continuous evidence
+    bullet list.
+  - `concept_illustration` — opt-in AI image-gen path. Use only
+    when no real figure exists and the abstract concept genuinely
+    needs visual framing (D-029 always-opt-in).
+
+**Procedure:** before drafting position 2..N slides, count your
+existing layouts:
+
+  1. position 0 = section_divider (mandatory)
+  2. position 1 = methods_summary (mandatory)
+  3. positions 2..N = your composition
+
+If positions 2..N are ALL `claim_evidence`, **you must convert at
+least one** to a non-claim_evidence layout from the list above.
+Pick the one that best fits the evidence shape; do not force-fit.
+
+**Anti-pattern PA-14: claim_evidence-only substory.** A substory
+where every content slide is claim_evidence. The deck reads as a
+bullet-point walkthrough. Layout diversity isn't decorative — it
+matches evidence shape to visual treatment, which is part of the
+audience's parsing.
+
 ## Tier-aware framing
 
 | Tier | Title voice | Bullet voice | Allowed layouts | Discipline floor |
