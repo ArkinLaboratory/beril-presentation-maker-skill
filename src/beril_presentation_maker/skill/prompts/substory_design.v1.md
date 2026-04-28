@@ -237,6 +237,41 @@ master-level autofit shrinks gracefully and the discipline gradient
 to fit a word count. **But if you exceed 14 words, do so for a
 specific reason and note it briefly in the cluster's rationale.**
 
+**MANDATORY pre-write word-count step (2026-04-27 — live failures
+draft_5 + draft_7 produced 18-19 word punchlines despite the
+recommendation; the soft cap wasn't sticky):**
+
+For EACH cluster's punchline, BEFORE the Write call:
+
+1. **Count the words.** Split on whitespace; count tokens.
+2. **If ≤14 words: keep.** No further action needed.
+3. **If 15-20 words:** attempt one rewrite to ≤14 words. The most
+   common cause is method-listing in the punchline ("Six independent
+   evidence sources — fitness phenotypes, pangenome conservation,
+   cross-organism concordance, gene neighborhoods, biogeographic
+   patterns, and domain annotations — generate hypotheses"). The
+   methods belong in the per-substory methods slide, NOT the divider.
+   Rewrite as: "Multi-source evidence integration generates
+   high-confidence functional hypotheses" (8 words).
+4. **If >20 words:** rewrite is mandatory. The longer version is
+   never a divider — it's a paragraph. Cut it down OR consider
+   re-clustering (the substory may be carrying too much load).
+5. **If after rewrite you still need 15+ words for genuine reasons**
+   (a multi-clause claim that loses meaning when shortened), write
+   it AND add a one-line rationale in the cluster's `rationale`
+   field: "kept long because: {reason — e.g., 'compound claim with
+   essential conjunction'}".
+
+**Worked-example diff** (live failure 2026-04-27 draft_7 S2 divider):
+
+  - ✗ 19 words: "Six independent evidence sources generate
+    high-confidence functional hypotheses for dark genes through
+    cross-organism concordance and environmental validation"
+    — lists method while making claim; methods belong in S2 methods slide
+  - ✓ 11 words: "Multi-source evidence integration generates
+    high-confidence functional hypotheses for dark genes" — same
+    claim, methods removed (they're in the next slide anyway)
+
 **Length-shaping examples (live failure mode 2026-04-26 draft_5,
 S2 substory):**
 

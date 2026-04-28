@@ -64,18 +64,23 @@ def test_edge_kind_map_covers_three(dr):
 # Coordinate transform
 # ---------------------------------------------------------------------------
 
-def test_transform_coords_zero_at_region_top_left(dr):
+def test_transform_coords_pass_through_origin(dr):
+    """2026-04-27 #78: _transform_coords now passes through absolute
+    slide coords. The prompt + repair_diagram_stubs both produce
+    absolute coords; the prior offset-add caused diagrams to render
+    off-slide on tall layouts (live failure draft_7 slide 11)."""
     region = (1.0, 2.0, 5.0, 4.0)
     x, y = dr._transform_coords(0.0, 0.0, region)
-    assert x == 1.0
-    assert y == 2.0
+    assert x == 0.0
+    assert y == 0.0
 
 
-def test_transform_coords_offset_correctly(dr):
+def test_transform_coords_passes_through_arbitrary_point(dr):
     region = (1.0, 2.0, 5.0, 4.0)
     x, y = dr._transform_coords(0.5, 1.5, region)
-    assert x == 1.5
-    assert y == 3.5
+    # Inputs returned verbatim — no offset added
+    assert x == 0.5
+    assert y == 1.5
 
 
 # ---------------------------------------------------------------------------

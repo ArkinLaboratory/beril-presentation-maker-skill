@@ -154,13 +154,28 @@ def _transform_coords(
     x_in: float, y_in: float,
     region: tuple[float, float, float, float],
 ) -> tuple[float, float]:
-    """Add the region's top-left offset to a diagram-local (x, y) inch pair.
+    """Pass through diagram coordinates as ABSOLUTE slide coords.
 
-    region is (left, top, width, height) in inches; diagram coords are
-    relative to (0, 0) at region top-left.
+    2026-04-27 fix #78: previous version added region.top + region.left
+    to (x, y), assuming coords were diagram-local (origin at region
+    top-left). But:
+      - slide_compose.v1.md tells the LLM 'Default region: x in [0.5,
+        9.5], y in [1.4, 5.6]' — absolute slide coords.
+      - repair_diagram_stubs.compute_linear_geometry produces absolute
+        slide coords (CONTENT_LEFT=0.5, CONTENT_TOP=1.4 already
+        baked in).
+      - The renderer's region.top=1.30 was being ADDED to absolute y
+        values like 5.0, producing slide y=6.30 (off-slide; slide
+        height is 5.625in). Live failure draft_7 slide 11: 8 nodes
+        with y up to 5.0 rendered partly off-slide.
+
+    Treat region as the BOUNDS the diagram should fit within, not an
+    origin offset. Coordinates pass through. The region tuple stays
+    in the signature for future use (e.g., scaling-to-fit when a
+    diagram is generated for a smaller region than the master's
+    workflow_diagram body).
     """
-    left, top, _w, _h = region
-    return left + x_in, top + y_in
+    return x_in, y_in
 
 
 # ---------------------------------------------------------------------------

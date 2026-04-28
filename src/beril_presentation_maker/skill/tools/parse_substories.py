@@ -154,5 +154,25 @@ def main() -> int:
     return 2
 
 
+def audit_punchline_lengths(content: str, recommended_max_words: int = 14) -> list[tuple[str, str, int]]:
+    """Audit substory punchline lengths against the recommendation.
+
+    Returns list of (substory_id, punchline, word_count) for each
+    substory whose punchline EXCEEDS recommended_max_words. Empty
+    list = all punchlines within recommendation.
+
+    2026-04-27 #79: substory_design.v1's word cap is soft; this
+    audit gives the orchestrator visibility into whether the
+    discipline held without making it validator-blocking.
+    """
+    pairs = extract_substory_punchlines(content)
+    over = []
+    for sid, punchline in pairs:
+        word_count = len(punchline.split())
+        if word_count > recommended_max_words:
+            over.append((sid, punchline, word_count))
+    return over
+
+
 if __name__ == "__main__":
     sys.exit(main())

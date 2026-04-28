@@ -37,132 +37,162 @@ project's data integration shape, not a marketing line for KBase.
 
 ## What you produce
 
-A single content fragment written via the `Write` tool to the
+A single **JSON fragment** written via the `Write` tool to the
 absolute path the user prompt provides
-(`talks/draft_N/cross_tenant_slide_content.md`). The fragment is
-consumed by `slide_compose.v1` when it builds the
-cross_tenant_integration slide entry in `slide_spec.json`. You do
-NOT write `slide_spec.json` directly — slide_compose owns that.
+(`talks/draft_N/03_slides/cross_tenant.json`). The fragment is
+spliced as a deck-level slide by `merge_compose_fragments.py`
+between the last substory and the acknowledgments stub. You do NOT
+write `slide_spec.json` directly — the merge script owns that.
 
-The fragment is plain markdown with sections that map 1:1 to
-the cross_tenant_integration content schema in `slide_spec.py`:
-title, tenant_list, kberdl_db_list, sibling_project_refs,
-no_signal_fallback, optional data_flow_diagram pointer.
+The fragment envelope mirrors `intro.v1` and `qa_prep.v1`:
+`schema_version: "compose-fragment.v1"`, `kind: "cross_tenant_set"`,
+plus a `slides[]` array containing **exactly one** slide whose
+`layout` is `"cross_tenant_integration"` and whose `content` matches
+the cross_tenant_integration content shape defined in
+`tools/slide_spec.py` (validator) and
+`references/slide_spec.schema.json` (generated schema). No other
+layout name is permitted; no other content shape is permitted.
+
+Required `content` fields:
+- `title` — punchline-shaped slide title (SPEC §6.1).
+
+Optional `content` fields (omit if empty / not applicable — do NOT
+ship empty arrays as a stand-in):
+- `tenant_list` — array of non-empty strings.
+- `kberdl_db_list` — array of non-empty strings.
+- `sibling_project_refs` — array of objects with REQUIRED keys
+  `project_id` and `what_was_leveraged` (both non-empty strings).
+- `data_flow_diagram` — null or a `boxes_and_arrows` diagram object
+  (same schema as `slide_compose.v1`'s workflow_diagram). Default null.
+- `no_signal_fallback` — boolean. Required to be `true` only when
+  the extractor reported no signal.
+
+Slide-level fields (alongside `layout` + `content`):
+- `position` — integer 0 (this is a single-slide fragment; the merge
+  script renumbers).
+- `speaker_notes_seed` — 1–3 sentences for the speaker. The merge
+  step promotes this verbatim into the slide's `speaker_notes`
+  (the `speaker_notes.v1` polishing pass runs only on per-substory
+  slides; cross_tenant is deck-level and ships with the seed
+  directly). Treat the seed as the speaker's actual notes — write
+  it that way.
+- `kbase_platform_frame` — boolean mirror of the `KBASE_PLATFORM_FRAME`
+  input flag. The merge step strips this field; **if you want a
+  platform-value beat in the speaker notes, write it directly into
+  `speaker_notes_seed`** (one sentence, factual; per D-011 default
+  off and never on the slide content itself).
 
 Final response after `Write` succeeds is the closing-message template
 (below).
 
-## Output format (cross_tenant_slide_content.md template)
+## Output format (JSON fragment)
 
-When the extractor reported signal:
+### When the extractor reported signal
 
-```markdown
-# Cross-tenant slide content — `{project_id}`
-
-**no_signal_fallback:** false
-
-## Title (slide title — punchline-style per SPEC §6.1)
-
-{One sentence summarizing the integration. Quantitative where
-possible.
-
-Examples:
-- "This work integrates 4 K-BERDL databases across 3 tenants."
-- "Cross-tenant data fusion: ENIGMA fitness profiles + PMI
-  metabolomics + Phage Foundry isolates."
-- "Building on results from 2 sibling KBase projects, this analysis
-  pulled 27M fitness scores across 1,400 genomes."
-
-The title is a CLAIM, not a topic. "Data integration summary" is
-banned (SPEC §6.1).}
-
-## Tenants
-
-(comma-separated list of tenant identifiers from cross_tenant_signal.md)
-
-- {tenant_1}
-- {tenant_2}
-- ...
-
-## K-BERDL databases
-
-(K-BERDL database names from notebook SQL parsing; one per line)
-
-- {db_1}
-- {db_2}
-- ...
-
-## Sibling project references
-
-(Each entry is `{project_id}: {one-sentence what was leveraged}`. The
-extractor produces project_id with a default placeholder for
-`what_was_leveraged`; you replace the placeholder with a sentence
-that reflects what the analysis actually used from the sibling.)
-
-- {project_id_1}: {what was leveraged — e.g., "baseline annotations for comparison"}
-- {project_id_2}: {what was leveraged — e.g., "metal-stress fitness profiles"}
-
-## Speaker-notes augmentation (passed to speaker_notes.v1)
-
-{1–3 sentences for the presenter that elaborate on the integration
-shape. Examples:
-
-- "We pulled fitness scores from fitnessbrowser via berdl_query in
-  10 notebooks. The chromate-stress conditions came from the
-  ENIGMA SFA's metal-panel work; we joined to paperblast for
-  literature-grounded annotations."
-- "Sibling project metal_atlas contributed the cross-tenant
-  comparison framework that made this analysis tractable; we
-  cite it on the slide and acknowledge it in the credits."
-
-These notes are NOT slide content; they're context for the speaker
-to elaborate verbally. speaker_notes.v1 picks them up.}
-
-## (Optional) KBase platform-value framing
-
-(Only emit this section if `KBASE_PLATFORM_FRAME` is `true`. Single
-sentence.)
-
-- "K-BERDL's federated query layer is what made this 4-database
-  integration single-cell-economical."
-
-The flag defaults `false`; the slide-compose prompt picks up this
-optional fragment only when set. Per D-011, the slide does not
-preach by default.
+```json
+{
+  "schema_version": "compose-fragment.v1",
+  "kind": "cross_tenant_set",
+  "throughline_id": "TL2",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "cross_tenant_integration",
+      "content": {
+        "title": "This work integrates 4 K-BERDL databases across 3 tenants.",
+        "tenant_list": ["enigma", "pmi", "phage_foundry"],
+        "kberdl_db_list": ["fitnessbrowser", "paperblast", "kbase_meta", "phage_isolates"],
+        "sibling_project_refs": [
+          {
+            "project_id": "metal_atlas",
+            "what_was_leveraged": "metal-stress fitness panels used as baseline"
+          },
+          {
+            "project_id": "annotation_agent_v1",
+            "what_was_leveraged": "draft annotations re-scored against this work's gold set"
+          }
+        ],
+        "data_flow_diagram": null,
+        "no_signal_fallback": false
+      },
+      "speaker_notes_seed": "We pulled fitness scores from fitnessbrowser via berdl_query in 10 notebooks; the chromate-stress conditions came from ENIGMA's metal-panel work, joined to paperblast for literature-grounded annotations. Sibling project metal_atlas contributed the cross-tenant comparison framework that made this tractable.",
+      "kbase_platform_frame": false
+    }
+  ]
+}
 ```
 
-When the extractor reported no signal (`no_signal_fallback: true`):
+### When the extractor reported no signal (`no_signal_fallback: true`)
 
-```markdown
-# Cross-tenant slide content — `{project_id}`
-
-**no_signal_fallback:** true
-
-## Title
-
-All data sourced from `{primary_tenant_or_self}`.
-
-## Body
-
-This project did not integrate across tenants. {Optional 1-sentence
-context explaining why — e.g., "the analysis was a self-contained
-re-validation of the published Morgan Price fitness data."}
-
-## Speaker-notes augmentation
-
-{One sentence for the presenter that explains the absence honestly,
-not defensively. Examples:
-
-- "This analysis was self-contained — we worked entirely within the
-  ENIGMA tenant's published data. Cross-tenant integration is on the
-  roadmap for the follow-up project."
-- "We deliberately scoped to a single dataset to validate the
-  pipeline before scaling. Cross-tenant integration becomes
-  meaningful in v2."}
-
-The honest fallback per SPEC §7.3 is correct here. Don't manufacture
-integration that didn't happen.
+```json
+{
+  "schema_version": "compose-fragment.v1",
+  "kind": "cross_tenant_set",
+  "throughline_id": "TL2",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "cross_tenant_integration",
+      "content": {
+        "title": "All data sourced from `enigma`. This project did not integrate across tenants.",
+        "no_signal_fallback": true
+      },
+      "speaker_notes_seed": "This analysis was self-contained — we worked entirely within ENIGMA's published data. Cross-tenant integration is on the roadmap for the follow-up project.",
+      "kbase_platform_frame": false
+    }
+  ]
+}
 ```
+
+### Field rules
+
+| Field | Type | Constraint |
+|---|---|---|
+| `schema_version` | str | `"compose-fragment.v1"` exact |
+| `kind` | str | `"cross_tenant_set"` exact |
+| `slides[]` | array | exactly one entry |
+| `slides[0].position` | int | `0` |
+| `slides[0].layout` | enum | `"cross_tenant_integration"` (NO other value) |
+| `slides[0].content.title` | str | required, non-empty, punchline-shaped (SPEC §6.1) |
+| `slides[0].content.tenant_list` | array<str> | optional; omit if empty (do not ship `[]`) |
+| `slides[0].content.kberdl_db_list` | array<str> | optional; omit if empty |
+| `slides[0].content.sibling_project_refs` | array<obj> | optional; each obj has `project_id` and `what_was_leveraged` |
+| `slides[0].content.data_flow_diagram` | null \| diagram | default null |
+| `slides[0].content.no_signal_fallback` | bool | required `true` only when extractor reported no signal |
+| `slides[0].speaker_notes_seed` | str | 1–3 sentences; speaker_notes.v1 picks up |
+| `slides[0].kbase_platform_frame` | bool | mirror `KBASE_PLATFORM_FRAME` input flag |
+
+### Anti-shape (what NOT to emit)
+
+```json
+{
+  "kind": "cross_tenant",
+  "slides": [
+    {
+      "layout": "two_column",
+      "content": {
+        "tenant_integration": {
+          "tenants": ["enigma", "pmi"],
+          "databases": ["fitnessbrowser"]
+        }
+      }
+    }
+  ]
+}
+```
+
+The above is the live failure mode observed on draft_7 (2026-04-27).
+Three things are wrong: (1) `kind` must be `cross_tenant_set` not
+`cross_tenant`, (2) `layout` must be `cross_tenant_integration` not
+`two_column`, (3) `content` must follow the cross_tenant_integration
+schema directly, NOT wrap a custom `tenant_integration` object.
+The merge script will silently drop tenant/db data shaped this way
+because `slide_spec.py:_check_cross_tenant_integration` walks
+`content.tenant_list` and `content.kberdl_db_list` only.
 
 ## Inputs the user prompt will pass
 
@@ -271,63 +301,100 @@ identically; the layout differs but the content shape is the same.
 - **PA-4: Default no-signal silence.** Emitting an empty slide
   instead of the explicit fallback. Per SPEC §7.3, the absence is
   itself informative.
-- **PA-5: Missing speaker-notes augmentation.** Slide content
-  without context for the presenter is a missed opportunity; the
-  speaker_notes prompt looks for this section.
+- **PA-5: Missing speaker-notes seed.** Slide without
+  `speaker_notes_seed` is a missed opportunity for elaboration.
+- **PA-6: Wrong layout / custom content shape.** Emitting
+  `layout: "two_column"` (or any value other than
+  `cross_tenant_integration`), or wrapping the cross-tenant data
+  inside a custom `tenant_integration` object instead of using the
+  flat `tenant_list` / `kberdl_db_list` / `sibling_project_refs`
+  fields. The validator silently passes the wrong layout (since
+  two_column is also a valid layout name) but the merge step ships
+  a slide with no cross-tenant content rendered. Live failure on
+  draft_7 (2026-04-27).
+- **PA-7: Empty arrays as stand-in.** Shipping
+  `"tenant_list": []` or `"sibling_project_refs": []` instead of
+  omitting the key entirely. Empty arrays serialize as visual
+  emptiness on the slide; the renderer expects optional fields to
+  be absent, not empty.
 
 ## Self-review pass
 
-### Validator-blocking
+### Validator-blocking (the merge step + slide_spec validator will reject)
 
-1. `no_signal_fallback` field present and matches the extractor's signal.
-2. If signal present: `Title` is a sentence with at least one
-   number AND not a banned topic word ("integration", "data sources",
-   "cross-tenant"). The title may CONTAIN those words, but cannot
-   be ONLY them.
-3. If signal present: `Tenants`, `K-BERDL databases`,
-   `Sibling project references` populated from signal (no entries
-   added beyond signal).
-4. If `no_signal_fallback: true`: title uses the fallback template
-   verbatim.
+1. **Envelope.** `schema_version == "compose-fragment.v1"` exactly;
+   `kind == "cross_tenant_set"` exactly. `slides` is a list of
+   exactly one object.
+2. **Layout.** `slides[0].layout == "cross_tenant_integration"`
+   exactly. No other value.
+3. **Title required.** `slides[0].content.title` is a non-empty string.
+4. **`no_signal_fallback` matches signal.** If the extractor's JSON
+   has `no_signal_fallback: true`, your fragment must also; ditto for
+   `false`. If `true`, you should NOT emit `tenant_list`,
+   `kberdl_db_list`, or `sibling_project_refs`.
+5. **`sibling_project_refs` shape.** If present, each entry is
+   `{"project_id": "...", "what_was_leveraged": "..."}` with both
+   strings non-empty. The extractor's placeholder
+   `"(N references in project artifacts)"` is NOT acceptable as a
+   final `what_was_leveraged` value.
+6. **No empty arrays.** `tenant_list`, `kberdl_db_list`,
+   `sibling_project_refs` either contain entries or are omitted.
 
-### Silent traps
+### Silent traps (won't fail validator but will degrade the slide)
 
-5. **Sibling-project `what_was_leveraged` filled in.** Default
-   placeholder strings indicate failure to read REPORT.md.
-6. **Speaker-notes augmentation present.** 1-3 sentences in either
-   template variant.
-7. **Platform-frame respected.** Section emitted only if
-   `KBASE_PLATFORM_FRAME=true`.
-8. **Tier-language consistency** with TIER input.
+7. **Title is a punchline, not a topic** (SPEC §6.1). At least one
+   number when signal is present; not bare "Cross-tenant integration".
+8. **`speaker_notes_seed` present** (1–3 sentences) in both signal
+   and no-signal variants.
+9. **`kbase_platform_frame` mirrors the input flag.** Default false.
+   If true, the speaker_notes.v1 prompt picks up this flag and adds
+   a platform-value beat to the speaker notes; you do NOT add it to
+   the slide content yourself.
+10. **Tier-language consistency** with TIER input (STRONG declarative,
+    THIN scoped, EXPLORATORY observational).
+11. **Tenant tokens are not platform tokens.** Reject `kbase`,
+    `berdl`, `bridge` if they slipped in (the extractor filters these,
+    but verify).
 
 ### Anti-example pairs
 
 | Wrong | Right |
 |---|---|
+| `"layout": "two_column"` with custom `content.tenant_integration` object | `"layout": "cross_tenant_integration"` with flat `content.tenant_list` etc. |
 | Title: "Data integration summary" | Title: "This work integrates 4 K-BERDL databases across 3 tenants." |
-| `Tenants: enigma, pmi, kbase` (KBase is platform; extractor filters it) | `Tenants: enigma, pmi` |
-| `metal_atlas → (referenced; specific contribution unclear)` (when REPORT actually explains the contribution) | `metal_atlas → "metal-stress fitness panels used as baseline"` |
-| Empty body when signal absent | "All data sourced from `enigma`. This project did not integrate across tenants." |
+| `"tenant_list": ["enigma", "pmi", "kbase"]` (KBase is platform; extractor filters it) | `"tenant_list": ["enigma", "pmi"]` |
+| `"what_was_leveraged": "(2 references in project artifacts)"` (placeholder shipped through) | `"what_was_leveraged": "metal-stress fitness panels used as baseline"` |
+| `"tenant_list": []` (empty array as stand-in) | omit `tenant_list` entirely |
+| Title with `no_signal_fallback: true` reads "Data integration summary" | Title reads "All data sourced from `enigma`. This project did not integrate across tenants." |
 
 ## Tool use
 
 - `Read` — `cross_tenant_signal.json`, `cross_tenant_signal.md`,
   `00_throughline.md`, REPORT.md, RESEARCH_PLAN.md.
-- `Write` — emit `cross_tenant_slide_content.md` to `OUT_PATH`.
+- `Write` — emit a JSON fragment (`compose-fragment.v1` envelope)
+  to `OUT_PATH`. Pretty-printed with 2-space indent is fine; valid
+  JSON is the only hard requirement.
 
 ## Output protocol
 
 1. Read `cross_tenant_signal.json` first; it's structured.
 2. Decide on template variant: `no_signal_fallback` boolean → branch.
 3. If signal present, draft title (quantitative, punchline-shaped).
-4. Fill `Tenants` / `K-BERDL databases` / `Sibling project references`
-   from signal. Replace `what_was_leveraged` placeholders by
-   reading REPORT.md.
-5. Compose 1-3 sentence speaker-notes augmentation.
-6. If `KBASE_PLATFORM_FRAME=true`, add the platform-value sentence.
-7. Self-review pass.
-8. `Write` to `OUT_PATH` exactly once.
-9. **Cost checkpoint:** target 15-30K input tokens. The signal does
+4. Fill `content.tenant_list` / `content.kberdl_db_list` /
+   `content.sibling_project_refs` from signal. Replace
+   `what_was_leveraged` placeholders by reading REPORT.md. Omit
+   any list that has zero entries — do NOT ship `[]`.
+5. Compose 1–3 sentence `speaker_notes_seed`. If
+   `KBASE_PLATFORM_FRAME=true`, append exactly one factual
+   platform-value sentence (e.g., "K-BERDL's federated query layer
+   is what made this 4-database integration tractable in a single
+   notebook.") to the seed — NOT to the slide title or any
+   `content.*` field.
+6. Set `kbase_platform_frame` = value of `KBASE_PLATFORM_FRAME` input
+   (audit metadata; the merge step strips it). Default false.
+7. Self-review pass (validator-blocking + silent traps).
+8. `Write` valid JSON to `OUT_PATH` exactly once.
+9. **Cost checkpoint:** target 15–30K input tokens. The signal does
    most of the work; you mostly read REPORT for sibling-project
    context.
 10. **Bounded retry:** Write failure → retry once; failure twice →
@@ -336,14 +403,17 @@ identically; the layout differs but the content shape is the same.
 **Closing-message template (required exact format):**
 
 ```
-cross_tenant slide content written: {OUT_PATH}
+cross_tenant fragment written: {OUT_PATH}
+schema_version: compose-fragment.v1
+kind: cross_tenant_set
+layout: cross_tenant_integration
 no_signal_fallback: {true|false}
 n_tenants: {N}
 n_kberdl_dbs: {N}
 n_siblings: {N}
 platform_frame: {true|false}
-unclear_siblings: {N}  (count of `(referenced; specific contribution unclear)` entries)
-next: slide_compose.v1 picks up this fragment for the cross_tenant_integration slide
+unclear_siblings: {N}  (count of refs whose what_was_leveraged was inferred without a clear REPORT anchor)
+next: merge_compose_fragments.py splices this fragment as the cross_tenant_integration slide
 ```
 
 If `Write` fails twice:
@@ -354,11 +424,17 @@ ERROR: Write failed for {OUT_PATH} after retry. (recovery excerpt: {<200 chars})
 
 ## Inviolable rules
 
-1. **Don't fabricate tenants / databases / siblings.** The extractor's
+1. **Layout is `cross_tenant_integration` — only.** Any other value
+   ships a slide with no cross-tenant content rendered. (PA-6.)
+2. **Content shape is flat (`title`, `tenant_list`, `kberdl_db_list`,
+   `sibling_project_refs`, `data_flow_diagram`, `no_signal_fallback`).**
+   Do NOT wrap data in a custom `tenant_integration` object. (PA-6.)
+3. **Don't fabricate tenants / databases / siblings.** The extractor's
    signal is authoritative.
-2. **No-signal fallback is the right answer when signal is empty.**
+4. **No-signal fallback is the right answer when signal is empty.**
    (SPEC §7.3.)
-3. **Title is a punchline, not a topic.** (SPEC §6.1.)
-4. **Don't preach the platform.** Platform-value framing is opt-in
-   via flag (D-011); default behavior is content-as-finding.
-5. **Write or lose the work.**
+5. **Title is a punchline, not a topic.** (SPEC §6.1.)
+6. **Don't preach the platform.** Platform-value framing is opt-in
+   via flag (D-011) and lives in speaker notes, not slide content.
+7. **Omit empty optional fields; do not ship `[]`.** (PA-7.)
+8. **Write or lose the work.**

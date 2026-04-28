@@ -339,20 +339,60 @@ GRAPHITE_GRAY_RGB = (157, 146, 135)  # KBase secondary palette
 # Path resolution
 # ---------------------------------------------------------------------------
 
+def _derive_project_dir(draft_dir: Path) -> Path | None:
+    """Walk up from draft_dir to find the project_dir (typical layout:
+    projects/<id>/talks/draft_N/). Returns the project_dir Path or
+    None if the standard structure isn't present."""
+    # draft_dir → talks/ → project_dir
+    if draft_dir.parent.name == "talks" and draft_dir.parent.parent.is_dir():
+        return draft_dir.parent.parent
+    return None
+
+
 def _resolve_asset_path(rel_or_abs: str, draft_dir: Path,
                        warnings: list[str], where: str) -> Path | None:
-    """Resolve a figure / image / logo path. Relative paths are resolved
-    against draft_dir. Returns None and appends a warning if file missing."""
-    candidate = Path(rel_or_abs)
-    if not candidate.is_absolute():
-        candidate = draft_dir / candidate
-    if not candidate.is_file():
+    """Resolve a figure / image / logo path.
+
+    Lookup order for relative paths (2026-04-27 fix #77):
+      1. Resolve against draft_dir (same as before)
+      2. Fall back to project_dir (../../ from draft_dir if it's
+         under projects/<id>/talks/draft_N/) — this is the standard
+         layout, and curate_figures.md emits paths relative to
+         project_dir (e.g., 'figures/fig01.png'), not draft_dir.
+
+    Returns the first existing path; None if neither exists.
+    """
+    candidate_path = Path(rel_or_abs)
+    if candidate_path.is_absolute():
+        if candidate_path.is_file():
+            return candidate_path
         warnings.append(
-            f"{where}: asset not found at {candidate} "
+            f"{where}: asset not found at {candidate_path} "
             f"(slide will render with a placeholder note)"
         )
         return None
-    return candidate
+
+    # Try draft_dir first (legacy behavior)
+    cand_draft = draft_dir / candidate_path
+    if cand_draft.is_file():
+        return cand_draft
+
+    # Fall back to project_dir (where curate_figures.md paths live)
+    project_dir = _derive_project_dir(draft_dir)
+    if project_dir is not None:
+        cand_project = project_dir / candidate_path
+        if cand_project.is_file():
+            return cand_project
+
+    # Not found anywhere — warn and return None
+    tried = [str(cand_draft)]
+    if project_dir is not None:
+        tried.append(str(project_dir / candidate_path))
+    warnings.append(
+        f"{where}: asset not found (tried: {' | '.join(tried)}) "
+        f"(slide will render with a placeholder note)"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -540,6 +540,31 @@ Write the result to OUT_PATH."
   invoke_claude_with_retry "$PROMPTS_DIR/substory_design.v1.md" "$user_prompt" "$out" "substory_design"
 }
 
+# Audit divider punchline lengths against the soft 14-word cap.
+# Surfaces a warning at run time so the user sees discipline drift
+# without a validator-blocking failure (per Adam's "budgets are
+# guidelines" framing). 2026-04-27 #79: live failures draft_5 +
+# draft_7 produced 18-19 word punchlines.
+audit_punchline_lengths() {
+  local substories="$OUTDIR/02_substories.md"
+  local audit_out
+  audit_out=$("$PYTHON_BIN" -c "
+import sys
+sys.path.insert(0, '$TOOLS_DIR')
+import parse_substories as ps
+content = open('$substories').read()
+over = ps.audit_punchline_lengths(content, recommended_max_words=14)
+if not over:
+    print('  ✓ all divider punchlines within 14-word recommendation')
+else:
+    print(f'  ⚠ {len(over)} divider punchline(s) exceed 14-word recommendation:')
+    for sid, pl, wc in over:
+        preview = pl[:80] + ('…' if len(pl) > 80 else '')
+        print(f'    {sid}: {wc} words — {preview!r}')
+")
+  echo "$audit_out" >&2
+}
+
 # Conditional gate: only halt if capacity_verdict == overflow.
 gate_substory_overflow() {
   local substories="$OUTDIR/02_substories.md"
@@ -1058,6 +1083,7 @@ if should_run throughline;      then stage_throughline     || { echo "FAIL at th
                                 else echo "[skip] throughline + pick (resume from $RESUME_FROM)" >&2; fi
 
 if should_run substory_design;  then stage_substory_design  || { echo "FAIL at substory_design" >&2; exit 1; }
+                                     audit_punchline_lengths
                                      gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
                                 else echo "[skip] substory_design + overflow gate (resume from $RESUME_FROM)" >&2; fi
 

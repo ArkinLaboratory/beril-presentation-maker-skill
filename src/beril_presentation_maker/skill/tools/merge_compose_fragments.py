@@ -499,7 +499,17 @@ def main() -> int:
         if isinstance(ct_data, dict):
             ct_slides = ct_data.get("slides", [])
             for ct_slide in ct_slides:
+                # 2026-04-27 #75: promote speaker_notes_seed → speaker_notes
+                # for cross_tenant slides. The speaker_notes stage runs only
+                # on substory slides; the cross_tenant slide is deck-level
+                # and otherwise ships with no notes. Honour cross_tenant.v1's
+                # contract that speaker_notes_seed becomes the slide's notes.
+                seed = ct_slide.get("speaker_notes_seed")
                 cleaned = strip_orchestrator_metadata(ct_slide)
+                # Strip cross_tenant.v1-specific orchestrator metadata
+                cleaned.pop("kbase_platform_frame", None)
+                if isinstance(seed, str) and seed.strip() and "speaker_notes" not in cleaned:
+                    cleaned["speaker_notes"] = seed.strip()
                 cleaned["id"] = next_id
                 cleaned.pop("substory_id", None)
                 slides.append(cleaned)
