@@ -320,6 +320,66 @@ def repair_bullets(layout: str, content: dict, slide_path: str,
     return out
 
 
+# 2026-04-27 #76: layout-name aliases for common LLM typos.
+# Live failures (draft_7): cross_tenant.v1 emitted layout="two_column"
+# instead of "two_column_compare". Single-pass dict lookup; cheap
+# insurance against the next instance of this drift.
+_LAYOUT_ALIASES = {
+    # Truncations / abbreviations
+    "two_column":             "two_column_compare",
+    "two_columns":            "two_column_compare",
+    "compare":                "two_column_compare",
+    "claim":                  "claim_evidence",
+    "evidence":               "claim_evidence",
+    "methods":                "methods_summary",
+    "method_summary":         "methods_summary",
+    "method":                 "methods_summary",
+    "ack":                    "acknowledgments",
+    "acks":                   "acknowledgments",
+    "acknowledgements":       "acknowledgments",  # British spelling
+    "ref":                    "references",
+    "refs":                   "references",
+    "qa":                     "qa_anticipated",
+    "q_and_a":                "qa_anticipated",
+    "qa_slide":               "qa_anticipated",
+    "diagram":                "workflow_diagram",
+    "workflow":               "workflow_diagram",
+    "figure":                 "data_figure",
+    "concept":                "concept_illustration",
+    "illustration":           "concept_illustration",
+    "cross_tenant":           "cross_tenant_integration",
+    "cross_tenant_integ":     "cross_tenant_integration",
+    "tenant":                 "cross_tenant_integration",
+    "implication":            "implications",
+    "section":                "section_divider",
+    "divider":                "section_divider",
+}
+
+VALID_LAYOUTS = (
+    "title", "section_divider", "big_idea", "big_number",
+    "claim_evidence", "two_column_compare", "data_figure",
+    "workflow_diagram", "methods_summary", "concept_illustration",
+    "cross_tenant_integration", "implications", "acknowledgments",
+    "references", "qa_anticipated",
+)
+
+
+def coerce_layout_name(raw: str) -> tuple[str, str | None]:
+    """Coerce a layout string to a slide_spec valid name.
+
+    Returns (coerced_name, original_if_changed_else_None). If the
+    layout is already valid, returns (raw, None). If unknown and
+    not in the alias table, returns the original unchanged and
+    logs a warning (validator catches truly unrecognized layouts).
+    """
+    if raw in VALID_LAYOUTS:
+        return raw, None
+    key = (raw or "").strip().lower()
+    if key in _LAYOUT_ALIASES:
+        return _LAYOUT_ALIASES[key], raw
+    return raw, None  # unknown — let validator flag it
+
+
 def repair_spec(spec: dict) -> tuple[dict, list[str]]:
     """Walk the spec, repair every diagram + every bullet-bearing
     layout. Returns (new_spec, coercions_log)."""
@@ -335,6 +395,17 @@ def repair_spec(spec: dict) -> tuple[dict, list[str]]:
             new_slides.append(slide)
             continue
         new_slide = dict(slide)
+
+        # 2026-04-27 #76: coerce layout-name typos before downstream checks
+        raw_layout = new_slide.get("layout")
+        if isinstance(raw_layout, str):
+            coerced, orig = coerce_layout_name(raw_layout)
+            if orig is not None:
+                coercions.append(
+                    f"$.slides[{i}].layout: {orig!r} → {coerced!r}"
+                )
+                new_slide["layout"] = coerced
+
         layout = new_slide.get("layout")
         content = new_slide.get("content")
         if not isinstance(content, dict):
