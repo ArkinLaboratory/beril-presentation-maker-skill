@@ -1,15 +1,12 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.1.0-spec (specification-only release; implementation
-# pending). Mirrors beril-paper-writer-skill packaging. The fourth
-# skill in the BERIL drop-in quartet (atlas, adversarial, paper-
-# writer, presentation-maker).
-#
-# When implementation lands, version bumps to 0.1.0 and the CLI
-# stubs in cli.py become real subcommands. The package shape is
-# stable from this commit forward; future PRs add code, not
-# refactor structure.
+# Status: v0.2.0 (first install-shippable release). The fourth skill
+# in the BERIL drop-in quartet (atlas, adversarial, paper-writer,
+# presentation-maker). All 11 stages of the drafting pipeline wired
+# end-to-end; KBase-branded master + slide_spec validator + assembler
+# + poster_fill production. Adversarial review-rewrite loop and
+# ai_image_prompt staging are deferred to v0.3.
 ####################################################################
 
 [build-system]
@@ -22,7 +19,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.1.0.dev0"
+version = "0.2.0"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,7 +43,7 @@ keywords = [
 ]
 
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -145,6 +142,23 @@ Repository = "https://github.com/ArkinLaboratory/beril-presentation-maker-skill.
 [tool.hatch.build.targets.wheel]
 packages = ["src/beril_presentation_maker"]
 
+# Defense-in-depth excludes for the wheel target. Hatchling excludes
+# bytecode by default, but we list these explicitly so editable installs
+# with `pip install -e .` and direct wheel builds match.
+exclude = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/*.pyo",
+    "**/.DS_Store",
+    "**/.pytest_cache",
+    "**/pytest-cache-files-*",
+    # State directories never ship.
+    "src/beril_presentation_maker/skill/state",
+    # The smoke-named copy of the orchestrator (kept until git rm).
+    # Only the production-named presentation_maker.sh ships.
+    "src/beril_presentation_maker/skill/tools/presentation_maker_smoke.sh",
+]
+
 # The shipped skill directory (SKILL.md, prompts, references, tools,
 # templates) lives inside the package at src/beril_presentation_maker/skill/
 # and ships as package data. Accessed at runtime via importlib.resources.
@@ -174,12 +188,17 @@ exclude = [
     "**/__pycache__",
     "**/*.pyc",
     "**/.DS_Store",
+    "**/.pytest_cache",
+    "**/pytest-cache-files-*",
     # State directories never ship.
     "src/beril_presentation_maker/skill/state",
     # Per-draft runtime state never ships either.
     "talks/draft_*/state.json",
     "talks/draft_*/audit",
     "talks/cost-log.jsonl",
+    # Until git rm, the smoke-named orchestrator copy is on-disk but
+    # excluded from sdist + wheel.
+    "src/beril_presentation_maker/skill/tools/presentation_maker_smoke.sh",
 ]
 
 # ----------------------------------------------------------------------

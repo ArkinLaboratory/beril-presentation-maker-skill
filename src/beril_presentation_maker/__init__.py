@@ -1,7 +1,7 @@
-"""beril-presentation-maker-skill — top-level package.
+"""beril-presentation-maker-skill — scientific presentation drafter for BERIL projects.
 
-v0.1.0-spec: specification only. CLI stubs raise NotImplementedError until
-implementation lands. Mirrors beril-paper-writer-skill packaging.
+See SPEC.md for design intent; LAYOUT.md for runtime contracts;
+RELEASE_NOTES.md for v0.2 capabilities.
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.2.0"

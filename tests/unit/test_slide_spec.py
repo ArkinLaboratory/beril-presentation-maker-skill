@@ -223,6 +223,84 @@ def test_claim_evidence_figure_without_caption_rejected(ss):
     assert any("figure and figure_caption" in i.message for i in issues)
 
 
+def test_data_figure_curated_path_rejected(ss):
+    """Regression: the deprecated figures/curated/ convention silently
+    dropped four data-slide pictures in draft_8 (2026-04-27). The
+    validator must hard-fail rather than letting the assembler warn-
+    and-drop. See slide_compose.v1.md changelog 2026-04-27."""
+    slide = ss.example_slide("data_figure")
+    slide["content"]["figure"] = "figures/curated/fig34_classification_heatmap.png"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert any("deprecated 'curated/' segment" in i.message for i in issues), \
+        f"expected /curated/ rejection; got: {[i.format() for i in issues]}"
+
+
+def test_claim_evidence_curated_path_rejected(ss):
+    """Same regression on claim_evidence.figure."""
+    slide = ss.example_slide("claim_evidence")
+    slide["content"]["figure"] = "figures/curated/F03.png"
+    slide["content"]["figure_caption"] = "x"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert any("deprecated 'curated/' segment" in i.message for i in issues)
+
+
+def test_concept_illustration_curated_path_rejected_but_tbd_ok(ss):
+    """concept_illustration.image_path: {TBD} placeholder is legitimate
+    (filled by ai_image_prompt.v1), but figures/curated/ is not."""
+    # 1. {TBD} must pass the path-shape check
+    slide = ss.example_slide("concept_illustration")
+    slide["content"]["image_path"] = "{TBD}"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert not any("deprecated 'curated/' segment" in i.message for i in issues), \
+        "{TBD} placeholder should pass path-shape check"
+
+    # 2. figures/curated/ must fail
+    slide["content"]["image_path"] = "figures/curated/img01.png"
+    issues = ss.validate_slide_spec(spec)
+    assert any("deprecated 'curated/' segment" in i.message for i in issues)
+
+
+def test_big_idea_supporting_graphic_curated_path_rejected(ss):
+    """big_idea.supporting_graphic — same path-shape rule applies."""
+    slide = ss.example_slide("big_idea")
+    slide["content"]["supporting_graphic"] = "figures/curated/icon.png"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert any("deprecated 'curated/' segment" in i.message for i in issues)
+
+
+def test_relative_figure_path_accepted(ss):
+    """Sanity: the recommended path shape (figures/<name>.png) passes."""
+    slide = ss.example_slide("data_figure")
+    slide["content"]["figure"] = "figures/fig34_classification_heatmap.png"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert not any("curated/" in i.message for i in issues)
+
+
 def test_methods_summary_bullets_min_5(ss):
     slide = ss.example_slide("methods_summary")
     slide["content"]["bullets"] = ["a", "b"]   # too few

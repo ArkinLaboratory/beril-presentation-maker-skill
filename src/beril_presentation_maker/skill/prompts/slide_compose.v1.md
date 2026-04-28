@@ -1,5 +1,19 @@
 # BERIL Presentation-Maker — Slide Compose
 
+> **Changelog (2026-04-27, in-place edit):** Dropped the
+> `figures/curated/<name>.png` path convention. `figure:` paths must now
+> match the path string in `curated_figures.md` verbatim — typically
+> `figures/<name>.png`, relative to `project_dir`. Reason: there is no
+> upstream step that materializes a `figures/curated/` directory;
+> `curate_figures.py` is purely an inventory + shortlist tool and writes
+> only markdown files. The previous convention caused four data slides
+> in `draft_8/` (slides 8, 9, 15, 19 — fig34 / fig35 / fig36 / fig37) to
+> ship with no figure because `assemble_pptx._resolve_asset_path` could
+> not resolve the `figures/curated/` prefix at either `draft_dir` or
+> `project_dir`. The assembler's resolution order
+> (`draft_dir → project_dir`) already handles the `figures/<name>.png`
+> case correctly.
+
 You run **once per substory** after the user approves the substory
 clusters. You receive one substory's metadata (its punchline and the
 critical analyses it covers), the throughline that frames the talk,
@@ -106,7 +120,7 @@ After writing, you respond with the closing-message template
           "RAST one-shot recovered 109/142 (76.8%)",
           "Inner-loop reannotation recovered 138/142 (97.2%)"
         ],
-        "figure": "figures/curated/F03_recovery_by_method.png",
+        "figure": "figures/F03_recovery_by_method.png",
         "figure_caption": "Recovery rate by annotation method on Morgan Price gold standard",
         "citations": ["price2022goldstandard", "aziz2008rast"]
       },
@@ -144,9 +158,14 @@ Field rules:
 - **`citations[]` keys must exist in the pool.** Cross-check against
   `citation_pool.json` before emitting. The orchestrator validator
   will fail otherwise.
-- **`figure` paths must exist on disk** in the curated set. Emit only
-  paths from `curated_figures.md` or `figures/curated/`. The
-  orchestrator validator (P9) will reject phantom paths.
+- **`figure` paths must match `curated_figures.md` verbatim.** Copy the
+  exact path string (typically `figures/<name>.png`) from the entries
+  in `curated_figures.md` — do **not** prepend, strip, or rewrite any
+  segment (no `curated/`, no `assets/`, no absolute path). Paths in
+  `curated_figures.md` are relative to the `project_dir`; the
+  assembler resolves them against `project_dir/<path>` automatically.
+  The orchestrator validator (P9) will reject any path that does not
+  appear verbatim in `curated_figures.md`.
 - **The divider (position 0) is mandatory** for every substory in
   modes `talk-15` / `talk-30` / `talk-45`. Posters skip it (the
   poster layout has no dividers; orchestrator drops position 0).
@@ -835,8 +854,15 @@ Run before the `Write` step.
 
 8. **Citation key is NOT in the pool.** The orchestrator's pool-key
    cross-check (P10) will fail; verify before write.
-9. **Figure path doesn't exist.** Verify path resolves under
-   `figures/curated/` before write.
+9. **Figure path doesn't exist.** Use the path string from
+   `curated_figures.md` verbatim (e.g., `figures/fig01_xxx.png`). Do
+   **not** insert a `curated/` segment, strip the `figures/` prefix,
+   or rewrite the path. The assembler resolves the path against
+   `project_dir`; mis-prefixed paths fail to resolve and the figure
+   gets silently dropped from the slide. Live failure mode
+   (2026-04-27 draft_8): four data slides shipped with no figure
+   because the spec emitted `figures/curated/fig3{4,5,6,7}_*.png` —
+   no `figures/curated/` directory exists anywhere in the project.
 10. **Number on a slide isn't in REPORT.** Run a verbatim grep
     against REPORT before writing any quantitative bullet or
     big_number headline.
@@ -879,7 +905,8 @@ Run before the `Write` step.
 | Wrong | Right |
 |---|---|
 | `citations: ["smith2023unknown"]` (not in pool) | only keys present in `citation_pool.json` |
-| `figure: "figures/F03.png"` (path not in curated set) | `figure: "figures/curated/F03_recovery_by_method.png"` |
+| `figure: "figures/curated/F03_recovery_by_method.png"` (no such directory exists) | `figure: "figures/F03_recovery_by_method.png"` (verbatim from `curated_figures.md`) |
+| `figure: "F03_recovery_by_method.png"` (missing `figures/` prefix) | `figure: "figures/F03_recovery_by_method.png"` (verbatim from `curated_figures.md`) |
 | `headline: "97.2%"` not in REPORT | grep REPORT first; if absent, drop or escalate |
 | Slide title: "Methods" | Slide title: "Inner-loop annotation: 3-pass refinement against gold standard" |
 

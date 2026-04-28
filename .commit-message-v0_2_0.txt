@@ -1,0 +1,104 @@
+v0.2.0: first install-shippable release
+
+The fourth skill in the BERIL drop-in quartet (atlas, adversarial,
+paper-writer, presentation-maker) reaches install-shippable parity.
+The 11-stage drafting pipeline that grew under earlier `v0.1.x-*` and
+`v0.2.x-pipeline` tags now ships behind a real CLI: pipx-installable,
+deployable into a BERIL checkout via install-skill, invocable through
+slash commands.
+
+CLI plumbing (Tier A — ports paper-writer pattern):
+- src/beril_presentation_maker/cli.py: rewrite from stub-dispatching to
+  real subparser dispatch (mirrors paper-writer / adversarial pattern).
+- src/beril_presentation_maker/commands/install_skill.py: NEW. Copies
+  shipped skill/ tree into <BERIL>/.claude/skills/beril-presentation-maker/.
+  Preserves install-local state/. Sets exec bits on tools/*.sh + .py.
+- src/beril_presentation_maker/commands/configure.py: NEW. Hard checks
+  for claude CLI + python-pptx + nbformat + Pillow; soft checks for
+  beril-adversarial-cli + LibreOffice + mermaid-cli + bash + POSIX core.
+- src/beril_presentation_maker/commands/draft.py: NEW. Thin wrapper
+  around presentation_maker.sh forwarding flags.
+- src/beril_presentation_maker/commands/continue_run.py: NEW. Thin
+  wrapper around presentation_maker.sh --resume-from <stage>.
+- src/beril_presentation_maker/commands/assemble.py: NEW. Direct Python
+  invocation of assemble_pptx.assemble() with optional LibreOffice PDF
+  render.
+- src/beril_presentation_maker/discovery.py: real implementation
+  (was NotImplementedError stub). Vendored from paper-writer with
+  SKILL_DIR_NAME="beril-presentation-maker".
+- src/beril_presentation_maker/state.py: real read/write helpers.
+  Orchestrator is canonical for state semantics in v0.2.0.
+- src/beril_presentation_maker/__init__.py: __version__ = "0.2.0".
+
+Skill artifacts (Tier B):
+- src/beril_presentation_maker/skill/SKILL.md: rewrite from v0.1.0-spec
+  stub to real (slash commands, workflow, output artifacts, alternatives
+  table, pitfall-detection block).
+- src/beril_presentation_maker/skill/commands/beril-presentation-maker.md:
+  NEW slash-command markdown.
+- src/beril_presentation_maker/skill/commands/beril-presentation-maker-continue.md:
+  NEW slash-command markdown.
+- src/beril_presentation_maker/skill/tools/presentation_maker.sh: NEW
+  (copy of presentation_maker_smoke.sh with rewritten header — drops the
+  "NOT production" disclaimer; adds 11-stage flow + v0.3 deferral list).
+- src/beril_presentation_maker/skill/tools/presentation_maker_smoke.sh:
+  REMOVED via `git rm` (header was rewritten in place; file is now
+  redundant with presentation_maker.sh).
+
+Packaging hygiene (Tier C):
+- pyproject.toml: version 0.1.0.dev0 -> 0.2.0; classifier
+  "2 - Pre-Alpha" -> "3 - Alpha"; added explicit
+  [tool.hatch.build.targets.wheel.exclude] mirroring sdist excludes;
+  smoke-named orchestrator excluded from both wheel and sdist (defense
+  in depth, since the file is also `git rm`'d).
+- RELEASE_NOTES.md: NEW. v0.2.0 narrative + known gaps (deferred to
+  v0.3+: adversarial review-rewrite, ai_image_prompt staging, 5 deck
+  formatting bugs at master/template + qa_prep word-budget level).
+
+Bug fix (figures/curated/ contract drift):
+- src/beril_presentation_maker/skill/prompts/slide_compose.v1.md:
+  changelog header + 4 in-place edits removing the prescribed
+  figures/curated/ path convention. Paths now must come verbatim from
+  curated_figures.md (typically figures/<name>.png, relative to
+  project_dir).
+- src/beril_presentation_maker/skill/tools/slide_spec.py:
+  _check_figure_path helper that hard-rejects /curated/ segments.
+  Wired into _check_big_idea (supporting_graphic), _check_claim_evidence
+  (figure), _check_data_figure (figure), _check_concept_illustration
+  (image_path with {TBD} placeholder allowance).
+- tests/unit/test_slide_spec.py: 5 new regression tests covering all
+  4 path-bearing layouts plus the {TBD} placeholder edge case.
+
+Polish batch (already at parent commit 7077849, repackaged here):
+- #77 figure path resolution (assemble_pptx project_dir fallback)
+- #78 workflow_diagram coordinate passthrough
+- #79 stickier divider punchline cap
+- #75 cross_tenant.v1 markdown -> JSON fragment
+
+Verification:
+- 355/355 unit tests pass (was 350/350 pre-change; +5 new in
+  test_slide_spec.py covering the curated/ rejection + relative-path
+  acceptance).
+- Build smoke: hatchling builds clean wheel (52 entries, 2.4 MB).
+  Verified zero __pycache__, zero .pyc, zero .DS_Store, zero
+  presentation_maker_smoke.sh, zero .pytest_cache, no state/ leakage.
+- Install-skill round-trip: installed wheel via `pip install --target`,
+  ran `python -m beril_presentation_maker.cli install-skill` against a
+  fake BERIL root; deployed tree has 12 prompts, 2 slash commands,
+  5 references (incl. 3 binary .pptx templates), 17 tools (smoke.sh
+  correctly absent), state/ created with README.
+- End-to-end smoke: wheel-deployed slide_spec.py validator hard-fails
+  the original draft_8 spec with 4 specific errors at slides[7,8,14,18]
+  (the curated/ regression). After fixing /curated/, validation passes
+  with 0 issues.
+
+Open follow-ups (NOT in this release):
+- Adversarial review-rewrite loop (depends on
+  beril-adversarial --type presentation mode).
+- ai_image_prompt.v1 wired as an orchestrator stage.
+- 5 deck formatting bugs from draft_8 walk: section_divider title
+  left=-0.09in (master bug); data_figure caption + source TextBox
+  undersizing; qa_anticipated body 3x capacity overflow;
+  methods_summary body overflow; workflow_diagram caption row +
+  Oval-10 overflow.
+- Tier 7 mermaid diagrams (cross-skill backlog with paper-writer).

@@ -1,104 +1,78 @@
-"""beril-presentation-maker — command-line entry point.
+"""`beril-presentation-maker` top-level CLI entry point.
 
-v0.1.0-spec: stubs only. Each subcommand raises NotImplementedError
-with a pointer to the SPEC/LAYOUT section that defines its behavior.
-Implementation lands in subsequent commits per LAYOUT.md.
+Dispatches to command modules under beril_presentation_maker.commands/.
 
-Mirrors beril_paper_writer.cli structure (argparse with sub-parsers,
-console-script entry point in pyproject.toml).
+Subcommands:
+  install-skill   Copy shipped skill/ tree into BERIL/.claude/skills/beril-presentation-maker/.
+  configure       Verify claude is on PATH; report optional dep status.
+  draft           Start a fresh presentation draft (full 11-stage pipeline).
+  continue        Resume a draft from a named stage (--resume-from).
+  assemble        Render slide_spec.json to .pptx (and optionally .pdf).
+
+The drafting workflow runs via the shipped shell script
+tools/presentation_maker.sh, invoked by the `draft` and `continue`
+Python subcommands. Same pattern as beril-paper-writer / beril-adversarial.
+
+Exit codes:
+  0  success
+  1  user error (bad args, missing draft_dir, missing file user should fix)
+  2  runtime error (subprocess failed, package data missing)
+  3  config error (claude not installed; tools unavailable)
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
-from typing import NoReturn
+from typing import Optional
 
-
-def _stub(name: str, spec_section: str) -> NoReturn:
-    msg = (
-        f"beril-presentation-maker {name}: not implemented in v0.1.0-spec. "
-        f"See SPEC.md {spec_section} for behavior; LAYOUT.md for shape."
-    )
-    print(msg, file=sys.stderr)
-    raise SystemExit(2)
-
-
-def cmd_install_skill(args: argparse.Namespace) -> NoReturn:
-    _stub("install-skill", "§14 Assembly + LAYOUT.md §1 Repository tree")
-
-
-def cmd_configure(args: argparse.Namespace) -> NoReturn:
-    _stub("configure", "§16 State machine + LAYOUT.md §3 CLI")
-
-
-def cmd_continue_run(args: argparse.Namespace) -> NoReturn:
-    _stub("continue", "§16.3 Resume semantics")
-
-
-def cmd_assemble(args: argparse.Namespace) -> NoReturn:
-    _stub("assemble", "§14 Assembly")
-
-
-def cmd_revise(args: argparse.Namespace) -> NoReturn:
-    _stub("revise", "§16.5 Targeted revision via revise")
+from beril_presentation_maker import __version__
+from beril_presentation_maker.commands import (
+    assemble,
+    configure,
+    continue_run,
+    draft,
+    install_skill,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         prog="beril-presentation-maker",
         description=(
             "BERIL Presentation Maker — drafts evidence-grounded scientific "
-            "presentations (talks + posters) from BERDL analysis projects."
+            "presentations (talks + posters) from BERDL analysis projects, "
+            "in KBase brand. See "
+            "https://github.com/ArkinLaboratory/beril-presentation-maker-skill."
         ),
     )
-    parser.add_argument(
+    p.add_argument(
         "--version",
         action="version",
-        version="beril-presentation-maker 0.1.0-spec",
+        version=f"beril-presentation-maker-skill {__version__}",
     )
+    subparsers = p.add_subparsers(dest="command", metavar="<command>")
 
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    install_skill.add_parser(subparsers)
+    configure.add_parser(subparsers)
+    draft.add_parser(subparsers)
+    continue_run.add_parser(subparsers)
+    assemble.add_parser(subparsers)
 
-    p_install = sub.add_parser("install-skill", help="Install the Claude Code skill into a BERIL root.")
-    p_install.add_argument("beril_root", nargs="?", default=None, help="Path to BERIL root (auto-detected if omitted).")
-    p_install.add_argument("--force", action="store_true", help="Overwrite existing install.")
-    p_install.set_defaults(func=cmd_install_skill)
-
-    p_conf = sub.add_parser("configure", help="Verify environment, models, and sibling skills.")
-    p_conf.set_defaults(func=cmd_configure)
-
-    p_cont = sub.add_parser("continue", help="Resume a paused draft.")
-    p_cont.add_argument("draft_dir", help="Path to talks/draft_N/ to resume.")
-    p_cont.set_defaults(func=cmd_continue_run)
-
-    p_asm = sub.add_parser("assemble", help="Render slide_spec to .pptx (and optionally .pdf).")
-    p_asm.add_argument("draft_dir", help="Path to talks/draft_N/ to assemble.")
-    p_asm.add_argument("--format", choices=["pptx", "pdf"], default="pptx",
-                       help="Output format. pdf requires LibreOffice on PATH (see SPEC §14.3).")
-    p_asm.set_defaults(func=cmd_assemble)
-
-    p_rev = sub.add_parser("revise", help="Targeted post-assembled revision (per-slide / per-substory).")
-    p_rev.add_argument("draft_dir", help="Path to talks/draft_N/ to revise.")
-    rev_scope = p_rev.add_mutually_exclusive_group(required=True)
-    rev_scope.add_argument("--slide", type=int, metavar="N",
-                           help="Re-compose slide N only.")
-    rev_scope.add_argument("--substory", metavar="ID",
-                           help="Re-compose all slides in substory ID.")
-    rev_scope.add_argument("--speaker-notes-only", type=int, metavar="N",
-                           help="Regenerate speaker notes for slide N only.")
-    rev_scope.add_argument("--add-image", type=int, metavar="N",
-                           help="Inject AI-generated image into slide N (Channel B, SPEC §8.3).")
-    p_rev.add_argument("instruction", help="Free-form revision instruction.")
-    p_rev.set_defaults(func=cmd_revise)
-
-    return parser
+    return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
-    args.func(args)
-    return 0
+    args = parser.parse_args(raw_argv)
+
+    func = getattr(args, "func", None)
+    if func is None:
+        parser.print_help()
+        return 0
+    return func(args)
 
 
 if __name__ == "__main__":

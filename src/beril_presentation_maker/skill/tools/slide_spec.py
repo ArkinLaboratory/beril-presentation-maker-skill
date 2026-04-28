@@ -191,6 +191,54 @@ def _check_str_list(content: dict, key: str, path: str, issues: list[ValidatorIs
             f"must be a list of {min_len}–{bound} non-empty strings"))
 
 
+def _check_figure_path(content: dict, key: str, path: str, issues: list[ValidatorIssue],
+                       *, allow_tbd_placeholder: bool = False) -> None:
+    """Validate a figure / image / supporting_graphic path string SHAPE.
+
+    This is path-shape validation only — it does NOT check that the file
+    exists on disk (that's the assembler's runtime job). What it catches:
+
+      1. The deprecated `figures/curated/<name>.png` convention. Live
+         failure mode (2026-04-27 draft_8): the slide_compose prompt
+         used to instruct the LLM to emit `figures/curated/...` paths,
+         but no upstream step (curate_figures.py is inventory-only)
+         materializes that subdirectory. The assembler silently warned
+         and dropped the figure → four data slides shipped picture-less.
+         Fix shipped same-day in slide_compose.v1.md (changelog at top).
+         This validator hard-fails so the silent drop never recurs.
+
+    Absolute paths are **not** rejected here — the assembler supports
+    them via `_resolve_asset_path`'s absolute-path branch and
+    `test_absolute_figure_path_works` covers that use case (e.g., for
+    test fixtures with files under `tmp_path`). The slide_compose
+    prompt recommends relative paths from `curated_figures.md`, but
+    that's a recommendation, not a hard validator constraint.
+
+    If `key` is absent from content, this helper is a no-op (presence is
+    the caller's concern via `_check_required_str` / `_check_optional_str`).
+
+    `allow_tbd_placeholder=True` permits the literal string `"{TBD}"` —
+    used by `concept_illustration.image_path` per slide_compose.v1.md
+    L829-831 (the placeholder is filled in by `ai_image_prompt.v1`).
+    """
+    if key not in content:
+        return
+    val = content[key]
+    if not isinstance(val, str):
+        return  # _check_required_str / _check_optional_str will handle type errors
+    if allow_tbd_placeholder and val == "{TBD}":
+        return
+    if "/curated/" in val or val.startswith("curated/"):
+        issues.append(ValidatorIssue(
+            f"{path}.{key}",
+            f"path contains deprecated 'curated/' segment: {val!r}. "
+            f"Use the path verbatim from curated_figures.md (typically "
+            f"'figures/<name>.png'). The 'figures/curated/' convention "
+            f"was removed in slide_compose.v1.md changelog 2026-04-27 "
+            f"because no upstream step materializes that directory."
+        ))
+
+
 def _check_diagram(content: dict, key: str, path: str, issues: list[ValidatorIssue],
                    *, required: bool) -> None:
     if key not in content:
@@ -280,6 +328,7 @@ def _check_big_idea(content: dict, path: str) -> list[ValidatorIssue]:
     iss: list[ValidatorIssue] = []
     _check_required_str(content, "title", path, iss)
     _check_optional_str(content, "supporting_graphic", path, iss)
+    _check_figure_path(content, "supporting_graphic", path, iss)
     return iss
 
 
@@ -304,6 +353,7 @@ def _check_claim_evidence(content: dict, path: str) -> list[ValidatorIssue]:
     if has_fig:
         _check_optional_str(content, "figure", path, iss)
         _check_optional_str(content, "figure_caption", path, iss)
+        _check_figure_path(content, "figure", path, iss)
     if "citations" in content:
         if not _is_str_list(content["citations"]):
             iss.append(ValidatorIssue(f"{path}.citations",
@@ -340,6 +390,7 @@ def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
     _check_required_str(content, "figure", path, iss)
     _check_required_str(content, "caption", path, iss)
     _check_optional_str(content, "data_source", path, iss)
+    _check_figure_path(content, "figure", path, iss)
     return iss
 
 
@@ -383,6 +434,9 @@ def _check_concept_illustration(content: dict, path: str) -> list[ValidatorIssue
     _check_required_str(content, "title", path, iss)
     _check_required_str(content, "image_path", path, iss)
     _check_required_str(content, "image_prompt", path, iss)
+    # `{TBD}` is the legitimate placeholder per slide_compose.v1.md L829-831;
+    # ai_image_prompt.v1 fills it in downstream.
+    _check_figure_path(content, "image_path", path, iss, allow_tbd_placeholder=True)
     if content.get("style") not in CONCEPT_STYLES:
         iss.append(ValidatorIssue(f"{path}.style",
             f"must be one of {CONCEPT_STYLES}, got {content.get('style')!r}"))
