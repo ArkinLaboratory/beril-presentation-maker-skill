@@ -313,6 +313,114 @@ def _remove_placeholder(slide, idx: int) -> bool:
     return True
 
 
+def _remove_decorative_banner(slide) -> bool:
+    """Remove the FIRST non-placeholder <p:sp> from the slide's spTree.
+
+    Used by `_fill_big_idea`'s centered-assertion mode (v0.2.2): the
+    layout inherits a decorative top banner from LAYOUT_FIXES["big_idea"]
+    that's appropriate when supporting_graphic is present, but visually
+    weak when the slide is a pure assertion. Removing the banner lets
+    the title float on a clean slide.
+
+    The decorative banner is typically the first non-placeholder shape
+    in document order. python-pptx's shape iteration walks the spTree;
+    the first <p:sp> that has no <p:nvSpPr>/<p:nvPr>/<p:ph> child is
+    the banner. Returns True if removed, False if no banner was found.
+    """
+    p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    sptree = slide.shapes._spTree
+    for child in list(sptree):
+        # Match <p:sp> only (not <p:pic>, <p:grpSp>, etc.)
+        if not child.tag.endswith("}sp"):
+            continue
+        # Skip placeholders (have a <p:ph> descendant under <p:nvSpPr>)
+        ph = child.find(f"{{{p_ns}}}nvSpPr/{{{p_ns}}}nvPr/{{{p_ns}}}ph")
+        if ph is not None:
+            continue
+        sptree.remove(child)
+        return True
+    return False
+
+
+def _reposition_placeholder_to_center(slide, *, idx: int,
+                                      left_in: float, top_in: float,
+                                      width_in: float, height_in: float) -> bool:
+    """Move + resize a placeholder to absolute slide-relative position.
+
+    Used by `_fill_big_idea`'s centered-assertion mode to override the
+    layout-defined title placement (which is in the top accent banner)
+    and put the title at slide center. Returns True on success, False
+    if no placeholder with the given idx was found.
+
+    `idx=0` is the title placeholder convention.
+    """
+    ph = _find_placeholder(slide, idx)
+    if ph is None:
+        return False
+    ph.left = Inches(left_in)
+    ph.top = Inches(top_in)
+    ph.width = Inches(width_in)
+    ph.height = Inches(height_in)
+    return True
+
+
+def _set_title_font_size(slide, *, font_pt: int) -> bool:
+    """Set the font size on the title placeholder's runs (idx=0).
+
+    Used by `_fill_big_idea`'s centered-assertion mode to bump the title
+    from the LAYOUT_FIXES default (36pt for banner-mode) to 48pt for the
+    pull-quote treatment. Walks all paragraphs/runs in the title's text
+    frame and sets each run's font size; this is necessary because the
+    layout-level def_rpr.sz doesn't propagate when the slide-level
+    placeholder body is rebuilt at fill time.
+    """
+    ph = _find_placeholder(slide, 0)
+    if ph is None or not ph.has_text_frame:
+        return False
+    for paragraph in ph.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(font_pt)
+    return True
+
+
+def _enable_normautofit_on_title(slide,
+                                 *, font_scale: int = 80000,
+                                 ln_spc_reduction: int = 20000) -> bool:
+    """Apply normAutofit to the title placeholder's body_pr.
+
+    Same shape as `_enable_normautofit` but targets idx=0 (title) and
+    used by big_idea's centered-assertion mode so 200+-char claims
+    shrink to fit the centered band rather than overflowing.
+    """
+    return _enable_normautofit(slide, 0,
+                               font_scale=font_scale,
+                               ln_spc_reduction=ln_spc_reduction)
+
+
+def _is_tbd_placeholder(text: str) -> bool:
+    """True if `text` is a TBD-style placeholder that should be hidden
+    from the rendered deck.
+
+    Used by acknowledgments rendering (v0.2.2) to filter orchestrator-
+    template defaults that leak through when a draft hasn't been edited
+    by the user. Recognizes:
+      - exact "TBD"
+      - "TBD - populated by production orchestrator"
+      - "TBD - <anything>"
+      - case-insensitive variants
+    """
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip().lower()
+    if stripped == "tbd":
+        return True
+    if stripped.startswith("tbd -") or stripped.startswith("tbd—"):
+        return True
+    if stripped.startswith("tbd:"):
+        return True
+    return False
+
+
 def _set_speaker_notes(slide, text: str) -> None:
     if not text:
         return
@@ -385,8 +493,12 @@ def _add_textbox(slide, text: str,
 # occupied by a freeform figure — the placeholder's "Click to add text"
 # prompt would otherwise show through.
 FIGURE_REGIONS = {
-    # Bullets in body placeholder (full width); figure right-side overlay.
-    "claim_evidence":       (5.30, 1.30, 4.50, 3.50),
+    # Bullets in body placeholder (left half via runtime resize); figure
+    # on right. 2026-04-29 (v0.2.2): figure H 3.50 → 3.15 in to leave
+    # 0.40 in band (4.45..4.85) for the caption above the logo strip
+    # at 5.00. Live failure draft_10 slide 18: caption ran into logos
+    # because figure ended at y=4.80, logos at 5.00, leaving only 0.20 in.
+    "claim_evidence":       (5.30, 1.30, 4.50, 3.15),
     # Title is in the accent banner (round 3); supporting graphic fills
     # the body area below banner, ABOVE the logos at y=5.00.
     "big_idea":             (1.00, 1.10, 8.00, 3.85),
@@ -508,12 +620,51 @@ def _fill_section_divider(slide, content, draft_dir, warnings):
 
 
 def _fill_big_idea(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    """big_idea has two render modes:
+
+    1. **Centered assertion (default).** When `supporting_graphic` is
+       absent, the slide is a pull-quote — title centered vertically and
+       horizontally on a clean (non-banner) slide, similar in feel to
+       section_divider but without the substory label. Used for opening
+       claims and key transitions.
+
+    2. **Banner + image (legacy).** When `supporting_graphic` is present,
+       the original LAYOUT_FIXES design lights up: title in a top accent
+       banner, image below in the body region. This mode is forward-
+       compatible with v0.3's `ai_image_prompt.v1` — when generated
+       supporting graphics ship, big_idea slides can opt into them and
+       this branch handles render.
+
+    2026-04-29 (v0.2.2 fix, draft_10 slide 2):
+      Mode 1 was added because mode 2 was the only render path and the
+      LLM rarely emits supporting_graphic, leaving every big_idea slide
+      with title-at-top + empty body. The dual-mode pattern matches
+      `_fill_claim_evidence` (with-figure / without-figure split).
+    """
     if content.get("supporting_graphic"):
+        # Mode 2: banner + image (original layout)
+        _set_title(slide, content["title"])
         path = _resolve_asset_path(content["supporting_graphic"], draft_dir,
                                    warnings, "big_idea.supporting_graphic")
         if path:
             _add_picture(slide, path, *FIGURE_REGIONS["big_idea"])
+        return
+
+    # Mode 1: centered assertion (default)
+    # Remove the decorative top banner (it's the first non-placeholder
+    # <p:sp> on the slide, inherited from the layout's LAYOUT_FIXES setup).
+    _remove_decorative_banner(slide)
+    # Reposition the title placeholder to slide-center, mirroring the
+    # section_divider geometry minus the substory label.
+    _reposition_placeholder_to_center(slide, idx=0,
+                                      left_in=0.0, top_in=1.94,
+                                      width_in=10.0, height_in=1.27)
+    _set_title(slide, content["title"])
+    # 48pt vs section_divider's 40pt — big_idea is opening-claim
+    # emphasis; section_divider is transition cadence.
+    _set_title_font_size(slide, font_pt=48)
+    # normAutofit so 200+-char claims shrink instead of overflowing.
+    _enable_normautofit_on_title(slide)
 
 
 def _fill_big_number(slide, content, draft_dir, warnings):
@@ -575,11 +726,20 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
                                     "claim_evidence.figure")
         if path:
             _add_picture(slide, path, *FIGURE_REGIONS["claim_evidence"])
-            # Caption band below figure (only if figure rendered)
+            # Caption band below figure (only if figure rendered).
+            #
+            # 2026-04-29 (v0.2.2): drop auto_size (was growing box past
+            # bottom logos); fix word_wrap to actually take. Live test
+            # on draft_10 slide 18 showed caption truncated with "..."
+            # — auto_size=SHAPE_TO_FIT_TEXT overrides word_wrap in
+            # python-pptx (auto-size assumes single-line). Geometry:
+            # figure H 3.50 → 3.15 (FIGURE_REGIONS update above) so
+            # figure ends at y=4.45; caption sits at 4.50..4.85 in the
+            # cleared 0.40 in band; logos start at 5.00.
             _add_textbox(slide, content["figure_caption"],
-                         5.30, 4.85, 4.50, 0.40,
+                         5.30, 4.50, 4.50, 0.35,
                          font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
-                         word_wrap=True, auto_size=True)
+                         word_wrap=True)
     else:
         _set_placeholder_bullets(slide, 1, bullets)
     if content.get("citations"):
@@ -614,6 +774,14 @@ def _fill_two_column_compare(slide, content, draft_dir, warnings):
             for line in col_content:
                 p = tf.add_paragraph()
                 p.text = line
+    # 2026-04-29 (v0.2.2): normAutofit on both column placeholders. Live
+    # test on draft_10 slide 19 showed the right column's last bullet
+    # ("scores 0.875 for CRISPRi analysis") overflowing into the bottom
+    # logo region. The two_column_compare body H ≈ 3.48 in starting at
+    # T ≈ 0.98 — bottom 4.46, only 0.54 in clearance to logos at 5.00.
+    # 4-5 bullets at 18pt blow through. normAutofit shrinks per-column.
+    _enable_normautofit(slide, 1)
+    _enable_normautofit(slide, 2)
 
 
 def _fill_data_figure(slide, content, draft_dir, warnings):
@@ -691,9 +859,18 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
         column_w = 9.0 / n_captions
         for i, caption in enumerate(captions):
             x = 0.50 + i * column_w
+            # 2026-04-29 (v0.2.2): captions need word_wrap=True. Production
+            # captions run 60-100 chars per step; without wrapping they
+            # render as single overlong lines that bleed across column
+            # boundaries (visible draft_10 slide 9: three captions visually
+            # overlapping at the bottom). word_wrap=True lets each caption
+            # wrap within its 3-in column. H=0.55 fits 2 lines at 11pt;
+            # captions >100 chars will be clipped — content-side cap (~80
+            # chars per step) is a v0.3 prompt iteration.
             _add_textbox(slide, caption,
                          x + 0.05, 4.50, column_w - 0.10, 0.55,
-                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB)
+                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+                         word_wrap=True)
     if content.get("tool_version_footer"):
         _add_textbox(slide, content["tool_version_footer"],
                      0.30, 5.30, 9.40, 0.20,
@@ -797,7 +974,22 @@ def _fill_implications(slide, content, draft_dir, warnings):
 def _fill_acknowledgments(slide, content, draft_dir, warnings):
     # Title is hard-coded "Acknowledgments" (exempt from punchline rule per SPEC §6.1)
     _set_title(slide, "Acknowledgments")
-    lines = list(content["contributors"])
+    contributors = list(content["contributors"])
+    # 2026-04-29 (v0.2.2): TBD soft-default. Live test draft_10 slide 25
+    # showed "TBD - populated by production orchestrator" + "TBD" leaking
+    # through. Acknowledgments are user-fill (no LLM authoring); when the
+    # spec hasn't been edited post-draft, replace template placeholders
+    # with a polite, presentable line so the slide doesn't ship with
+    # "TBD" visible. The user can edit the spec or open the .pptx and
+    # replace before presenting.
+    if all(_is_tbd_placeholder(c) for c in contributors):
+        contributors = ["Acknowledgments to be added before presentation."]
+    else:
+        # Filter out individual TBD entries; keep real contributors.
+        contributors = [c for c in contributors if not _is_tbd_placeholder(c)]
+        if not contributors:
+            contributors = ["Acknowledgments to be added before presentation."]
+    lines = contributors
     if content.get("tenant_attribution"):
         lines.append(content["tenant_attribution"])
     if content.get("code_repo_url"):
@@ -847,12 +1039,15 @@ def _fill_qa_anticipated(slide, content, draft_dir, warnings):
     body_lines.append("")
     body_lines.append(f"↪ {content['evidence_pointer']}")
     _set_placeholder_bullets(slide, 1, body_lines)
-    # 2026-04-28 (v0.2.1): normAutofit at slide level. Q&A answers run
-    # 5-paragraph 2KB content; even with the layout's expanded body
-    # (1.30/4.00 in v0.2.1), production answers overflow by ~3x. The
-    # qa_prep.v1.md prompt should cap answer length in v0.3+; until
-    # then, autofit shrinks the answer to fit.
-    _enable_normautofit(slide, 1)
+    # 2026-04-29 (v0.2.2): tighter normAutofit specifically for qa_anticipated.
+    # v0.2.1's 80% fontScale wasn't aggressive enough — math: 80% × 18pt
+    # × 1.2 leading × 4.00 in body × 9.32 in width ≈ 1400 chars capacity,
+    # but production qa_prep produces 2000+ char 5-paragraph answers (~50%
+    # overflow). 60% scale gives ~2000 chars at 10.8pt — readable at
+    # projection. methods/refs stay at 80% (their content fits within that).
+    # Companion fix: qa_prep.v1.md word-budget cap (~600 chars) lands in
+    # v0.3+ as prompt iteration.
+    _enable_normautofit(slide, 1, font_scale=60000, ln_spc_reduction=20000)
 
 
 # Dispatcher

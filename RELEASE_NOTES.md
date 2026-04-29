@@ -1,5 +1,103 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.2.2 (2026-04-29) — visual-review patch from draft_10
+
+Second post-ship patch following live test of v0.2.1 on
+`functional_dark_matter` (draft_10). Visual review by Adam plus
+mechanical walk surfaced 7 remaining layout issues. Fixes target the
+master template + assemble_pptx handlers + introduce a dual-mode
+big_idea.
+
+### Layout fixes
+
+- **big_idea: dual-mode handler.** Default render is now centered-
+  assertion (no banner, title at slide-center, 48pt + normAutofit) —
+  pull-quote treatment for opening claims. Banner + image mode lights
+  up only when `supporting_graphic` is present. Forward-compatible
+  with v0.3's `ai_image_prompt.v1` so generated supporting graphics
+  trigger the legacy banner+image rendering automatically. Live
+  failure: draft_10 slide 2 was rendering as title-at-top + empty
+  body because the LLM rarely emits supporting_graphic.
+- **qa_anticipated: tighter geometry + 60% fontScale.** Title H
+  1.00 → 1.30 in (handles 5-line questions like draft_10 slide 23
+  without title-body collision). Body T 1.30 → 1.55 (clears taller
+  title). Body H 4.00 → 3.75 (maintains logo clearance). Body
+  normAutofit fontScale at slide-level 80% → 60% (math: 60% × 18pt ×
+  1.2 leading × 9.32 in × 3.75 in ≈ 2000-char capacity, fits worst-
+  case 2KB Q&A answers). methods/refs stay at 80% (their content
+  fits).
+- **workflow_diagram step_caption word_wrap.** v0.2.1 missed adding
+  word_wrap=True to the 3-column step caption textboxes; production
+  captions (60-100 chars) rendered as overlong single lines bleeding
+  across columns. Fixed. Live failure: draft_10 slide 9 captions
+  visually overlapping at the bottom.
+- **two_column_compare: normAutofit on both columns.** Body
+  placeholders inherit no autofit; production content (4-5 bullets
+  per column) overflowed into bottom logos. Added `_enable_normautofit`
+  calls for idx 1 and idx 2. Live failure: draft_10 slide 19 right
+  column "scores 0.875 for CRISPRi analysis" running into logos.
+- **claim_evidence figure_caption: drop auto_size, fix word_wrap.**
+  v0.2.1's `auto_size=SHAPE_TO_FIT_TEXT` overrode word_wrap (auto-
+  size assumes single-line in python-pptx); long captions truncated
+  with "...". Geometry: figure H 3.50 → 3.15 (FIGURE_REGIONS update)
+  to clear a 0.40 in band for caption above logos. Caption box uses
+  word_wrap=True without auto_size. Live failure: draft_10 slide 18
+  caption "across cond..." truncated.
+- **acknowledgments TBD soft-default.** When contributors list
+  contains "TBD - populated by production orchestrator" or similar
+  placeholders, replace with "Acknowledgments to be added before
+  presentation." Live failure: draft_10 slide 25 was rendering with
+  literal "TBD" strings as bullets.
+
+### New helpers in `assemble_pptx.py`
+
+- `_remove_decorative_banner(slide)` — finds and removes the first
+  non-placeholder shape in the spTree (used by big_idea Mode 1).
+- `_reposition_placeholder_to_center(slide, idx, ...)` — runtime
+  override of layout-defined placeholder geometry.
+- `_set_title_font_size(slide, font_pt)` — sets font size on the
+  title placeholder's runs (necessary because layout-level def_rpr
+  doesn't propagate when slide-level body is rebuilt at fill).
+- `_enable_normautofit_on_title(slide)` — convenience wrapper for
+  title placeholder autofit (idx=0).
+- `_is_tbd_placeholder(text)` — recognizes TBD-style placeholders for
+  the acknowledgments soft-default.
+- `_add_textbox` already had word_wrap and auto_size kwargs from
+  v0.2.1; v0.2.2 fixes the order of operations so word_wrap actually
+  takes when auto_size isn't also requested.
+
+### Verification
+
+- 373 / 373 unit tests pass (no new tests in v0.2.2 — the changes are
+  geometry tweaks tested via re-assembly against draft_10's existing
+  spec).
+- Re-assembled draft_10's existing slide_spec against v0.2.2 master.
+  Walker diff vs v0.2.1:
+    OFF-CANVAS:   stays at 0 ✓
+    OVERLAP:      8 → **0** ✓ (workflow_diagram chaos eliminated)
+    TINY-FONT:    5 → 2 (workflow_diagram captions now 11pt; refs 8pt
+                  is intentional per brand spec)
+    TEXT-OVERFLOW (real, not auto_size'd): 22 → 17, but ALL remaining
+    flags have `auto_size=TEXT_TO_FIT_SHAPE` or `auto_size=SHAPE_TO_
+    FIT_TEXT` set, meaning PowerPoint shrinks/grows at render time.
+    The walker heuristic doesn't model autofit; visual inspection
+    confirms readable layout.
+- Master rebuilds clean from updated `LAYOUT_FIXES`.
+
+### Known limits (deferred to v0.3)
+
+- **Slide 1 subtitle truncation.** Content-side; needs slide_compose
+  prompt cap (~80 chars).
+- **qa_prep.v1 word-budget cap.** Companion to v0.2.2's qa_anticipated
+  layout fix. v0.2.2 lets the layout absorb 2KB answers via 60%
+  fontScale; v0.3 prompt iteration should reduce to 600 chars per
+  answer (cleaner visual + faster reading).
+- **workflow_diagram caption ≤80 chars cap.** v0.2.2's word_wrap
+  rescues most captions; very long ones (>100 chars) still wrap to 4
+  lines vs cap 3. Prompt iteration in v0.3.
+- **Adversarial review-rewrite loop.** Spec at
+  `SPEC_TYPE_PRESENTATION.md`; pending v0.4.0 of beril-adversarial.
+
 ## v0.2.1 (2026-04-28) — master-template + quantitative-grounding patch
 
 First post-ship patch following the v0.2.0 live test on

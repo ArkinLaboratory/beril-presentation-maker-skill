@@ -276,21 +276,33 @@ LAYOUT_FIXES: dict[str, dict] = {
             "prompts produce 4-5 line questions (3-5x overflow). Enlarge "
             "both placeholders + enable body normAutofit. Companion fix "
             "to a future qa_prep.v1 word-budget cap."
+            "\n\n2026-04-29 (v0.2.2 retune from draft_10 visual review): "
+            "v0.2.1's title H=1.00 in fit 3-4 line questions but slide 23's "
+            "5-line 250-char question still bled past, causing title-body "
+            "vertical collision. Title H 1.00 → 1.30 in. Body T 1.17 → 1.55 "
+            "(push down to clear taller title). Body H 3.82 → 3.75 (slight "
+            "shrink to maintain logo clearance). Body fontScale 80% → 60% "
+            "(slide-level via _enable_normautofit kwarg in assemble_pptx; "
+            "layout-level fontScale stays at 80% as belt-and-suspenders). "
+            "Math: 60% × 18pt = 10.8pt × 1.2 leading = 13pt/line; 3.75 in × "
+            "72 = 270 pt vert / 13 ≈ 21 lines × ~95 chars/line @ 10.8pt × "
+            "9.32 in ≈ 2000 chars capacity, fits worst-case 2KB answers."
         ),
         "shape_edits": [
-            # Title 2 — taller (0.63 in → 1.00 in) to handle 3-line questions
-            # readably; autofit handles 4-5 line cases.
+            # Title 2 — taller (1.00 → 1.30 in) to handle 5-line questions
+            # without bleeding into body region.
             {
                 "by_ph": ("title", None),
                 "xfrm": {"off_x": 91440, "off_y": 128016,
-                         "ext_cx": 8521700, "ext_cy": 914400},
+                         "ext_cx": 8521700, "ext_cy": 1188720},
             },
-            # Body — push down (1.17 → 1.30) and grow (3.82 → 4.00); enable
-            # normAutofit so 5-paragraph answers shrink.
+            # Body — push down (1.30 → 1.55) and slight shrink (4.00 → 3.75);
+            # enable normAutofit at layout level (slide-level helper sets
+            # fontScale 60% for actual shrink at render time).
             {
                 "by_ph": ("body", "1"),
-                "xfrm": {"off_x": 311700, "off_y": 1188720,
-                         "ext_cx": 8521700, "ext_cy": 3657600},
+                "xfrm": {"off_x": 311700, "off_y": 1417320,
+                         "ext_cx": 8521700, "ext_cy": 3429000},
                 "body_pr": {"auto_fit_kind": "normAutofit"},
             },
         ],
