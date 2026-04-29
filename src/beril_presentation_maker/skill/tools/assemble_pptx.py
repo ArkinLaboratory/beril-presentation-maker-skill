@@ -239,6 +239,57 @@ def _set_placeholder_bullets(slide, idx: int, bullets: list[str]) -> bool:
     return True
 
 
+def _enable_normautofit(slide, idx: int,
+                        *, font_scale: int = 80000,
+                        ln_spc_reduction: int = 20000) -> bool:
+    """Enable PowerPoint's normAutofit (text-shrinks-to-fit-shape) on a
+    slide-level placeholder, with explicit fontScale + lnSpcReduction.
+
+    Why this is needed: when assemble_pptx fills a placeholder via
+    `tf.text = ...` + `tf.add_paragraph()`, python-pptx creates a
+    slide-level <p:txBody> from scratch with no <a:bodyPr> autofit
+    children. That overrides the layout's <a:normAutofit> setting from
+    LAYOUT_FIXES. Without this helper, layouts whose master defines
+    normAutofit on the body placeholder (methods_summary, qa_anticipated,
+    references in v0.2.1) would render with no autofit at the slide
+    level. Calling this AFTER `_set_placeholder_bullets` patches the
+    slide-level body to match the layout's intent.
+
+    PowerPoint requires explicit fontScale (defaults to 100000 = 100%
+    when bare). 80000/20000 = 80% font shrink + 20% line-spacing
+    reduction; same defaults as build_master's _apply_body_pr_change.
+
+    Returns True if the placeholder + body_pr was found and patched.
+    """
+    ph = _find_placeholder(slide, idx)
+    if ph is None:
+        return False
+    # Placeholder text bodies are <p:txBody> (presentationml namespace),
+    # not <a:txBody>. The bodyPr child inside is <a:bodyPr> (drawingml).
+    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    txBody = ph._element.find(f".//{{{p_ns}}}txBody")
+    if txBody is None:
+        # Fall back to drawingml namespace for non-placeholder shapes
+        txBody = ph._element.find(f".//{{{a_ns}}}txBody")
+    if txBody is None:
+        return False
+    bodyPr = txBody.find(f"{{{a_ns}}}bodyPr")
+    if bodyPr is None:
+        return False
+    # Remove any existing autofit children
+    for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+        for child in list(bodyPr):
+            if child.tag == f"{{{a_ns}}}{tag}":
+                bodyPr.remove(child)
+    # Insert normAutofit with explicit scale params
+    from lxml import etree as _et
+    autofit = _et.SubElement(bodyPr, f"{{{a_ns}}}normAutofit")
+    autofit.set("fontScale", str(font_scale))
+    autofit.set("lnSpcReduction", str(ln_spc_reduction))
+    return True
+
+
 def _remove_placeholder(slide, idx: int) -> bool:
     """Remove a placeholder from the slide entirely (not just clear its text).
 
@@ -285,14 +336,32 @@ def _add_textbox(slide, text: str,
                  width_in: float, height_in: float,
                  *, font_size_pt: int = 14, bold: bool = False,
                  color_rgb: tuple[int, int, int] | None = None,
-                 align_center: bool = False):
-    """Add a freeform text box at the given position."""
+                 align_center: bool = False,
+                 word_wrap: bool = False,
+                 auto_size: bool = False):
+    """Add a freeform text box at the given position.
+
+    word_wrap=True enables long-text line wrapping inside the box (default
+    is False — single-line, which silently truncates / spills off edge).
+    Use word_wrap=True for caption / source / subtitle textboxes that
+    take production-realistic content; use False for short labels where
+    fixed-width is the design intent.
+
+    auto_size=True enables python-pptx's MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    so the textbox grows to fit its content. Combined with word_wrap=True
+    this gives a "fit to content" textbox. Default False (fixed size).
+    """
     tb = slide.shapes.add_textbox(
         Inches(left_in), Inches(top_in),
         Inches(width_in), Inches(height_in),
     )
     tf = tb.text_frame
     tf.text = text
+    if word_wrap:
+        tf.word_wrap = True
+    if auto_size:
+        from pptx.enum.text import MSO_AUTO_SIZE
+        tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
     p = tf.paragraphs[0]
     if align_center:
         from pptx.enum.text import PP_ALIGN
@@ -455,10 +524,21 @@ def _fill_big_number(slide, content, draft_dir, warnings):
     _set_title(slide, content["headline"])
     # Subtitle in a separate textbox below the title region.
     # Title region per LAYOUT_FIXES: off (660902,923453) ext (7840301,3286408)
-    # = (0.72, 1.01, 8.57 × 3.59 in). Subtitle goes immediately below.
+    # = (0.72, 1.01, 8.57 × 3.59 in). Title bottom = 4.60; logos start
+    # at 5.00. Only 0.40 in available for subtitle.
+    #
+    # 2026-04-28 (v0.2.1 fix, draft_9 slide 18):
+    #   Subtitle was 20pt × H=0.40 without word_wrap. Production text
+    #   (64 chars) needs ~1.5 lines at 20pt — overflowed off the right
+    #   edge. Cannot grow box height (would overlap title or logos),
+    #   so reduce font to 16pt: 64 chars / 8.57in × (1.6 × 72/16) cpi
+    #   = ~1.04 lines, fits 0.40 in tall slot. word_wrap=True handles
+    #   any longer subtitles via wrapping (slide_compose prompt should
+    #   cap subtitle ≤45 chars in v0.3+).
     _add_textbox(slide, content["subtitle"],
                  0.72, 4.65, 8.57, 0.40,
-                 font_size_pt=20, align_center=True)
+                 font_size_pt=16, align_center=True,
+                 word_wrap=True)
     if content.get("sub_pointer"):
         _add_textbox(slide, content["sub_pointer"],
                      0.72, 5.05, 8.57, 0.30,
@@ -475,14 +555,21 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
     bullets = content["bullets"]
     if content.get("figure"):
         # Bullets in narrower body (left half), figure on right.
-        # The layout's BODY placeholder is full-width by default; we can't
-        # easily resize it post-hoc. Instead, we add a freeform textbox
-        # for the bullets and the figure as a separate shape — and leave
-        # the BODY placeholder empty.
-        # To keep the named-layout discipline, we'll fill BODY with the
-        # bullets and accept that the figure may overlap the right edge
-        # of the body region. Position table puts the figure at left=5.30,
-        # which is past the body's typical right edge.
+        #
+        # 2026-04-28 (v0.2.1 fix, draft_9 slide 8):
+        #   Previously the body placeholder kept its full ~9.32 in width
+        #   while the figure went at L=5.30 W=4.50 — collision area
+        #   ~15 in² of bullets text overlapping the figure. Now: when a
+        #   figure is present, resize the body placeholder to the left
+        #   half (~4.86 in wide ending at 5.20 in) before filling. Figure
+        #   sits in FIGURE_REGIONS["claim_evidence"] = (5.30, 1.30, ...)
+        #   on the right, no overlap.
+        ph = _find_placeholder(slide, 1)
+        if ph is not None:
+            ph.left = Inches(0.34)
+            ph.top = Inches(1.30)
+            ph.width = Inches(4.86)  # ends at 5.20; figure starts at 5.30 (0.10 gap)
+            ph.height = Inches(3.50)
         _set_placeholder_bullets(slide, 1, bullets)
         path = _resolve_asset_path(content["figure"], draft_dir, warnings,
                                     "claim_evidence.figure")
@@ -491,7 +578,8 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
             # Caption band below figure (only if figure rendered)
             _add_textbox(slide, content["figure_caption"],
                          5.30, 4.85, 4.50, 0.40,
-                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB)
+                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+                         word_wrap=True, auto_size=True)
     else:
         _set_placeholder_bullets(slide, 1, bullets)
     if content.get("citations"):
@@ -541,12 +629,23 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
         _add_picture(slide, path, *FIGURE_REGIONS["data_figure"])
     # Caption + data source go in the body region just below the figure,
     # above the bottom logos at y=5.00.
-    _add_textbox(slide, content["caption"], 0.50, 4.55, 9.00, 0.30,
-                 font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB)
+    #
+    # 2026-04-28 (v0.2.1 fix #2, draft_9 walk):
+    #   Caption box was H=0.30 holding 110-121 chars at 12pt without
+    #   word_wrap — overflowed every data_figure slide (9, 13, 19) by
+    #   running off the right edge. Source box was H=0.13 holding 60-73
+    #   chars at 10pt, same failure mode. Both now use word_wrap=True
+    #   and adequate height for ~3 wrapped lines at 12pt + ~2 lines at
+    #   10pt. The figure's bottom is at 1.40 + 3.10 = 4.50 in; bottom
+    #   logos start at 5.00 in — gives 0.50 in for caption + source.
+    _add_textbox(slide, content["caption"], 0.50, 4.50, 9.00, 0.30,
+                 font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
+                 word_wrap=True, auto_size=True)
     if content.get("data_source"):
         _add_textbox(slide, content["data_source"],
-                     0.50, 4.85, 9.00, 0.13,
-                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+                     0.50, 4.82, 9.00, 0.18,
+                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB,
+                     word_wrap=True, auto_size=True)
 
 
 def _fill_workflow_diagram(slide, content, draft_dir, warnings):
@@ -604,6 +703,11 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
 def _fill_methods_summary(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
     _set_placeholder_bullets(slide, 1, content["bullets"])
+    # 2026-04-28 (v0.2.1): normAutofit at slide level so dense methods
+    # content (5-7 bullets, 600-800 chars) shrinks to fit. The layout-
+    # level body_pr autofit from LAYOUT_FIXES gets overridden when
+    # python-pptx creates a fresh slide-level txBody during fill.
+    _enable_normautofit(slide, 1)
 
     # 2026-04-26 fix #59: render tools_versions as a footer band.
     # Prior version dropped this structured data entirely, leaving only
@@ -719,6 +823,11 @@ def _fill_references(slide, content, draft_dir, warnings):
     # Title is hard-coded "References" (exempt from punchline rule per SPEC §6.1)
     _set_title(slide, "References")
     _set_placeholder_bullets(slide, 1, content["refs_short"])
+    # 2026-04-28 (v0.2.1): normAutofit at slide level. References at 8
+    # entries × ~134 chars wraps to ~17 lines @ 18pt against a 12-line
+    # cap; autofit shrinks the list to fit. Same rationale as
+    # methods_summary above.
+    _enable_normautofit(slide, 1)
     # AI-disclosure footer (always emitted)
     disclosure = content.get(
         "ai_disclosure",
@@ -738,6 +847,12 @@ def _fill_qa_anticipated(slide, content, draft_dir, warnings):
     body_lines.append("")
     body_lines.append(f"↪ {content['evidence_pointer']}")
     _set_placeholder_bullets(slide, 1, body_lines)
+    # 2026-04-28 (v0.2.1): normAutofit at slide level. Q&A answers run
+    # 5-paragraph 2KB content; even with the layout's expanded body
+    # (1.30/4.00 in v0.2.1), production answers overflow by ~3x. The
+    # qa_prep.v1.md prompt should cap answer length in v0.3+; until
+    # then, autofit shrinks the answer to fit.
+    _enable_normautofit(slide, 1)
 
 
 # Dispatcher

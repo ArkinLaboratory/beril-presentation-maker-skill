@@ -1,5 +1,105 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.2.1 (2026-04-28) — master-template + quantitative-grounding patch
+
+First post-ship patch following the v0.2.0 live test on
+`functional_dark_matter` (draft_9). The walk + adversarial review
+(spawned in this conversation) surfaced 5 master-template P0 bugs and
+1 mechanically-detectable content failure class. Fixes target the
+build_master + assemble_pptx layers + add a new post-checker that runs
+after merge_and_assemble.
+
+### Master-template fixes (`tools/build_master.py`)
+
+- **section_divider**: title placeholder `off_x = -83050` → `0`.
+  Affected slides: every section divider (5, 10, 16 in draft_9). Title
+  text was bleeding 0.09 in past the left canvas edge on every divider.
+- **methods_summary**: NEW LAYOUT_FIXES entry. Body placeholder gets
+  `<a:normAutofit fontScale="80000" lnSpcReduction="20000"/>` so dense
+  6-7 paragraph methods content (~600-800 chars) shrinks to fit
+  instead of overflowing the 12-line cap.
+- **qa_anticipated**: NEW LAYOUT_FIXES entry. Title placeholder
+  `H 0.63 → 1.00 in` to hold 3-line questions readably; body
+  placeholder `T 1.17 → 1.30 in` (push down to clear taller title)
+  and `H 3.82 → 4.00 in`; body normAutofit so 5-paragraph answers
+  shrink. Companion `qa_prep.v1.md` word-budget cap is a v0.3+
+  prompt iteration.
+- **references**: NEW LAYOUT_FIXES entry. Body normAutofit so 8 ref
+  entries × ~134 chars (~17 wrapped lines) shrink to fit.
+
+### Assemble-step fixes (`tools/assemble_pptx.py`)
+
+- **`_add_textbox`**: new `word_wrap` and `auto_size` kwargs. The
+  default of `word_wrap=False` was silently truncating content; opt-in
+  for boxes that take production-realistic content.
+- **`_enable_normautofit`**: NEW helper. Sets normAutofit at the
+  slide-level `<p:txBody>/<a:bodyPr>` after `_set_placeholder_bullets`,
+  with explicit `fontScale + lnSpcReduction`. Without this, layout-
+  level normAutofit gets overridden by python-pptx creating a fresh
+  empty body_pr at fill time. Wired into `_fill_methods_summary`,
+  `_fill_qa_anticipated`, `_fill_references`.
+- **`_fill_data_figure`**: caption + source TextBoxes use
+  `word_wrap=True, auto_size=True` and adequate heights. Slides 9, 13,
+  19 in draft_9 had captions running off the right edge.
+- **`_fill_big_number`**: subtitle TextBox font 20pt → 16pt with
+  `word_wrap=True`. 64-char subtitles fit in the 0.40 in slot between
+  the title's bottom (4.60) and the logos (5.00). v0.3+ prompt
+  iteration should cap subtitle ≤45 chars.
+- **`_fill_claim_evidence`**: when figure is present, body placeholder
+  is resized to the left half (W 9.32 → 4.86 in, ending at 5.20 in)
+  before fill. Eliminates the ~15 in² body × figure overlap that
+  shipped on draft_9 slide 8.
+
+### New post-checker (`tools/check_quantitative_grounding.py`)
+
+Mechanical verification that every number on every slide appears
+verbatim (or in a normalized form) in `REPORT.md`. Runs after
+`merge_and_assemble`; advisory (exit 1 doesn't halt the orchestrator).
+Output: `audit/quantitative_grounding.{md,json}`.
+
+Normalization handles: commas (57,011 ↔ 57011), percent ↔ decimal
+(24.9% ↔ 0.249), ratio variants (4/4 ↔ "4 of 4"), `n=` prefixes,
+scientific notation, rounding tolerance (slide's "82%" matches
+REPORT's "82.4%" within precision), and a publication-year filter
+(1900-2099 4-digit numbers skipped). Layouts `references` and
+`acknowledgments` are skipped (their numbers are external citation
+issue numbers, not project claims).
+
+Validated against draft_9: 102/107 numbers grounded (95.3%). Single
+HIGH finding: `35/50` on slide 24's Q&A answer about weight
+sensitivity — REPORT only mentions `18/50`; the Q&A answer invented
+`35/50`. Real failure caught.
+
+### Why no register-drift / caveat-omission / narrative-arc checker
+
+Earlier draft of this release included a regex-based register-drift
+checker. Pulled because it can't work: the verb is not the
+discriminator, the hedge-regex catches noise, and the slide → REPORT
+mapping is a semantic problem. Mechanical post-checkers are for
+structural invariants and verbatim grounding; semantic alignment
+between two prose blocks needs LLM-in-the-loop adversarial review.
+That ships in `beril-adversarial --type presentation` (spec at
+`spike/beril-adversarial-skill-draft/SPEC_TYPE_PRESENTATION.md`,
+planned v0.4.0 of beril-adversarial-skill). The presentation-maker
+review-rewrite loop wires that reviewer in v0.3.0 of this skill.
+
+### Verification
+
+- 373 / 373 unit tests pass (was 355 in v0.2.0; +18 from new
+  `test_check_quantitative_grounding.py` covering extraction,
+  normalization, severity grading, layout-skip, and end-to-end).
+- Re-assembled draft_9's existing `slide_spec.json` against the fixed
+  master template. Walker diff vs baseline:
+  - OFF-CANVAS: 3 → **0**
+  - OVERLAP: 10 → 8 (slide 20 workflow_diagram remains; v0.3+ work)
+  - TEXT-OVERFLOW (real): −3 (slide 8 + slides 9/13/19 source). The
+    19 remaining overflow flags are walker false positives — autofit
+    isn't modeled by the walker but PowerPoint shrinks at render.
+
+### Cost & wallclock
+
+No LLM cost. Master rebuild + re-assemble on draft_9 took <1 min.
+
 ## v0.2.0 (2026-04-27) — first install-shippable release
 
 The fourth skill in the BERIL drop-in quartet (atlas, adversarial,

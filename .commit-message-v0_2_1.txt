@@ -1,0 +1,144 @@
+v0.2.1: master-template + quantitative-grounding patch
+
+First post-ship patch following the v0.2.0 live test on
+functional_dark_matter (draft_9). The walk + adversarial review
+surfaced 5 master-template P0 bugs and 1 mechanically-detectable
+content failure class. Fixes target the build_master + assemble_pptx
+layers + a new post-checker that runs after merge_and_assemble.
+
+Master-template fixes (tools/build_master.py LAYOUT_FIXES):
+
+- section_divider: title off_x -83050 → 0. Affected slides 5/10/16
+  in draft_9; title was bleeding 0.09 in past the left canvas edge
+  on every divider.
+- methods_summary: NEW LAYOUT_FIXES. Body placeholder normAutofit
+  (fontScale 80%, lnSpcReduction 20%) so dense 6-7 paragraph methods
+  content shrinks to fit. Affected slides 6/11/17 in draft_9.
+- qa_anticipated: NEW LAYOUT_FIXES. Title H 0.63 → 1.00 in (handle
+  3-line questions readably); body T 1.17 → 1.30 (push down to clear
+  taller title); body H 3.82 → 4.00; body normAutofit. Affected
+  slides 22/23/24 in draft_9.
+- references: NEW LAYOUT_FIXES. Body normAutofit. Affected slide 26
+  (8 refs averaging 134 chars overflowed by ~5 lines).
+
+Assemble-step fixes (tools/assemble_pptx.py):
+
+- _add_textbox: new word_wrap + auto_size kwargs. Default
+  word_wrap=False was silently truncating content.
+- _enable_normautofit: NEW helper. Sets normAutofit at the slide-
+  level <p:txBody>/<a:bodyPr> after placeholder fill, with explicit
+  fontScale + lnSpcReduction. Without this, layout-level normAutofit
+  gets overridden by python-pptx creating a fresh empty body_pr at
+  fill time. Wired into _fill_methods_summary, _fill_qa_anticipated,
+  _fill_references.
+- _fill_data_figure: caption + source TextBoxes use word_wrap=True,
+  auto_size=True. Affected slides 9/13/19.
+- _fill_big_number: subtitle font 20pt → 16pt with word_wrap. 64-char
+  subtitles fit in the 0.40 in slot between title bottom (4.60) and
+  logos (5.00). v0.3+ prompt iteration should cap subtitle ≤45 chars.
+- _fill_claim_evidence: when figure is present, body placeholder is
+  resized to the left half (W 9.32 → 4.86 in) before fill.
+  Eliminates the ~15 in² body × figure overlap on draft_9 slide 8.
+
+New post-checker (tools/check_quantitative_grounding.py):
+
+Mechanical verification that every number on every slide appears
+verbatim (or in normalized form) in REPORT.md. Runs after
+merge_and_assemble; advisory (exit 1 doesn't halt). Output:
+audit/quantitative_grounding.{md,json}.
+
+Normalization handles: commas (57,011 ↔ 57011), percent ↔ decimal
+(24.9% ↔ 0.249), ratio variants (4/4 ↔ "4 of 4"), n= prefixes,
+scientific notation, rounding tolerance, year filter (1900-2099
+skipped). references + acknowledgments layouts skipped (numbers there
+are external citation issue numbers, not project claims).
+
+Validated against draft_9: 102/107 numbers grounded (95.3%). Single
+HIGH finding: "35/50" on slide 24's Q&A answer about weight
+sensitivity — REPORT only mentions "18/50"; the Q&A answer invented
+35/50. Real failure caught.
+
+Why no register-drift / caveat-omission / narrative-arc checker:
+
+Earlier draft of this release included a regex-based register-drift
+checker. Pulled because it can't work — verb is not the discriminator,
+hedge-regex catches noise, slide → REPORT mapping is a semantic
+problem. Mechanical post-checkers are for structural invariants and
+verbatim grounding; semantic alignment between prose blocks needs
+LLM-in-the-loop adversarial review. That ships in beril-adversarial
+--type presentation (spec at SPEC_TYPE_PRESENTATION.md in the
+beril-adversarial-skill repo, planned v0.4.0). The presentation-maker
+review-rewrite loop wires that reviewer in v0.3.0.
+
+Files modified:
+- src/beril_presentation_maker/__init__.py: __version__ 0.2.0 → 0.2.1
+- pyproject.toml: version bump 0.2.0 → 0.2.1
+- src/beril_presentation_maker/skill/tools/build_master.py: LAYOUT_FIXES
+  (section_divider off_x fix; methods_summary, qa_anticipated,
+  references new entries)
+- src/beril_presentation_maker/skill/references/templates/kbase-presentation-master.pptx:
+  regenerated from the updated build_master.py
+- src/beril_presentation_maker/skill/tools/assemble_pptx.py:
+  _add_textbox kwargs, _enable_normautofit helper, _fill_data_figure
+  + _fill_big_number + _fill_claim_evidence + _fill_methods_summary +
+  _fill_qa_anticipated + _fill_references all updated
+- src/beril_presentation_maker/skill/tools/presentation_maker.sh:
+  invoke check_quantitative_grounding.py after assemble
+- src/beril_presentation_maker/commands/install_skill.py: add
+  check_quantitative_grounding.py to the executable-bit list
+
+Files added:
+- src/beril_presentation_maker/skill/tools/check_quantitative_grounding.py
+  (~500 lines)
+- tests/unit/test_check_quantitative_grounding.py (18 tests)
+- RELEASE_NOTES.md updated with v0.2.1 narrative
+
+Verification:
+- 373 / 373 unit tests pass (was 355 in v0.2.0; +18 from the new
+  test_check_quantitative_grounding.py covering extraction,
+  normalization, severity grading, layout-skip, and end-to-end).
+- Re-assembled draft_9's existing slide_spec.json against the fixed
+  master template. Walker diff vs baseline:
+    OFF-CANVAS:     3 → 0
+    OVERLAP:       10 → 8 (slide 20 workflow_diagram remains)
+    TEXT-OVERFLOW: 22 → 19 (3 real fixes; 16 walker false positives
+                            — heuristic doesn't model autofit)
+- Quantitative-grounding check on draft_9: 102/107 grounded; 1 real
+  HIGH finding (slide 24 "35/50" not in REPORT.md).
+
+Adam shell handoff (post-tag-v0.2.1):
+
+  cd /Users/aparkin/Documents/Claude/Projects/research-coscientist-dev/spike/beril-presentation-maker-skill-draft
+
+  # 1. Inspect the regenerated master via PowerPoint/Keynote if you
+  #    want eyes-on confirmation before tagging.
+  open src/beril_presentation_maker/skill/references/templates/kbase-presentation-master.pptx
+
+  # 2. Stage all changes (no `git clean -fdx` — see
+  #    feedback_git_clean_before_release_is_dangerous memory).
+  git add -A
+  git status                                # eyeball the diff
+  git diff --cached --stat | head -30
+
+  # 3. Commit + tag.
+  git commit -F .commit-message-v0_2_1.txt
+  git tag v0.2.1
+  git push && git push --tags
+
+  # 4. Re-install in beril-extended for next live run.
+  pipx install --force \
+    git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.2.1
+  cd /Users/aparkin/Documents/Claude/Projects/research-coscientist-dev/spike/beril-extended
+  beril-presentation-maker install-skill .
+
+Open follow-ups (NOT in v0.2.1; targeted v0.3.0):
+- beril-adversarial --type presentation review-rewrite loop
+  (depends on v0.4.0 of beril-adversarial-skill)
+- ai_image_prompt.v1 wired as an orchestrator stage
+- workflow_diagram on slide 20 — 18 nodes with overlapping connectors
+  + 9pt labels (content-driven, prompt iteration)
+- Top-N candidates slide (missing from current decks per
+  storytelling reviewer)
+- qa_prep.v1.md word-budget cap (~600 chars per answer); paired with
+  the qa_anticipated layout fix in v0.2.1
+- big_number subtitle char-cap in slide_compose.v1.md (~45 chars)

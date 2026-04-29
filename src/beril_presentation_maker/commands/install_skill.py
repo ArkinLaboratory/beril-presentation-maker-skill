@@ -57,6 +57,7 @@ _EXECUTABLE_FILES = (
     "tools/poster_fill.py",
     "tools/image_client.py",
     "tools/validate_presentation.py",
+    "tools/check_quantitative_grounding.py",
 )
 
 

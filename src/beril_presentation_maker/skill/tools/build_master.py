@@ -182,6 +182,14 @@ LAYOUT_FIXES: dict[str, dict] = {
     # --- section_divider ----------------------------------------------------
     # The substory punchline becomes a centered, vertically-middle band of
     # large 60pt centered text — the visual cue that we're pivoting.
+    #
+    # 2026-04-28 (v0.2.1 fix #1, draft_9 walk):
+    #   Title was at off_x=-83050 (≈ -0.09 in), placing the leftmost
+    #   characters off-canvas. Fixed to off_x=0. The leftover -83050
+    #   appears to have been an alignment hack from the source .potx
+    #   that survived earlier rounds. All three section divider slides
+    #   (5, 10, 16 in draft_9) ship with text bleeding past the left
+    #   edge as a result.
     "section_divider": {
         "rationale": (
             "Substory transitions need the punchline to BE the slide. "
@@ -193,16 +201,124 @@ LAYOUT_FIXES: dict[str, dict] = {
             "at 80% gives 32pt — fits 14-word punchlines once T2.4 caps "
             "them. The universal title-autofit sweep (Step 5b in "
             "build_master) runs AFTER this fix and overrides body_pr "
-            "to normAutofit + anchor=t."
+            "to normAutofit + anchor=t. v0.2.1: off_x corrected from "
+            "-83050 (off-canvas by 0.09 in) to 0."
         ),
         "shape_edits": [
             {
                 "by_ph": ("title", None),
-                "xfrm": {"off_x": -83050, "off_y": 1934828,
+                "xfrm": {"off_x": 0, "off_y": 1934828,
                          "ext_cx": 9144000, "ext_cy": 1273844},
                 "body_pr": {"auto_fit_kind": "normAutofit"},
                 "lvl1_ppr": {"algn": "ctr"},
                 "def_rpr": {"sz": 4000},
+            },
+        ],
+    },
+
+    # --- methods_summary ----------------------------------------------------
+    # 2026-04-28 (v0.2.1 fix #2, draft_9 walk):
+    #   Body placeholder is undersized for production-realistic methods
+    #   content. Live test of presentation-maker v0.2.0 produced 5-7
+    #   paragraphs of methods prose averaging ~600-700 chars across slides
+    #   6, 11, 17 in draft_9 — overflowing the placeholder's 12-line cap
+    #   at 18pt by ~2-3 wrapped lines each.
+    #
+    #   Fix: enable normAutofit so dense methods content shrinks to fit
+    #   without losing structure. fontScale 80%, lnSpcReduction 20% — same
+    #   defaults that work for section_divider. The slide_compose prompt
+    #   continues to enforce a 5-10 bullet cap; this fix keeps the layout
+    #   readable for the upper end of that range.
+    "methods_summary": {
+        "rationale": (
+            "Methods slides typically carry 5-7 paragraphs of substantive "
+            "methodological detail (~600-800 chars). The body placeholder "
+            "as shipped (3.70 in tall, 18pt body) overflows by 2-3 lines "
+            "on realistic content. Enable normAutofit so dense methods "
+            "shrink to fit. Title autofit handled by the universal sweep."
+        ),
+        "shape_edits": [
+            {
+                "by_ph": ("body", "1"),
+                "body_pr": {"auto_fit_kind": "normAutofit"},
+            },
+        ],
+    },
+
+    # --- qa_anticipated -----------------------------------------------------
+    # 2026-04-28 (v0.2.1 fix #4, draft_9 walk):
+    #   The qa_anticipated layout is the most catastrophically undersized
+    #   of all 15 layouts as shipped. Live test produced:
+    #     - 4-5 line questions (192-256 chars) crammed into a Title 2
+    #       placeholder sized for 2 lines (H=0.63 in)
+    #     - 5-paragraph answers (~2KB each, ~39 wrapped lines at 18pt)
+    #       crammed into a body placeholder sized for 12 lines (H=3.82 in)
+    #   Both placeholders were ~3x undersized.
+    #
+    #   Fix:
+    #     1. Title 2 → H 0.63 → 1.00 in (allow 3-line questions readably,
+    #        autofit shrinks for 4-5 line ones)
+    #     2. Body Text Placeholder 1 → T 1.17 → 1.30 in (clear the taller
+    #        title), H 3.82 → 4.00 in (max we can push without overlapping
+    #        the bottom logos at 5.00 in)
+    #     3. Body normAutofit so 5-paragraph answers shrink to fit
+    #
+    #   Even with these fixes, the qa_anticipated body should ideally hold
+    #   1-3 paragraphs, not 5. The qa_prep.v1.md prompt should cap answer
+    #   length; that's a v0.2.x prompt-iteration follow-up, not a master
+    #   fix. Layout fix here makes the deck readable in the meantime.
+    "qa_anticipated": {
+        "rationale": (
+            "qa_anticipated body was sized for 1-paragraph answers (~12 "
+            "lines @ 18pt in 3.82 in); production qa_prep produces "
+            "5-paragraph answers (~39 wrapped lines, 3x overflow). "
+            "Title was sized for 2-line questions; production Q&A "
+            "prompts produce 4-5 line questions (3-5x overflow). Enlarge "
+            "both placeholders + enable body normAutofit. Companion fix "
+            "to a future qa_prep.v1 word-budget cap."
+        ),
+        "shape_edits": [
+            # Title 2 — taller (0.63 in → 1.00 in) to handle 3-line questions
+            # readably; autofit handles 4-5 line cases.
+            {
+                "by_ph": ("title", None),
+                "xfrm": {"off_x": 91440, "off_y": 128016,
+                         "ext_cx": 8521700, "ext_cy": 914400},
+            },
+            # Body — push down (1.17 → 1.30) and grow (3.82 → 4.00); enable
+            # normAutofit so 5-paragraph answers shrink.
+            {
+                "by_ph": ("body", "1"),
+                "xfrm": {"off_x": 311700, "off_y": 1188720,
+                         "ext_cx": 8521700, "ext_cy": 3657600},
+                "body_pr": {"auto_fit_kind": "normAutofit"},
+            },
+        ],
+    },
+
+    # --- references ---------------------------------------------------------
+    # 2026-04-28 (v0.2.1 fix #5, draft_9 walk):
+    #   The references body was overflowing on draft_9 slide 26 — 8 ref
+    #   entries averaging 134 chars each (~17 wrapped lines at 18pt) in
+    #   a placeholder sized for 12 lines. Same enable-normAutofit fix as
+    #   methods_summary.
+    #
+    #   Note: the AI-disclosure footer at 8pt (separate textbox added by
+    #   _fill_references) is intentional — brand_tokens["sizes_pt"]
+    #   ["ai_disclosure"] = 8. Walker's [TINY-FONT] flag on that
+    #   textbox is a false positive against the brand spec; not a bug.
+    "references": {
+        "rationale": (
+            "References body sized for 12 lines @ 18pt overflows on "
+            "8 references averaging 134 chars each (~17 wrapped lines). "
+            "Enable normAutofit so reference list shrinks to fit. "
+            "AI-disclosure footer at 8pt is per brand spec (caption "
+            "category), not a bug."
+        ),
+        "shape_edits": [
+            {
+                "by_ph": ("body", "1"),
+                "body_pr": {"auto_fit_kind": "normAutofit"},
             },
         ],
     },

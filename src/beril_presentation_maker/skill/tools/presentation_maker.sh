@@ -1047,6 +1047,16 @@ stage_merge_and_assemble() {
     return 1
   }
 
+  # 2026-04-28 (v0.2.1): mechanical post-checker — every number on a slide
+  # must appear verbatim (or in a normalized form) in REPORT.md. Advisory
+  # only (exit 1 doesn't halt); writes audit/quantitative_grounding.{md,json}
+  # for the user / next stage to consult. The deeper semantic checks
+  # (register drift, caveat omission, narrative arc) are deferred to
+  # beril-adversarial --type presentation (planned v0.4.0).
+  echo "  running quantitative-grounding check..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/check_quantitative_grounding.py" \
+    "$OUTDIR" --severity-floor low 2>&1 | sed 's/^/    /' >&2 || true
+
   echo "" >&2
   echo "==================================================================" >&2
   echo "SMOKE COMPLETE" >&2
