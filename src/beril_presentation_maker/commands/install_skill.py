@@ -58,6 +58,8 @@ _EXECUTABLE_FILES = (
     "tools/image_client.py",
     "tools/validate_presentation.py",
     "tools/check_quantitative_grounding.py",
+    "tools/revise_loop.py",
+    "tools/image_gen_calibration.py",
 )
 
 

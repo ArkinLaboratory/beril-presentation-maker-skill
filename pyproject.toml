@@ -1,12 +1,15 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.2.0 (first install-shippable release). The fourth skill
-# in the BERIL drop-in quartet (atlas, adversarial, paper-writer,
-# presentation-maker). All 11 stages of the drafting pipeline wired
-# end-to-end; KBase-branded master + slide_spec validator + assembler
-# + poster_fill production. Adversarial review-rewrite loop and
-# ai_image_prompt staging are deferred to v0.3.
+# Status: v0.3.0 (review-rewrite loop + image-gen calibrated). The
+# fourth skill in the BERIL drop-in quartet (atlas, adversarial,
+# paper-writer, presentation-maker). All 13 stages of the drafting
+# pipeline wired end-to-end including the new adversarial-review +
+# revise-slides stages; KBase-branded master + slide_spec validator
+# + assembler + poster_fill production. Image-gen client (CBORG
+# `gemini-3-pro-image`) calibrated; ai_image_prompt.v1 prompt
+# encodes calibrated defaults. Orchestrator stage for image-gen
+# (Channel A automatic flagging) is deferred to v0.3.1.
 ####################################################################
 
 [build-system]
@@ -19,7 +22,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.2.2"
+version = "0.3.0"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

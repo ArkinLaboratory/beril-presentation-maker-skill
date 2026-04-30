@@ -1,5 +1,112 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.0 (2026-04-30) — adversarial review-rewrite loop + image-gen calibrated
+
+Two-stream feature release. Stream A wires `beril-adversarial --type
+presentation` (shipped in beril-adversarial v0.4.0) into a
+review-rewrite loop that takes JSON findings and dispatches them to
+per-finding-class subagent prompts. Stream B calibrates the CBORG
+image-gen client (`gemini-3-pro-image`) and encodes calibration
+verdicts into the `ai_image_prompt.v1` prompt defaults. The
+orchestrator stage that automatically flags `concept_illustration`
+slides for image generation is deferred to v0.3.1 alongside two
+wrinkles surfaced during Stream A live test.
+
+### Stream A — adversarial review-rewrite loop
+
+- **`revise_slide.v1.md`** (new prompt, ~310 lines). Per-finding-
+  class subagent. Handles `register_drift`, `claim_evidence`,
+  `qa_softball`, `substory_arc`, and `narrative_weakness`. Preserves
+  slide `id`, `position`, `substory_id` across revision; appends to
+  `revision_log` with the finding id and a one-sentence summary.
+  Cap: ONE finding per invocation; the loop driver dispatches one-
+  to-one.
+- **`add_slide.v1.md`** (new prompt, ~220 lines). Handler for
+  `missing_slide` findings. Layout-selection table maps the
+  finding's data shape to one of the 15 production layouts;
+  HARD-CAPS `claim_evidence` bullets at 1–3 (validator-blocking).
+  Position/`substory_id` derived from the finding's `fix_hint` or
+  inferred from the substory at the named insertion point.
+- **`tools/revise_loop.py`** (new driver, ~570 lines). Reads the
+  adversarial review JSON, dispatches each P0/P1 finding to
+  `revise_slide.v1` or `add_slide.v1` via `claude -p`, validates
+  the resulting `slide_spec.json` after each finding, and rolls
+  back **per-finding** on validator failure (snapshot taken with
+  `copy.deepcopy` before dispatch). Cost cap (`--max-revise-cost-
+  usd`) and revision cap (`--max-revisions`) gate the loop. Live
+  test on draft_10: F001 (register drift on slide 8) and F003
+  (top-N candidates new slide) landed cleanly for ~$0.73.
+- **Orchestrator stages 12 + 13.** `presentation_maker.sh` gains
+  `stage_adversarial_review` (12) + `stage_revise_slides` (13)
+  after `merge_and_assemble`. New flags: `--no-adversarial` (skip
+  both), `--max-revise-cost-usd` (default $5), `--max-revisions`
+  (default 8). `continue_run.py`'s `_VALID_STAGES` extended.
+
+### Stream B — image-gen calibrated
+
+- **`tools/image_gen_calibration.py`** (new harness, ~600 lines).
+  Live test harness exercising CBORG image-gen end-to-end: T0
+  smoke, T1 brand_color (hex vs descriptive), T2 style_baseline
+  (4 styles), T3 text_handling (with-text + no-text), T4 slide2
+  design candidates. Cost cap; halts on budget. Run 2026-04-30:
+  13/13 trials ok, $0.177 total.
+- **`tools/image_client.py` model id corrected.** `DEFAULT_MODEL`
+  changed from `google/gemini-pro-image` to `gemini-3-pro-image`
+  (CBORG drops the provider prefix). Error messages now include
+  payload + response body for debugging. Rate-card table extended.
+- **`prompts/ai_image_prompt.v1.md`** updated with calibration
+  defaults (cited inline by trial id):
+    - **Default style:** `scientific_illustration` (T2 winner).
+    - **Default palette:** KBase brand hex `#007DC3` /
+      `#5E9732` / `#F78E1E` (T1 winner; descriptive names also
+      work but hex is more precise).
+    - **In-image text permitted** when explicitly named (T3
+      verdict: `gemini-3-pro-image` honors specified labels and
+      "no text" prohibitions).
+    - **Genome-coverage composition** (T4 winner): genome-ring
+      pattern with ~25% dark / ~75% colored, subtle cosmic-dark-
+      matter gradient, named as the preferred opener for
+      "fraction-unknown" claims.
+    - Style enum extended: `scientific_illustration` (default),
+      `metaphor`, `infographic`, `conceptual_diagram`,
+      `watercolor`, `minimalist`, `abstract`.
+    - Cost ceilings re-grounded against measured ~$0.014/image
+      with 2–3× headroom for rate-card drift.
+
+### Deferred to v0.3.1
+
+- **Wire `ai_image_prompt.v1` as orchestrator stage.** The prompt
+  is calibrated and invokable as-is via Channel B (user explicitly
+  asks for an image), but Channel A (slide_compose flags
+  `concept_illustration` → orchestrator generates) needs a three-
+  layer architecture (decision: when does an image help → spec:
+  what to depict → prompt: how to phrase). Deferred to v0.3.1.
+- **Stream A wrinkle 1: `_insert_slide_into_spec` position
+  fallback.** F003 new slide had `position=9` but landed at end of
+  deck because existing slides lack `position` fields, so the
+  insert function fell through to "append". Fix: fall back to
+  end-of-substory when sibling positions are absent.
+- **Stream A wrinkle 2: register discipline propagation in
+  `add_slide.v1`.** F003's new slide title used "high-confidence"
+  — the same overclaim F001 fixed elsewhere. `add_slide.v1.md`
+  needs an explicit anti-pattern section forbidding tier-violating
+  language on EXPLORATORY/THIN tier decks.
+- **`data_table` layout.** Adapt from `beril-paper-writer`'s table
+  renderer; `add_slide.v1.md` already references this as an
+  aspirational target.
+
+### Verification
+
+- 373 unit tests pass (Stream A added 21 in `test_revise_loop.py`,
+  18 in `test_check_quantitative_grounding.py`, 5 in
+  `test_slide_spec.py`; carry-over from v0.2.x).
+- Wheel rebuilds clean (no cruft).
+- `install-skill` round-trip verified.
+- Live test draft_10: F001 + F003 landed; total $0.73.
+- Image calibration suite: 13/13 ok, $0.177; defaults encoded.
+
+---
+
 ## v0.2.2 (2026-04-29) — visual-review patch from draft_10
 
 Second post-ship patch following live test of v0.2.1 on

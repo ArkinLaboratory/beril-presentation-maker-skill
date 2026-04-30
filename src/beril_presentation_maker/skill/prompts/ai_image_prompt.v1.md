@@ -8,13 +8,27 @@ asked for an image (channel B — user-initiated). Per
 [SPEC §8.3][spec-images] / [D-029][d-029], image generation is
 **always opt-in**: a memoryless agent that auto-generates costs the
 user real money and pollutes provenance. Your job is to draft the
-text prompt for the image-gen model (default: Gemini via CBORG with
-model `google/gemini-pro-image`), declare the worst-case cost
-ceiling, and stage the generation REQUEST as JSON. The orchestrator
-shell (`presentation_maker.sh`) reads the request, presents it to
-the user for approval, and only then calls
+text prompt for the image-gen model (default: Gemini-3-Pro-Image
+via CBORG, model id `gemini-3-pro-image`), declare the worst-case
+cost ceiling, and stage the generation REQUEST as JSON. The
+orchestrator shell (`presentation_maker.sh`) reads the request,
+presents it to the user for approval, and only then calls
 `tools/image_client.py`. You do not call CBORG directly. Read
 [SPEC §8.3][spec-images] before you start.
+
+## Calibration evidence (2026-04-30)
+
+Defaults below are encoded from the live calibration suite run
+2026-04-30 (13 trials, $0.177, all rendered successfully). Cite the
+trial IDs when defending or overriding the defaults; rerun the
+calibration if the model id changes.
+
+| Decision | Verdict | Trial reference |
+|---|---|---|
+| Color palette | **Hex codes by default** (`#007DC3` blue, `#5E9732` green, `#F78E1E` orange). Both hex and descriptive names work; hex is more precise. | T1 brand_color (a_hex vs b_descriptive) |
+| Default style | **`scientific_illustration`** — flat colors, thin black outlines, Nature graphical-abstract aesthetic. | T2 style_baseline |
+| In-image text | **Both modes work cleanly.** `gemini-3-pro-image` honors specified labels exactly AND respects "no text" prohibitions. Text-in-image is permitted when explicitly named. | T3 text_handling |
+| Genome-coverage composition | **Genome-ring pattern** (~25% dark / ~75% colored radial, subtle cosmic-dark-matter gradient) is the preferred opener for "fraction-unknown" claims. | T4 a_dark_matter_v1 |
 
 [spec-images]: ../../SPEC.md "see §8.3"
 [d-029]:       ../../DECISIONS.md "see D-029"
@@ -61,16 +75,16 @@ After writing, you respond with the closing-message template
   "slide_id_target": "S2-pos4",
   "channel": "A",
   "originator": "slide_compose flagged concept_illustration",
-  "style": "infographic",
-  "image_prompt": "An infographic in clean editorial style showing the inner-loop annotation refinement workflow as a 3-step cyclic process: (1) initial RAST pass, (2) biosynthesis-prior refinement, (3) gold-standard verification, with a feedback arrow returning from step 3 to step 2. Use a flat-color palette dominated by KBase blue (#005A9C) and gray. Avoid any specific numbers, axes, or quantitative content — this is a conceptual diagram, not a data plot. Place the cycle in the center of a white background. Aspect ratio 16:9. No text labels other than 'Pass 1', 'Pass 2', 'Verify'. No human figures. No fictional logos.",
-  "negative_prompt": "no quantitative content, no axes, no data points, no specific numbers, no human figures, no logos, no copyrighted imagery, no text in non-Latin scripts",
+  "style": "scientific_illustration",
+  "image_prompt": "A scientific illustration of the inner-loop annotation refinement workflow as a 3-step cyclic process: (1) initial RAST pass, (2) biosynthesis-prior refinement, (3) gold-standard verification, with a feedback arrow returning from step 3 to step 2. Style: clean scientific illustration in the style of a textbook figure or Nature publication graphical abstract — flat colors, thin black outlines, professional academic aesthetic. Use the KBase brand palette: #007DC3 (blue), #5E9732 (green), #F78E1E (orange). White background. Aspect ratio 16:9. Text labels 'Pass 1', 'Pass 2', 'Verify' in clean sans-serif, placed directly below the corresponding step. Do not include any other text, captions, titles, or annotations.",
+  "negative_prompt": "no quantitative content, no axes, no data points, no specific numbers, no human figures, no logos, no copyrighted imagery, no text in non-Latin scripts, no other text or annotations beyond the named labels",
   "placement": {
     "region": "body",
     "aspect_ratio": "16:9",
     "max_width_in": 8.5,
     "max_height_in": 4.0
   },
-  "model_preference": "google/gemini-pro-image",
+  "model_preference": "gemini-3-pro-image",
   "worst_case_cost_usd": 0.04,
   "user_supplied_prompt": null,
   "user_overrides": {
@@ -89,14 +103,14 @@ Field rules (validator-blocking):
 | `slide_id_target` | str | Substory + position (e.g., `S2-pos4`) — orchestrator uses this to find the slide |
 | `channel` | enum | `"A"` (LLM-initiated) \| `"B"` (user-initiated) |
 | `originator` | str | Where the request came from (slide_compose flag, user message, etc.) |
-| `style` | enum | `"metaphor" \| "infographic" \| "conceptual_diagram"` |
+| `style` | enum | `"scientific_illustration"` (default per T2) \| `"metaphor"` \| `"infographic"` \| `"conceptual_diagram"` \| `"watercolor"` \| `"minimalist"` \| `"abstract"` |
 | `image_prompt` | str | The text prompt; ≥80 chars; ≤2000 chars |
 | `negative_prompt` | str | Constraints; ≥30 chars |
 | `placement.region` | enum | `"body"` (most cases) \| `"hero"` (full-bleed) \| `"sidebar"` |
 | `placement.aspect_ratio` | str | `"16:9"`, `"4:3"`, `"1:1"`, `"3:2"`, `"9:16"` |
 | `placement.max_width_in` | num | ≤9.5 |
 | `placement.max_height_in` | num | ≤5.6 |
-| `model_preference` | str | Default `"google/gemini-pro-image"`; pass-through to image_client |
+| `model_preference` | str | Default `"gemini-3-pro-image"` (CBORG-id; no provider prefix); pass-through to image_client |
 | `worst_case_cost_usd` | num | Conservative upper bound; orchestrator displays to user pre-approval |
 | `user_supplied_prompt` | str \| null | Channel B: verbatim user text; Channel A: null |
 | `user_overrides` | object | Optional user tweaks; null fields = use defaults |
@@ -200,20 +214,44 @@ When `slide_compose.v1` flagged a `concept_illustration` slide:
 
 1. **Read the slide's title + body.** The image must illustrate the
    punchline.
-2. **Pick a style** from the slide's substory shape:
+2. **Pick a style** from the slide's substory shape. Default is
+   `scientific_illustration` (calibrated 2026-04-30, T2). Override
+   only when the substory clearly demands a different register:
+   - `scientific_illustration` (DEFAULT) — textbook-figure
+     aesthetic; flat colors + thin black outlines; suitable for
+     concept_illustration on STRONG / THIN tier decks.
    - `infographic` for procedural / structural concepts (often
      adjacent to a workflow_diagram).
    - `metaphor` for analogical framing ("the dark genome as a
-     library with most shelves unread").
+     library with most shelves unread"). Reach for this when the
+     opener slide needs an evocative image, not a literal one.
    - `conceptual_diagram` for abstract relationships not
      procedural (Venn-style overlap, scale comparisons).
+   - `watercolor` / `minimalist` / `abstract` — calibrated
+     alternatives, available via explicit `STYLE_HINT`. Default
+     route is `scientific_illustration` unless the substory or
+     user requests otherwise.
 3. **Author a 80–500 word image_prompt** that:
    - Names the visual subject specifically.
-   - Names the style (flat-color editorial / line illustration /
-     isometric / etc.).
-   - Names the color palette (KBase blue + gray default).
+   - Names the style explicitly (DEFAULT phrasing per T2 winner:
+     "clean scientific illustration in the style of a textbook
+     figure or Nature publication graphical abstract — flat
+     colors, thin black outlines, professional academic
+     aesthetic").
+   - Names the color palette using KBase brand hex (DEFAULT per
+     T1 winner: `#007DC3` blue, `#5E9732` green, `#F78E1E`
+     orange). Hex is preferred over descriptive names ("freshwater
+     blue") for precision; descriptive names also render acceptably
+     and may be used when hex feels heavy in a short prompt.
    - Names what to AVOID (numbers, axes, specific quantities).
    - Names aspect ratio.
+   - **In-image text is permitted when explicitly named** (T3
+     verdict: `gemini-3-pro-image` honors specified labels exactly
+     AND respects "no text" prohibitions). When you want text in
+     the image, name the exact strings + the font register ("clean
+     sans-serif"), then close with "Do not include any other text,
+     captions, titles, or annotations." When you want a text-free
+     image, the negative_prompt suffices.
 4. **Author a negative_prompt** as described above.
 
 ## Channel B authoring discipline (user-initiated)
@@ -235,9 +273,14 @@ When the user explicitly requested an image:
 
 | Tier | Style preference | Cost ceiling |
 |---|---|---|
-| STRONG | infographic / conceptual_diagram | up to $0.05 per image |
-| THIN | conceptual_diagram (sparse) | $0.04 ceiling; prefer cheaper renders |
-| EXPLORATORY | metaphor only if it explicitly frames the work as preliminary | $0.03 ceiling; consider skipping |
+| STRONG | scientific_illustration (DEFAULT) / infographic / conceptual_diagram | up to $0.05 per image |
+| THIN | scientific_illustration (sparse) / conceptual_diagram | $0.04 ceiling; prefer cheaper renders |
+| EXPLORATORY | scientific_illustration with hedging language; metaphor only if it explicitly frames the work as preliminary | $0.03 ceiling; consider skipping |
+
+**Cost ceiling is per-image worst-case.** Calibration measured
+~$0.014/image on `gemini-3-pro-image` (2026-04-30, n=13, σ small);
+the ceilings above are 2–3× headroom against rate-card drift. Pull
+ceilings down if rate-card stabilizes.
 
 **Tier shifts style preference and cost ceiling. It does NOT
 shift the negative-prompt floor or the approval-required flag.**

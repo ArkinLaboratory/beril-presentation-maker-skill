@@ -39,6 +39,8 @@ _VALID_STAGES = (
     "qa_prep",
     "speaker_notes",
     "merge",
+    "adversarial_review",
+    "revise_slides",
 )
 
 

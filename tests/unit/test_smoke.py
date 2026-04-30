@@ -1,7 +1,8 @@
-"""v0.1.0-spec smoke tests — confirm the package imports and CLI parses.
+"""Smoke tests — confirm the package imports and CLI parser is sane.
 
-These are the only tests in v0.1.0-spec. The rest land with
-implementation per LAYOUT.md §11 'Tests (planned)'.
+Originally a v0.1.0-spec stub that asserted speculative subcommands
+(`revise` etc) and stub-exit-2 behavior. Realigned in v0.3.0 to match
+the actual CLI: 5 subcommands, all with real implementations.
 """
 from __future__ import annotations
 
@@ -24,30 +25,18 @@ def test_cli_parser_builds_and_handles_version():
 
 
 def test_cli_subcommands_registered():
+    """The five v0.3.0 subcommands are wired."""
     parser = cli.build_parser()
-    # Pull subparser choices off the subparsers action
     sub_action = next(a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction")
-    assert set(sub_action.choices.keys()) == {"install-skill", "configure", "continue", "assemble", "revise"}
+    assert set(sub_action.choices.keys()) == {
+        "install-skill", "configure", "draft", "continue", "assemble"
+    }
 
 
-@pytest.mark.parametrize("subcmd,extra_args", [
-    ("install-skill", []),
-    ("configure", []),
-    ("continue", ["/tmp/fake_draft"]),
-    ("assemble", ["/tmp/fake_draft"]),
-    ("revise", ["/tmp/fake_draft", "--slide", "3", "tighten the punchline"]),
-])
-def test_cli_subcommands_stub_exit_2(subcmd, extra_args):
-    """Every subcommand exits with code 2 (stub-not-implemented) in spec release."""
+@pytest.mark.parametrize("subcmd", ["install-skill", "configure", "draft", "continue", "assemble"])
+def test_each_subcommand_has_help(subcmd):
+    """Every subcommand parser exposes --help without crashing."""
     parser = cli.build_parser()
-    parsed = parser.parse_args([subcmd, *extra_args])
     with pytest.raises(SystemExit) as exc_info:
-        parsed.func(parsed)
-    assert exc_info.value.code == 2
-
-
-def test_revise_requires_a_scope():
-    parser = cli.build_parser()
-    # No scope flag → argparse errors out (mutually exclusive required group)
-    with pytest.raises(SystemExit):
-        parser.parse_args(["revise", "/tmp/fake", "instruction"])
+        parser.parse_args([subcmd, "--help"])
+    assert exc_info.value.code == 0

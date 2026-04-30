@@ -68,6 +68,9 @@ MODEL="claude-sonnet-4-20250514"
 NO_STREAM=0
 RESUME_FROM=""        # 2026-04-26 #58: skip earlier stages on prompt iteration
 DRAFT_DIR_OVERRIDE="" # required when RESUME_FROM is set
+NO_ADVERSARIAL=0      # 2026-04-29 v0.3.0: skip adversarial review + revise loop
+MAX_REVISE_COST_USD="5.00"  # cost cap for revise loop (per-run)
+MAX_REVISIONS=6       # max findings the revise loop will process per run
 
 CLAUDE_TOOLS="Read,Write,Bash,Grep,Glob,WebSearch,Agent,ToolSearch"
 
@@ -91,6 +94,9 @@ while [[ $# -gt 0 ]]; do
     --no-stream)         NO_STREAM=1; shift ;;
     --resume-from)       RESUME_FROM="$2"; shift 2 ;;
     --draft-dir)         DRAFT_DIR_OVERRIDE="$2"; shift 2 ;;
+    --no-adversarial)    NO_ADVERSARIAL=1; shift ;;
+    --max-revise-cost-usd) MAX_REVISE_COST_USD="$2"; shift 2 ;;
+    --max-revisions)     MAX_REVISIONS="$2"; shift 2 ;;
     --help)              usage ;;
     -*)                  echo "Error: Unknown option $1" >&2; usage 1 ;;
     *)
@@ -1059,11 +1065,138 @@ stage_merge_and_assemble() {
 
   echo "" >&2
   echo "==================================================================" >&2
-  echo "SMOKE COMPLETE" >&2
+  echo "ASSEMBLE COMPLETE" >&2
   echo "==================================================================" >&2
   echo "  spec:  $spec" >&2
   echo "  deck:  $pptx" >&2
   echo "==================================================================" >&2
+}
+
+# ==============================================================================
+# 2026-04-29 v0.3.0 — review-rewrite loop stages
+# ==============================================================================
+
+stage_adversarial_review() {
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[Stage 12/13] adversarial_review (--type presentation)" >&2
+  echo "──────────────────────────────────────────────────" >&2
+
+  if ! command -v beril-adversarial-cli >/dev/null 2>&1; then
+    echo "  beril-adversarial-cli not on PATH; skipping adversarial review." >&2
+    echo "  Install: pipx install --pip-args=\"--no-cache-dir\" \\" >&2
+    echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.4.0" >&2
+    echo "  Or pass --no-adversarial to skip this warning." >&2
+    return 0
+  fi
+
+  local adversarial_sh
+  adversarial_sh="$(dirname "$(dirname "$TOOLS_DIR")")/beril-adversarial/tools/adversarial_review.sh"
+  if [[ ! -f "$adversarial_sh" ]]; then
+    # Fall back to whatever the CLI dispatches to
+    adversarial_sh=""
+  fi
+
+  local review_path="$OUTDIR/audit/adversarial_review.json"
+  local review_md="$OUTDIR/audit/adversarial_review.md"
+
+  # Invoke the CLI; --type presentation takes a draft_dir
+  if [[ -n "$adversarial_sh" ]]; then
+    bash "$adversarial_sh" "$OUTDIR" --type presentation || {
+      echo "  adversarial_review.sh failed (rc=$?); revise loop will halt" >&2
+      return 1
+    }
+  else
+    beril-adversarial-cli --type presentation "$OUTDIR" || {
+      echo "  beril-adversarial-cli failed (rc=$?); revise loop will halt" >&2
+      return 1
+    }
+  fi
+
+  if [[ ! -f "$review_path" ]]; then
+    echo "  adversarial review did not produce $review_path; revise loop will halt" >&2
+    return 1
+  fi
+
+  # Surface a quick summary to stdout
+  if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    "$PYTHON_BIN" -c "
+import json
+with open('$review_path') as f:
+    review = json.load(f)
+s = review.get('summary', {})
+print(f'  total findings: {s.get(\"total_findings\", \"?\")}', end='')
+sev = s.get('by_severity', {})
+print(f' (P0={sev.get(\"P0\", 0)} P1={sev.get(\"P1\", 0)} P2={sev.get(\"P2\", 0)} info={sev.get(\"info\", 0)})')
+" 2>&1 | sed 's/^/    /' >&2
+  fi
+}
+
+stage_revise_slides() {
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[Stage 13/13] revise_slides (review-rewrite loop)" >&2
+  echo "──────────────────────────────────────────────────" >&2
+
+  local review_path="$OUTDIR/audit/adversarial_review.json"
+  if [[ ! -f "$review_path" ]]; then
+    echo "  no adversarial_review.json found; skipping revise loop" >&2
+    return 0
+  fi
+
+  local stream_flag=""
+  if [[ $NO_STREAM -eq 1 ]]; then stream_flag="--no-stream"; fi
+
+  echo "  invoking revise_loop.py (max-revisions=$MAX_REVISIONS, max-cost-usd=$MAX_REVISE_COST_USD)" >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/revise_loop.py" \
+    "$OUTDIR" \
+    --severity-floor P0 \
+    --max-revisions "$MAX_REVISIONS" \
+    --max-cost-usd "$MAX_REVISE_COST_USD" \
+    --model "$MODEL" \
+    $stream_flag 2>&1 | sed 's/^/    /' >&2
+
+  local rc=$?
+  if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+    echo "  revise_loop.py crashed (rc=$rc); spec may be corrupt — pre-revise backup at $OUTDIR/slide_spec.pre_revise.json" >&2
+    return 1
+  fi
+
+  # If the loop made any changes, re-run validate + assemble against the
+  # revised spec.
+  local meta="$OUTDIR/audit/revise_loop_metadata.json"
+  if [[ -f "$meta" ]]; then
+    local n_changed
+    n_changed=$("$PYTHON_BIN" -c "
+import json
+with open('$meta') as f:
+    m = json.load(f)
+print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
+" 2>/dev/null || echo "0")
+    if [[ "$n_changed" -gt 0 ]]; then
+      echo "  revise loop applied $n_changed change(s); re-assembling deck..." >&2
+      local spec="$OUTDIR/slide_spec.json"
+      local pptx="$OUTDIR/draft.pptx"
+      "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
+        echo "  post-revise validation FAILED — spec at $spec" >&2
+        return 1
+      }
+      "$PYTHON_BIN" "$TOOLS_DIR/assemble_pptx.py" \
+        "$spec" \
+        --out "$pptx" \
+        --master "$SKILL_DIR/references/templates/kbase-presentation-master.pptx" || {
+        echo "  post-revise assemble_pptx FAILED" >&2
+        return 1
+      }
+      echo "  re-assembled deck: $pptx" >&2
+    else
+      echo "  revise loop made no changes (all findings were surface-only or skipped)" >&2
+    fi
+  fi
+
+  if [[ -f "$OUTDIR/next_actions.md" ]]; then
+    echo "  next_actions.md written: $OUTDIR/next_actions.md" >&2
+  fi
 }
 
 # ==============================================================================
@@ -1084,7 +1217,7 @@ should_run() {
   # Map stages to integer ordinals (curate_figures inserted at 4;
   # later stages shifted by 1).
   local order_resume order_stage
-  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 merge:11; do
+  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 merge:11 adversarial_review:12 revise_slides:13; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -1129,5 +1262,45 @@ if should_run speaker_notes;    then stage_speaker_notes   || { echo "FAIL at sp
 
 # merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
+
+# v0.3.0: adversarial review-rewrite loop (after assembly, before final summary).
+# Skip when --no-adversarial OR when --skip-assembly (no spec to review).
+if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
+  if should_run adversarial_review; then
+    stage_adversarial_review || {
+      echo "[warn] adversarial_review failed — skipping revise loop" >&2
+      echo "       Inspect: $OUTDIR/audit/adversarial_review.* (if any)" >&2
+    }
+    if [[ -f "$OUTDIR/audit/adversarial_review.json" ]]; then
+      if should_run revise_slides; then
+        stage_revise_slides || {
+          echo "[warn] revise_slides loop failed — slide_spec may be at backup" >&2
+        }
+      else
+        echo "[skip] revise_slides (resume from $RESUME_FROM)" >&2
+      fi
+    fi
+  else
+    echo "[skip] adversarial_review (resume from $RESUME_FROM)" >&2
+  fi
+else
+  if [[ $NO_ADVERSARIAL -eq 1 ]]; then
+    echo "[skip] adversarial_review + revise loop (--no-adversarial)" >&2
+  fi
+fi
+
+# Final summary banner
+echo "" >&2
+echo "==================================================================" >&2
+echo "PIPELINE COMPLETE" >&2
+echo "==================================================================" >&2
+echo "  draft_dir: $OUTDIR" >&2
+if [[ -f "$OUTDIR/draft.pptx" ]]; then
+  echo "  deck:      $OUTDIR/draft.pptx" >&2
+fi
+if [[ -f "$OUTDIR/next_actions.md" ]]; then
+  echo "  next:      $OUTDIR/next_actions.md" >&2
+fi
+echo "==================================================================" >&2
 
 exit 0

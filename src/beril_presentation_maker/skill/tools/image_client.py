@@ -73,15 +73,22 @@ import requests
 # ---------------------------------------------------------------------------
 
 DEFAULT_CBORG_BASE_URL = "https://api.cborg.lbl.gov"
-DEFAULT_MODEL = "google/gemini-pro-image"
+# 2026-04-30: CBORG model inventory uses bare names (not google/-prefixed).
+# Default to gemini-3-pro-image (Gemini 3's image-gen, "nanobanana pro")
+# — better text handling than gemini-pro-image. Override via --model.
+DEFAULT_MODEL = "gemini-3-pro-image"
 
 # Per-million-token cost estimates for cost-cap enforcement.
-# Source: cborg.lbl.gov/models/ — gemini-pro-image: $2 / $12 per M tokens.
+# Source: cborg.lbl.gov/models/ — gemini image-gen models: $2 / $12 per M tokens.
 # (Image-gen tokens are different from text tokens; output_tokens include
 # the encoded image, ~32K tokens at the model's max.)
 _MODEL_RATES_USD_PER_M = {
-    "google/gemini-pro-image":         {"input": 2.00, "output": 12.00},
-    "google/gemini-3-pro-image":       {"input": 2.00, "output": 12.00},
+    "gemini-pro-image":                 {"input": 2.00, "output": 12.00},
+    "gemini-3-pro-image":               {"input": 2.00, "output": 12.00},
+    # Legacy google/-prefixed aliases — kept so old callers don't break,
+    # but CBORG itself expects the bare names above.
+    "google/gemini-pro-image":          {"input": 2.00, "output": 12.00},
+    "google/gemini-3-pro-image":        {"input": 2.00, "output": 12.00},
     "google/gemini-3-pro-image-preview": {"input": 2.00, "output": 12.00},
 }
 
@@ -292,7 +299,20 @@ class ImageClient:
                                        timeout=self.timeout_s)
             resp.raise_for_status()
         except requests.RequestException as e:
-            raise ImageClientError(f"CBORG request failed: {e}") from e
+            # Surface the response body too — 400/422 errors typically
+            # carry diagnostic JSON ({"error": {"message": "..."}}). The
+            # status-line alone isn't actionable.
+            body = ""
+            try:
+                if hasattr(e, "response") and e.response is not None:
+                    body = e.response.text[:1000]
+            except Exception:  # noqa: BLE001
+                pass
+            raise ImageClientError(
+                f"CBORG request failed: {e}\n"
+                f"  request payload: {json.dumps(payload)}\n"
+                f"  response body: {body}"
+            ) from e
 
         data = resp.json()
         try:
