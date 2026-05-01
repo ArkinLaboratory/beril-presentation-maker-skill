@@ -1,5 +1,93 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.1 (2026-05-01) — hotfix: figure resolver, prompt teaching, position population
+
+Closes four bugs surfaced by the v0.3.2 live smoke on
+`core_gene_tradeoffs`. The smoke completed (25 slides, deck rendered)
+but three figure assets failed to render, no `data_table` layout was
+ever picked, and the slide_spec lacked `position` fields. None of
+these were caught by unit tests because they only manifest in the
+end-to-end flow with a real BERDL project.
+
+### Bugs fixed
+
+- **Figure resolver broken under v0.3.1 layout.** `_derive_project_dir`
+  walked `draft_dir → talks → project_dir`, but in v0.3.1 the
+  assembler's `draft_dir = slide_spec_path.parent = draft_N/working/`,
+  not `draft_N/`. Walk-up failed; project_dir fallback never fired;
+  three figure paths from the `core_gene_tradeoffs` smoke resolved
+  against `draft_N/working/figures/` instead of `project_dir/figures/`
+  (where the files actually live). All 3 data_figure / claim_evidence
+  slides rendered without their figures.
+
+  Fix: new `_derive_actual_draft_dir(maybe_working)` helper strips a
+  trailing `working/` segment; `_derive_project_dir` extended to walk
+  3 levels up from `working/`. Both legacy (v0.3.0) and v0.3.1+
+  layouts work.
+
+- **`figures_curated.md` duplicate not fully killed.** v0.3.1 removed
+  the orchestrator's `cp figures_curated.md → curated_figures.md` line
+  but `curate_figures.py` itself still wrote the legacy name. Result:
+  `working/curated_figures.md` (the canonical name slide_compose
+  expects) was missing; LLM ran without the curated figure inventory
+  and inferred figure paths from REPORT.md / notebook scans. Three of
+  six available figures got picked.
+
+  Fix: `curate_figures.py` writes `curated_figures.md` directly. Test
+  `test_cli_curate_subcommand_writes_outputs` updated to assert the
+  legacy name does NOT exist.
+
+- **`merge_compose_fragments.py` did not populate `position`.** ALL
+  25 slides in the smoke had `position=None`. Stream A's
+  `_insert_slide_into_spec` then ran its A1 fallback chain (substory
+  anchor / array index / append-with-warning) on every revise loop
+  invocation, instead of doing the cheap position-comparison path.
+
+  Fix: `merge_compose_fragments.py` now sets `slide["position"] =
+  array_index + 1` on every merged slide at write time. Test
+  `test_merge_writes_valid_slide_spec` updated to verify positions are
+  populated 1-based.
+
+- **`slide_compose.v1.md` did not know about `data_table`.** v0.3.2
+  added the schema + assembler handler + an `add_slide.v1.md` mention
+  but missed the primary slide-composing prompt. The LLM had no
+  pathway to pick `data_table` for substory content; the
+  `core_gene_tradeoffs` smoke produced zero data_table slides despite
+  having a literal "selection signature matrix" 2×2 quadrant
+  classification (slide 13, rendered as `data_figure` with a missing
+  PNG instead of a clean rendered table).
+
+  Fix: `slide_compose.v1.md` now teaches `data_table`:
+  - Added to the layout-diversity menu (between `data_figure` and
+    `workflow_diagram`); explicit "strongly preferred over data_figure
+    when the figure is a table-shaped image" guidance.
+  - Full per-layout schema section with two worked examples (top-N
+    ranking + quadrant matrix).
+  - Validator-blocking caps documented (1-12 rows, 2-6 cols, all
+    cells stringified by caller).
+  - "16-layout vocabulary" callout in the prompt header (was "15").
+
+### Tests
+
+- 5 new tests in `test_assemble_pptx.py`:
+  `_derive_actual_draft_dir` (v0.3.1 / legacy), `_derive_project_dir`
+  (v0.3.1 / legacy), `_resolve_asset_path` end-to-end against
+  project_dir/figures/X.png from a v0.3.1-shaped working/ dir.
+- `test_cli_curate_subcommand_writes_outputs`: updated to verify
+  canonical name is written + legacy name is NOT.
+- `test_merge_writes_valid_slide_spec`: updated to verify positions
+  are populated 1-based.
+- 488 / 488 unit tests pass (was 483 in v0.3.2).
+
+### Verification
+
+- 488 / 488 unit tests pass.
+- Wheel rebuilds clean.
+- Re-smoke on `core_gene_tradeoffs` planned post-tag to confirm the
+  three figures + data_table layout selection both work end-to-end.
+
+---
+
 ## v0.3.2 (2026-05-01) — `data_table` layout
 
 Adds the 16th layout to the production vocabulary. `data_table`

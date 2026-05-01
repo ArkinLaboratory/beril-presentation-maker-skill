@@ -492,10 +492,20 @@ def test_merge_writes_valid_slide_spec(tmp_path: Path):
     assert s2["slide_ids"] == [4, 5]
 
     # Speaker_notes_seed and evidence_anchors should NOT be on merged slides
+    # (per-slide compose-fragment metadata; stripped at merge time).
     for s in slides[1:5]:  # the substory-derived slides
         assert "speaker_notes_seed" not in s
         assert "evidence_anchors" not in s
-        assert "position" not in s
+
+    # v0.3.2.1: merge populates `position` (1-based) on every slide so
+    # the revise loop's add_slide path can do surgical insertion. Verify
+    # all merged slides have an integer position matching their array
+    # index + 1.
+    for idx, s in enumerate(slides, start=1):
+        assert s.get("position") == idx, (
+            f"slide at idx {idx} (id={s.get('id')}, layout={s.get('layout')}) "
+            f"has position={s.get('position')!r}; expected {idx}"
+        )
 
     # Validate against slide_spec contract
     issues = slide_spec.validate_slide_spec(spec)

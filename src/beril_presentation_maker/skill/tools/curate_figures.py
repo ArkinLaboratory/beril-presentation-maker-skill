@@ -881,7 +881,8 @@ def _cmd_curate(argv: list[str] | None) -> int:
         description=(
             "Inventory figures and produce a mode-bounded shortlist. "
             "Writes both figures_inventory.md (full inventory) and "
-            "figures_curated.md (mode shortlist) to --output-dir."
+            "curated_figures.md (mode shortlist; canonical name as of "
+            "v0.3.2.1) to --output-dir."
         ),
     )
     p.add_argument("project_dir", type=Path)
@@ -892,7 +893,7 @@ def _cmd_curate(argv: list[str] | None) -> int:
                         "(clamped to [min, max] range).")
     p.add_argument("--output-dir", type=Path, default=None,
                    help="Directory to write figures_inventory.md + "
-                        "figures_curated.md.")
+                        "curated_figures.md.")
     p.add_argument("--no-md", action="store_true",
                    help="Suppress markdown writes (JSON-only).")
     args = p.parse_args(argv)
@@ -914,7 +915,11 @@ def _cmd_curate(argv: list[str] | None) -> int:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         inv_path = args.output_dir / "figures_inventory.md"
         inv_path.write_text(format_figures_inventory_md(inventory), encoding="utf-8")
-        cur_path = args.output_dir / "figures_curated.md"
+        # v0.3.2.1: write the canonical name `curated_figures.md` directly.
+        # The legacy `figures_curated.md` was written by v0.3.0–v0.3.2; the
+        # orchestrator used to `cp` it to the canonical name. v0.3.1 removed
+        # the cp; v0.3.2.1 writes the canonical name from this tool.
+        cur_path = args.output_dir / "curated_figures.md"
         cur_path.write_text(format_curated_figures_md(selection), encoding="utf-8")
         print(f"wrote {inv_path}", file=sys.stderr)
         print(f"wrote {cur_path}", file=sys.stderr)

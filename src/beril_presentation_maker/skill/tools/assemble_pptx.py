@@ -552,13 +552,44 @@ TABLE_TEXT_RGB   = (0x33, 0x33, 0x33)   # dark gray, slightly off-black
 # ---------------------------------------------------------------------------
 
 def _derive_project_dir(draft_dir: Path) -> Path | None:
-    """Walk up from draft_dir to find the project_dir (typical layout:
-    projects/<id>/talks/draft_N/). Returns the project_dir Path or
-    None if the standard structure isn't present."""
-    # draft_dir → talks/ → project_dir
+    """Walk up from draft_dir to find the project_dir.
+
+    Two layouts to handle:
+
+    v0.3.0 (legacy):  projects/<id>/talks/draft_N/  → walk up 2 levels
+    v0.3.1+:          projects/<id>/talks/draft_N/working/  → walk up 3
+                       projects/<id>/talks/draft_N/  → walk up 2 (same as v0.3.0)
+
+    The first form is hit when callers pass `slide_spec_path.parent` and the
+    spec lives at draft_N/working/slide_spec.json (v0.3.1+ layout). The
+    second form is hit when callers pass the draft_N/ directory directly
+    (e.g., from the orchestrator side passing `OUTDIR`).
+
+    Returns the project_dir Path or None if the standard structure isn't
+    present.
+    """
+    # v0.3.1+ shape: caller passed draft_N/working/, walk up 3 levels.
+    if draft_dir.name == "working" and draft_dir.parent.parent.name == "talks":
+        candidate = draft_dir.parent.parent.parent
+        if candidate.is_dir():
+            return candidate
+    # v0.3.0 / direct-draft shape: caller passed draft_N/, walk up 2 levels.
     if draft_dir.parent.name == "talks" and draft_dir.parent.parent.is_dir():
         return draft_dir.parent.parent
     return None
+
+
+def _derive_actual_draft_dir(maybe_working: Path) -> Path:
+    """Given the path the caller passes as `draft_dir`, return the actual
+    draft_N/ directory.
+
+    v0.3.1+: the caller may pass `draft_N/working/` (the parent of
+    slide_spec.json); we want `draft_N/` for relative-path resolution
+    against the rest of the layout. Detect by checking the leaf name.
+    """
+    if maybe_working.name == "working" and maybe_working.parent.is_dir():
+        return maybe_working.parent
+    return maybe_working
 
 
 def _resolve_asset_path(rel_or_abs: str, draft_dir: Path,
@@ -1386,15 +1417,17 @@ def assemble(slide_spec_path: str | Path,
     # SPEC §12 / D-013). Posters skip the slide-by-slide handler loop.
     mode = spec.get("mode", "")
     if mode in ("poster-h", "poster-v"):
+        # v0.3.2.1: pass the actual draft_N/, not draft_N/working/.
+        actual_draft_dir = _derive_actual_draft_dir(slide_spec_path.parent)
         pf_module, poster_spec = _build_poster_spec_from_slide_spec(
-            spec, slide_spec_path.parent)
+            spec, actual_draft_dir)
         orientation = "horizontal" if mode == "poster-h" else "vertical"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             pf_module.fill_poster(
                 poster_spec, out_path,
                 orientation=orientation,
-                draft_dir=slide_spec_path.parent,
+                draft_dir=actual_draft_dir,
             )
         except (FileNotFoundError, ValueError) as e:
             raise AssemblyError(f"poster_fill failed: {e}") from e
@@ -1409,7 +1442,11 @@ def assemble(slide_spec_path: str | Path,
         raise AssemblyError(f"master template not found: {master}")
     prs = Presentation(master)
 
-    draft_dir = slide_spec_path.parent
+    # v0.3.2.1: slide_spec_path is `draft_N/working/slide_spec.json` in the
+    # v0.3.1+ layout. Handlers expect the actual draft_N/ for figure path
+    # resolution against project_dir = draft_N/../../. Walk up if we see the
+    # working/ subdir.
+    draft_dir = _derive_actual_draft_dir(slide_spec_path.parent)
     warnings: list[str] = []
 
     for slide_data in spec["slides"]:

@@ -206,7 +206,8 @@ def test_format_curated_md_no_figures(cf, tmp_path):
 
 def test_cli_curate_subcommand_writes_outputs(cf, tmp_path):
     """End-to-end: project with a figures/ dir → figures_inventory.md +
-    figures_curated.md emitted."""
+    curated_figures.md emitted (canonical name as of v0.3.2.1; the
+    legacy name `figures_curated.md` is no longer written)."""
     proj = tmp_path / "demo"
     proj.mkdir()
     figdir = proj / "figures"
@@ -220,7 +221,9 @@ def test_cli_curate_subcommand_writes_outputs(cf, tmp_path):
     ])
     assert rc == 0
     assert (out_dir / "figures_inventory.md").is_file()
-    assert (out_dir / "figures_curated.md").is_file()
+    assert (out_dir / "curated_figures.md").is_file()
+    # Legacy name must NOT be written (kills the v0.3.0–v0.3.2 duplicate)
+    assert not (out_dir / "figures_curated.md").is_file()
 
 
 def test_cli_curate_no_md_flag_skips_writes(cf, tmp_path, capsys):

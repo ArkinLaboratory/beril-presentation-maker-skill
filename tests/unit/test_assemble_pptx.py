@@ -52,6 +52,65 @@ def asm():
     return _import("assemble_pptx", ASSEMBLE_PY)
 
 
+# ---------------------------------------------------------------------------
+# v0.3.2.1: figure path resolver under v0.3.1+ layout
+# ---------------------------------------------------------------------------
+
+def test_derive_actual_draft_dir_strips_working(asm, tmp_path):
+    """v0.3.1+: caller passes draft_N/working/, helper returns draft_N/."""
+    draft = tmp_path / "talks" / "draft_5"
+    working = draft / "working"
+    working.mkdir(parents=True)
+    assert asm._derive_actual_draft_dir(working) == draft
+
+
+def test_derive_actual_draft_dir_passthrough_for_legacy(asm, tmp_path):
+    """v0.3.0 legacy: caller passes draft_N/ directly, no transform."""
+    draft = tmp_path / "talks" / "draft_5"
+    draft.mkdir(parents=True)
+    assert asm._derive_actual_draft_dir(draft) == draft
+
+
+def test_derive_project_dir_v031_layout(asm, tmp_path):
+    """v0.3.1: walk draft_N/working/ → projects/<id>/."""
+    project = tmp_path / "projects" / "demo"
+    working = project / "talks" / "draft_5" / "working"
+    working.mkdir(parents=True)
+    assert asm._derive_project_dir(working) == project
+
+
+def test_derive_project_dir_v030_legacy(asm, tmp_path):
+    """v0.3.0 legacy: walk draft_N/ → projects/<id>/ still works."""
+    project = tmp_path / "projects" / "demo"
+    draft = project / "talks" / "draft_5"
+    draft.mkdir(parents=True)
+    assert asm._derive_project_dir(draft) == project
+
+
+def test_resolve_asset_path_finds_project_figure_under_v031(asm, tmp_path):
+    """End-to-end: figure path 'figures/X.png' in spec resolves to
+    project_dir/figures/X.png even when caller passed draft_N/working/.
+    This is the v0.3.2.1 fix that closes the smoke-test bug where 3
+    figure assets failed to render."""
+    project = tmp_path / "projects" / "demo"
+    figdir = project / "figures"
+    figdir.mkdir(parents=True)
+    (figdir / "fig1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+
+    # v0.3.1 layout: draft_dir is the actual draft_N/, but in the assembler
+    # main path slide_spec_path.parent = draft_N/working/. Verify the
+    # transform.
+    working = project / "talks" / "draft_5" / "working"
+    working.mkdir(parents=True)
+
+    actual_draft = asm._derive_actual_draft_dir(working)
+    warnings: list[str] = []
+    found = asm._resolve_asset_path(
+        "figures/fig1.png", actual_draft, warnings, "test")
+    assert found == figdir / "fig1.png"
+    assert warnings == []
+
+
 requires_master = pytest.mark.skipif(
     not MASTER_PPTX.is_file(),
     reason=f"Master not built; run build_master.py first ({MASTER_PPTX})",

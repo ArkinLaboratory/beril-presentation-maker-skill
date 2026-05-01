@@ -20,7 +20,8 @@ critical analyses it covers), the throughline that frames the talk,
 the curated figure shortlist for the mode, and the citation pool;
 you emit a slide-spec **fragment** containing the substory's
 section_divider plus 3–5 content slides. Per [SPEC §6][spec-slides] /
-[D-008][d-008], slide layouts come from a closed 15-layout vocabulary;
+[D-008][d-008], slide layouts come from a closed 16-layout vocabulary
+(15 core + `data_table` added in v0.3.2);
 per [SPEC §6.1][spec-punchline], punchline-as-title applies to every
 content slide. Read [SPEC §6][spec-slides], [SPEC §6.2][spec-substory-shape],
 and [SPEC §14.2][spec-schema] before you start.
@@ -297,6 +298,16 @@ layouts (in roughly decreasing frequency-of-use):
   - `data_figure` — when REPORT or curated_figures.md provides a
     figure that IS the evidence for a substory claim. **Use this
     when you have a curated figure path available.**
+  - `data_table` — when the evidence is a small structured table
+    (top-N ranking, comparison matrix, quadrant classification).
+    **Strongly preferred over `data_figure` when the figure is a
+    table-shaped image** (e.g., "selection signature matrix" with
+    quadrant counts, "top-10 candidates by score"). Renders the
+    actual structured data with KBase-branded styling instead of
+    a static PNG. Caps: 1-12 rows, 2-6 columns, all cells must be
+    strings (stringify numbers with desired precision: e.g.,
+    `"0.92"` not `0.92`). Use sparingly — at most 1 per substory.
+    See "data_table" section below for schema.
   - `workflow_diagram` — when the substory's evidence is procedural
     (≥3 steps with ordering). Method-pipeline slides are great
     candidates.
@@ -524,6 +535,77 @@ memory; the schema field names matter.
   what the figure shows ("Recovery rate by method, n=142 loci").
   Caption ≤2 sentences; describes axes / units / cohort. Pick from
   `curated_figures.md` only.
+
+### `data_table`
+
+- **Required:** `title`, `columns` (list of 2-6 header strings),
+  `rows` (list of 1-12 row arrays; each row's cell count must equal
+  `len(columns)`; ALL cells must be strings — stringify numbers
+  with desired precision: `"0.92"`, `"3.4×10⁵"`, etc).
+- **Optional:** `caption` (~1 sentence below the table),
+  `footnote` (link to fuller data in REPORT.md), `data_source`
+  (REPORT.md §X.Y or notebook reference), `highlight_rows` (list
+  of 0-based row indices to render in KBase-orange highlight).
+- **Authoring rule:** use when the evidence IS structured tabular
+  data — top-N rankings, comparison matrices, quadrant summaries.
+  Strongly preferred over `data_figure` when the figure is itself
+  a table (e.g., a "selection signature matrix" image with quadrant
+  counts becomes a 2×2 `data_table` with the actual numbers
+  rendered cleanly). Title states the headline finding ("Top 5
+  candidates by ensemble score" or "Quadrant counts reveal 28K
+  costly-but-conserved genes"). Caption ≤2 sentences. Footnote
+  surfaces "full ranking (n=347) in REPORT.md §4.2" when rows are
+  truncated.
+
+  **Validator-blocking caps:** rows ≤ 12, cols ≤ 6. If your data is
+  wider/taller, pick the highest-priority rows that fit and use the
+  footnote to cite REPORT for the rest. The caps are presentation-
+  floor readability constraints; 25-row tables are unreadable at 30 ft.
+
+  **Cells must be strings.** The validator rejects non-string cells.
+  You own the precision: `f"{x:.2f}"` for ratios, `f"{n:,}"` for
+  large integer counts (e.g., `"28,017"`).
+
+Worked example (top-N ranking):
+
+```json
+{
+  "layout": "data_table",
+  "content": {
+    "title": "Top 5 dark-matter candidates by ensemble score.",
+    "columns": ["Gene", "Organism", "Score", "Evidence"],
+    "rows": [
+      ["AO356_11255", "P. putida",   "0.92", "ML+conservation"],
+      ["SO_2027",     "Shewanella",  "0.88", "ML+phenotype"],
+      ["SO_2123",     "Shewanella",  "0.85", "ML"],
+      ["DVU_0314",    "D. vulgaris", "0.81", "conservation"],
+      ["DVU_0817",    "D. vulgaris", "0.78", "ML"]
+    ],
+    "caption": "Top candidates by ensemble score; full ranking (n=347) in REPORT.md §4.2.",
+    "footnote": "Full ranking (n=347) in REPORT.md §4.2.",
+    "highlight_rows": [0]
+  }
+}
+```
+
+Worked example (quadrant matrix):
+
+```json
+{
+  "layout": "data_table",
+  "content": {
+    "title": "Selection signature reveals 28K costly-but-conserved genes.",
+    "columns": ["", "Conserved (core)", "Variable (accessory)"],
+    "rows": [
+      ["Costly in lab",  "28,017",  "5,526"],
+      ["Neutral in lab", "86,761", "12,304"]
+    ],
+    "caption": "Four-quadrant classification by burden status × conservation; 28K core+costly genes are the strongest natural-selection candidates.",
+    "data_source": "Fitness Browser RB-TnSeq across 32 species",
+    "highlight_rows": [0]
+  }
+}
+```
 
 ### `workflow_diagram`
 

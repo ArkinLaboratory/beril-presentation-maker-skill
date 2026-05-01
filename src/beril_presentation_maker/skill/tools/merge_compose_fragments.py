@@ -548,6 +548,14 @@ def main() -> int:
                           if args.citation_pool_path else None)
     slides.append(build_references_slide(next_id, citation_pool_path))
 
+    # v0.3.2.1: populate `position` fields by array index. The downstream
+    # revise loop (Stream A) needs these to perform surgical insertion
+    # via _insert_slide_into_spec; without them, A1's fallback chain runs
+    # for every revision. Use 1-based indexing to match human-readable
+    # slide numbering ("slide 1, slide 2, ...").
+    for idx, slide in enumerate(slides, start=1):
+        slide["position"] = idx
+
     # Build the top-level spec object
     spec = {
         "schema_version": slide_spec.SCHEMA_VERSION,
