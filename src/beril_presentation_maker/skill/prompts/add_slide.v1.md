@@ -108,15 +108,15 @@ slides in the audit trail.
 The reviewer's `fix_hint` may name a target layout. If it doesn't, pick
 based on the data shape:
 
-| Data shape | Layout | Bullet cap |
+| Data shape | Layout | Cap |
 |---|---|---|
-| Single quantitative claim with bullets | `claim_evidence` | **1-3** |
-| Top-N ranking with multiple columns | `data_table` (v0.4+) OR `claim_evidence` (top 3 only; cap is 1-3 bullets) | **1-3** |
+| Single quantitative claim with bullets | `claim_evidence` | bullets **1-3** |
+| Top-N ranking with multiple columns | `data_table` (v0.3.2+) | rows ≤ 12, cols ≤ 6, all cells stringified |
 | Single image/figure with caption | `data_figure` | n/a (figure-driven) |
 | Comparison across two conditions/methods | `two_column_compare` | per-column 1-5 |
 | Procedural flow / experimental strategy | `workflow_diagram` | step_caption exactly 3 |
 | Single load-bearing statistic | `big_number` | n/a |
-| Methodology bullets (5-10 items) | `methods_summary` | **5-10** |
+| Methodology bullets (5-10 items) | `methods_summary` | bullets **5-10** |
 
 **Avoid** for `missing_slide` adds:
 - `section_divider` (these are substory boundaries, not content slides)
@@ -140,12 +140,16 @@ based on the data shape:
   Either pick a layout that doesn't need a figure (claim_evidence
   without `figure` field) OR HALT if the finding specifically required
   a figure-based layout.
-- **`data_table` needed but layout not yet supported in this skill
-  version** → Fall back to `claim_evidence` with bullets-as-rows. The
-  `claim_evidence` schema HARD-CAPS bullets at **1-3 entries**. If
-  the table has >3 rows, pick the 3 highest-priority rows for the
-  bullets and surface "and 7 more in REPORT.md §X" as a final
-  evidence_anchor. Note in revision_log that data_table was preferred.
+- **`data_table` needed and rows fit (≤12) and cols fit (≤6)** →
+  Use `data_table` directly (v0.3.2+). Stringify all cells with
+  desired precision (the validator rejects non-string cells —
+  callers own precision, e.g. `f"{x:.2f}"`).
+- **`data_table` would exceed caps** (>12 rows or >6 columns) →
+  Pick the highest-priority N≤12 rows; surface
+  `footnote: "Full ranking (n=N_total) in REPORT.md §X.Y"` so the
+  audience knows where to read the rest. Cap discipline matters
+  for presentation-floor readability — a 25-row table is unreadable
+  at 30 ft.
 
 **Hard cap reminder for claim_evidence**: bullets MUST be 1-3 strings.
 The validator REJECTS 4+. If the finding's data is intrinsically wider,

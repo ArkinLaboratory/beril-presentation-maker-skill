@@ -68,6 +68,7 @@ LAYOUTS: tuple[str, ...] = (
     "claim_evidence",
     "two_column_compare",
     "data_figure",
+    "data_table",                # v0.3.2: ranked tables / matrices
     "workflow_diagram",
     "methods_summary",
     "concept_illustration",
@@ -394,6 +395,113 @@ def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
     return iss
 
 
+# v0.3.2: data_table layout — ranked top-N, comparison matrices, etc.
+DATA_TABLE_MAX_ROWS = 12
+DATA_TABLE_MAX_COLS = 6
+
+
+def _check_data_table(content: dict, path: str) -> list[ValidatorIssue]:
+    """Validate a data_table content block.
+
+    Schema:
+      title:            required str
+      columns:          required list[str], 2 ≤ len ≤ DATA_TABLE_MAX_COLS,
+                        non-empty header strings
+      rows:             required list[list[str]], 1 ≤ len ≤ DATA_TABLE_MAX_ROWS,
+                        each inner list has len(columns) cells, ALL strings
+                        (caller must stringify numbers with desired precision)
+      caption:          optional str (~1 sentence; rendered below table)
+      footnote:         optional str (~1 line; rendered at slide-bottom)
+      data_source:      optional str (REPORT.md §X.Y or notebook reference)
+      highlight_rows:   optional list[int], indices of rows to render in
+                        the KBase-orange highlight band (0-based, must
+                        all be < len(rows))
+    """
+    iss: list[ValidatorIssue] = []
+    _check_required_str(content, "title", path, iss)
+
+    # columns
+    cols = content.get("columns")
+    if cols is None:
+        iss.append(ValidatorIssue(f"{path}.columns", "required field missing"))
+        cols = []
+    elif not _is_str_list(cols, min_len=2):
+        iss.append(ValidatorIssue(
+            f"{path}.columns",
+            f"must be a list of 2-{DATA_TABLE_MAX_COLS} non-empty header strings",
+        ))
+    elif len(cols) > DATA_TABLE_MAX_COLS:
+        iss.append(ValidatorIssue(
+            f"{path}.columns",
+            f"too many columns: {len(cols)} (max {DATA_TABLE_MAX_COLS}; "
+            "data_table is for presentation-floor readability, not data dumps)",
+        ))
+
+    # rows
+    rows = content.get("rows")
+    if rows is None:
+        iss.append(ValidatorIssue(f"{path}.rows", "required field missing"))
+    elif not isinstance(rows, list):
+        iss.append(ValidatorIssue(f"{path}.rows", "must be a list"))
+    elif len(rows) == 0:
+        iss.append(ValidatorIssue(f"{path}.rows", "must have at least 1 row"))
+    elif len(rows) > DATA_TABLE_MAX_ROWS:
+        iss.append(ValidatorIssue(
+            f"{path}.rows",
+            f"too many rows: {len(rows)} (max {DATA_TABLE_MAX_ROWS}; "
+            "if you need more, link to REPORT.md as the canonical source)",
+        ))
+    else:
+        ncols = len(cols) if isinstance(cols, list) else 0
+        for i, row in enumerate(rows):
+            rp = f"{path}.rows[{i}]"
+            if not isinstance(row, list):
+                iss.append(ValidatorIssue(rp, "must be a list of cell strings"))
+                continue
+            if ncols and len(row) != ncols:
+                iss.append(ValidatorIssue(
+                    rp,
+                    f"has {len(row)} cells but columns has {ncols} headers",
+                ))
+            for j, cell in enumerate(row):
+                if not isinstance(cell, str):
+                    iss.append(ValidatorIssue(
+                        f"{rp}[{j}]",
+                        f"must be a string; got {type(cell).__name__}. "
+                        "Caller should stringify numbers with desired precision "
+                        "(e.g. f'{x:.2f}') before placing on the slide.",
+                    ))
+
+    # optional fields
+    _check_optional_str(content, "caption", path, iss)
+    _check_optional_str(content, "footnote", path, iss)
+    _check_optional_str(content, "data_source", path, iss)
+
+    # highlight_rows
+    hl = content.get("highlight_rows")
+    if hl is not None:
+        if not isinstance(hl, list):
+            iss.append(ValidatorIssue(
+                f"{path}.highlight_rows",
+                "must be a list of 0-based row indices",
+            ))
+        else:
+            row_count = len(rows) if isinstance(rows, list) else 0
+            for i, idx in enumerate(hl):
+                if not isinstance(idx, int) or isinstance(idx, bool):
+                    iss.append(ValidatorIssue(
+                        f"{path}.highlight_rows[{i}]",
+                        f"must be an int; got {type(idx).__name__}",
+                    ))
+                elif idx < 0 or (row_count and idx >= row_count):
+                    iss.append(ValidatorIssue(
+                        f"{path}.highlight_rows[{i}]",
+                        f"index {idx} out of range for {row_count} rows",
+                    ))
+
+    return iss
+
+
 def _check_workflow_diagram(content: dict, path: str) -> list[ValidatorIssue]:
     iss: list[ValidatorIssue] = []
     _check_required_str(content, "title", path, iss)
@@ -566,6 +674,7 @@ LAYOUT_CHECKERS = {
     "claim_evidence":           _check_claim_evidence,
     "two_column_compare":       _check_two_column_compare,
     "data_figure":              _check_data_figure,
+    "data_table":               _check_data_table,
     "workflow_diagram":         _check_workflow_diagram,
     "methods_summary":          _check_methods_summary,
     "concept_illustration":     _check_concept_illustration,
@@ -858,6 +967,35 @@ def dump_json_schema() -> dict:
                 "data_source": {"type": "string"},
             },
         },
+        "data_table_content": {
+            "type": "object",
+            "required": ["title", "columns", "rows"],
+            "properties": {
+                "title": {"type": "string", "minLength": 1},
+                "columns": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": DATA_TABLE_MAX_COLS,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "rows": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": DATA_TABLE_MAX_ROWS,
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "caption": {"type": "string"},
+                "footnote": {"type": "string"},
+                "data_source": {"type": "string"},
+                "highlight_rows": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0},
+                },
+            },
+        },
         "workflow_diagram_content": {
             "type": "object",
             "required": ["title", "diagram", "step_caption"],
@@ -1109,6 +1247,20 @@ def example_slide(layout: str, slide_id: int = 1, substory_id: str | None = "S1"
             "title": "Chart interpretation as title.",
             "figure": "figures/fig01.png",
             "caption": "Caption explaining what the chart shows.",
+        },
+        "data_table": {
+            "title": "Top 5 dark-matter candidates by ensemble score.",
+            "columns": ["Gene", "Organism", "Score", "Evidence"],
+            "rows": [
+                ["AO356_11255", "P. putida", "0.92", "ML+conservation"],
+                ["SO_2027",      "Shewanella", "0.88", "ML+phenotype"],
+                ["SO_2123",      "Shewanella", "0.85", "ML"],
+                ["DVU_0314",     "D. vulgaris", "0.81", "conservation"],
+                ["DVU_0817",     "D. vulgaris", "0.78", "ML"],
+            ],
+            "caption": "Top candidates by ensemble score (REPORT.md §4.2).",
+            "footnote": "Full ranking (n=347) in REPORT.md §4.2.",
+            "highlight_rows": [0],
         },
         "workflow_diagram": {
             "title": "Workflow punchline.",

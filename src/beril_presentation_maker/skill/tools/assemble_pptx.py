@@ -127,12 +127,35 @@ class AssemblyError(Exception):
 # Placeholder helpers
 # ---------------------------------------------------------------------------
 
+# v0.3.2: spec-layout → master-layout aliases. Some spec layouts reuse
+# an existing master layout because their handler does its own freeform
+# rendering (removes the body placeholder, adds shapes). The master
+# layout only needs to provide the title placeholder + slide background.
+#
+# Aliasing avoids requiring a source-.potx update for every new spec
+# layout we introduce.
+SPEC_TO_MASTER_LAYOUT = {
+    "data_table": "data_figure",   # title placeholder + body region; handler
+                                   # removes body and renders its own table
+}
+
+
 def _get_layout_by_name(prs: Presentation, name: str):
-    """Look up a layout by name in master 0. Raises AssemblyError if absent."""
+    """Look up a layout by name in master 0. Raises AssemblyError if absent.
+
+    Resolves spec-layout aliases (SPEC_TO_MASTER_LAYOUT) — e.g. `data_table`
+    spec slides use the `data_figure` master layout under the hood.
+    """
+    resolved = SPEC_TO_MASTER_LAYOUT.get(name, name)
     for layout in prs.slide_masters[0].slide_layouts:
-        if layout.name == name:
+        if layout.name == resolved:
             return layout
     available = sorted(l.name for l in prs.slide_masters[0].slide_layouts)
+    if resolved != name:
+        raise AssemblyError(
+            f"layout '{name}' (aliased to '{resolved}') not in master template. "
+            f"Available: {available}"
+        )
     raise AssemblyError(
         f"layout '{name}' not in master template. Available: {available}"
     )
@@ -515,6 +538,14 @@ AI_DISCLOSURE_BAND = (0.30, 5.30, 9.40, 0.20)  # 8pt graphite-gray
 
 GRAPHITE_GRAY_RGB = (157, 146, 135)  # KBase secondary palette
 
+# v0.3.2: KBase brand palette (full hex for data_table styling)
+KBASE_BLUE_RGB   = (0x00, 0x7D, 0xC3)   # #007DC3 — table header bg, links
+KBASE_GREEN_RGB  = (0x5E, 0x97, 0x32)   # #5E9732 — secondary accents
+KBASE_ORANGE_RGB = (0xF7, 0x8E, 0x1E)   # #F78E1E — highlight rows
+ROW_BAND_RGB     = (0xF2, 0xF2, 0xF2)   # alternating row band (light gray)
+WHITE_RGB        = (0xFF, 0xFF, 0xFF)
+TABLE_TEXT_RGB   = (0x33, 0x33, 0x33)   # dark gray, slightly off-black
+
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -816,6 +847,169 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
                      word_wrap=True, auto_size=True)
 
 
+def _fill_data_table(slide, content, draft_dir, warnings):
+    """Render a `data_table` slide. v0.3.2.
+
+    Layout zones:
+      title:          slide title placeholder (top)
+      table:          centered horizontally, immediately below title
+                      (y=1.10), height bounded so it clears the bottom
+                      logo strip at y=5.00.
+      caption:        small textbox immediately below the table
+      footnote:       even smaller textbox at slide bottom (above logos)
+
+    Brand styling:
+      header row:     KBase blue (#007DC3) bg, white text, bold
+      odd data rows:  light gray band (#F2F2F2) bg
+      even data rows: white bg
+      highlight rows: KBase orange (#F78E1E) bg with white text (overrides
+                      the alternating-band coloring)
+
+    Validator (slide_spec._check_data_table) caps rows ≤ 12 and
+    columns ≤ 6. The renderer assumes these caps held; widths and font
+    sizes are tuned for that range.
+    """
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_ALIGN
+
+    _set_title(slide, content["title"])
+    _remove_placeholder(slide, 1)  # body region taken by the table
+
+    columns = content["columns"]
+    rows = content["rows"]
+    n_cols = len(columns)
+    n_rows = len(rows) + 1  # +1 for header
+    highlight_rows = set(content.get("highlight_rows") or [])
+
+    # Geometry — table fills the body region. Same horizontal envelope as
+    # other body-region layouts (0.50..9.50, 9.0in wide). Height adapts to
+    # row count so the table doesn't crash through the logo strip at y=5.00.
+    table_left = Inches(0.50)
+    table_top = Inches(1.10)
+    table_width = Inches(9.00)
+    # Max usable vertical band: 1.10 → 4.50 = 3.40 in. Leaves 0.50 in
+    # below the table for caption + footnote, then logos at 5.00.
+    max_table_h_in = 3.40
+    # Header row gets a slightly taller line (16pt + padding); data rows
+    # use 14pt. Cap row height so 12-row tables fit; smaller tables get
+    # taller rows for legibility.
+    target_row_h_in = min(0.34, max_table_h_in / n_rows)
+    table_height = Inches(target_row_h_in * n_rows)
+
+    shape = slide.shapes.add_table(
+        rows=n_rows,
+        cols=n_cols,
+        left=table_left,
+        top=table_top,
+        width=table_width,
+        height=table_height,
+    )
+    table = shape.table
+
+    # Column widths: equal-fraction by default. Tighten the first column
+    # if it's clearly an identifier (e.g., gene names) — heuristic: if the
+    # first column header is short and the rest are wider, narrow it.
+    # Skip this heuristic for now (equal widths render acceptably for
+    # 2-6 cols). Future: per-column width hints from the spec.
+
+    # --- Header row ---
+    for j, header_text in enumerate(columns):
+        cell = table.cell(0, j)
+        _set_table_cell(
+            cell, header_text,
+            bg_rgb=KBASE_BLUE_RGB,
+            text_rgb=WHITE_RGB,
+            bold=True,
+            font_pt=12,
+            align=PP_ALIGN.LEFT,
+        )
+
+    # --- Data rows ---
+    for i, row in enumerate(rows):
+        is_highlight = i in highlight_rows
+        is_odd_band = (i % 2 == 1)  # 0-based: row 0 white, row 1 banded, ...
+        if is_highlight:
+            bg = KBASE_ORANGE_RGB
+            text = WHITE_RGB
+            bold = True
+        elif is_odd_band:
+            bg = ROW_BAND_RGB
+            text = TABLE_TEXT_RGB
+            bold = False
+        else:
+            bg = WHITE_RGB
+            text = TABLE_TEXT_RGB
+            bold = False
+        for j, cell_text in enumerate(row):
+            cell = table.cell(i + 1, j)
+            _set_table_cell(
+                cell, cell_text,
+                bg_rgb=bg,
+                text_rgb=text,
+                bold=bold,
+                font_pt=11,
+                align=PP_ALIGN.LEFT,
+            )
+
+    # --- Caption (below table) ---
+    table_bottom_in = 1.10 + target_row_h_in * n_rows
+    caption = content.get("caption")
+    if caption:
+        _add_textbox(
+            slide, caption,
+            0.50, table_bottom_in + 0.05, 9.00, 0.30,
+            font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+            word_wrap=True,
+        )
+
+    # --- Footnote (very bottom, above logo strip) ---
+    footnote = content.get("footnote") or content.get("data_source")
+    if footnote:
+        # Place at y=4.80, height 0.18, above logos at 5.00.
+        _add_textbox(
+            slide, footnote,
+            0.50, 4.80, 9.00, 0.18,
+            font_size_pt=9, color_rgb=GRAPHITE_GRAY_RGB,
+            word_wrap=True,
+        )
+
+
+def _set_table_cell(cell, text: str, *, bg_rgb, text_rgb,
+                    bold: bool = False, font_pt: int = 11,
+                    align=None):
+    """Fill a python-pptx table cell with text + brand styling.
+
+    Sets:
+      - cell.text (single run)
+      - cell.fill.solid() + .fore_color.rgb = bg_rgb
+      - run.font.color.rgb = text_rgb
+      - run.font.bold = bold
+      - run.font.size = font_pt
+      - paragraph alignment (if provided)
+
+    Note: python-pptx requires assigning to cell.text first to get a
+    single paragraph + run, then we mutate that run's font.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+
+    cell.text = text or ""
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = RGBColor(*bg_rgb)
+
+    para = cell.text_frame.paragraphs[0]
+    if align is not None:
+        para.alignment = align
+    if not para.runs:
+        # Empty cell → no run to style. python-pptx auto-creates a run on
+        # text assignment; defensive check.
+        return
+    run = para.runs[0]
+    run.font.size = Pt(font_pt)
+    run.font.bold = bold
+    run.font.color.rgb = RGBColor(*text_rgb)
+
+
 def _fill_workflow_diagram(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
     # Remove the body placeholder — its region is occupied by the
@@ -1059,6 +1253,7 @@ LAYOUT_HANDLERS = {
     "claim_evidence":           _fill_claim_evidence,
     "two_column_compare":       _fill_two_column_compare,
     "data_figure":              _fill_data_figure,
+    "data_table":               _fill_data_table,
     "workflow_diagram":         _fill_workflow_diagram,
     "methods_summary":          _fill_methods_summary,
     "concept_illustration":     _fill_concept_illustration,

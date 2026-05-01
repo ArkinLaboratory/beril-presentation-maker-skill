@@ -249,6 +249,56 @@
       ],
       "type": "object"
     },
+    "data_table_content": {
+      "properties": {
+        "caption": {
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 2,
+          "type": "array"
+        },
+        "data_source": {
+          "type": "string"
+        },
+        "footnote": {
+          "type": "string"
+        },
+        "highlight_rows": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "columns",
+        "rows"
+      ],
+      "type": "object"
+    },
     "diagram": {
       "properties": {
         "edges": {
@@ -768,6 +818,22 @@
             "if": {
               "properties": {
                 "layout": {
+                  "const": "data_table"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/data_table_content"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "layout": {
                   "const": "workflow_diagram"
                 }
               }
@@ -910,6 +976,7 @@
               "claim_evidence",
               "two_column_compare",
               "data_figure",
+              "data_table",
               "workflow_diagram",
               "methods_summary",
               "concept_illustration",

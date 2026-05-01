@@ -49,9 +49,143 @@ def ss():
 # Constants and vocabulary
 # ---------------------------------------------------------------------------
 
-def test_15_layouts_in_vocabulary(ss):
-    assert len(ss.LAYOUTS) == 15
-    assert len(set(ss.LAYOUTS)) == 15
+def test_layouts_in_vocabulary(ss):
+    """v0.3.2 added data_table → 16 layouts."""
+    assert len(ss.LAYOUTS) == 16
+    assert len(set(ss.LAYOUTS)) == 16
+    assert "data_table" in ss.LAYOUTS
+
+
+# ---------------------------------------------------------------------------
+# v0.3.2: data_table validator
+# ---------------------------------------------------------------------------
+
+
+def _dt_content(**overrides):
+    """Build a minimally valid data_table content dict."""
+    base = {
+        "title": "Top candidates",
+        "columns": ["Gene", "Organism", "Score"],
+        "rows": [
+            ["G1", "Org A", "0.95"],
+            ["G2", "Org B", "0.87"],
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_data_table_minimal_valid(ss):
+    """Minimal data_table (title + columns + rows) validates clean."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](_dt_content(), "$.slides[0].content")
+    assert issues == []
+
+
+def test_data_table_with_optional_fields(ss):
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(
+            caption="Top 2 candidates from full ranking.",
+            footnote="Full ranking in REPORT.md §4.2.",
+            data_source="REPORT.md §4.2",
+            highlight_rows=[0],
+        ),
+        "$.slides[0].content",
+    )
+    assert issues == []
+
+
+def test_data_table_missing_title_rejects(ss):
+    content = _dt_content()
+    del content["title"]
+    issues = ss.LAYOUT_CHECKERS["data_table"](content, "$.slides[0].content")
+    assert any("title" in i.message or "title" in i.path for i in issues)
+
+
+def test_data_table_too_few_columns_rejects(ss):
+    """Singleton-column tables aren't tables — use a bullet list instead."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(columns=["Gene"], rows=[["G1"], ["G2"]]),
+        "$.slides[0].content",
+    )
+    assert any("columns" in i.path for i in issues)
+
+
+def test_data_table_too_many_columns_rejects(ss):
+    """Cap at DATA_TABLE_MAX_COLS (6). Wide tables exceed presentation
+    floor readability and should be summarized or split."""
+    cols = [f"col_{i}" for i in range(ss.DATA_TABLE_MAX_COLS + 1)]
+    rows = [[f"r0c{j}" for j in range(len(cols))]]
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(columns=cols, rows=rows),
+        "$.slides[0].content",
+    )
+    assert any("too many columns" in i.message for i in issues)
+
+
+def test_data_table_too_many_rows_rejects(ss):
+    """Cap at DATA_TABLE_MAX_ROWS (12). Above this, link to REPORT.md."""
+    rows = [[f"r{i}c0", f"r{i}c1", f"r{i}c2"]
+            for i in range(ss.DATA_TABLE_MAX_ROWS + 1)]
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(rows=rows),
+        "$.slides[0].content",
+    )
+    assert any("too many rows" in i.message for i in issues)
+
+
+def test_data_table_zero_rows_rejects(ss):
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(rows=[]),
+        "$.slides[0].content",
+    )
+    assert any("at least 1 row" in i.message for i in issues)
+
+
+def test_data_table_row_length_mismatch_rejects(ss):
+    """Each row must have exactly len(columns) cells."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(
+            columns=["A", "B", "C"],
+            rows=[["a", "b"]],  # 2 cells, 3 cols
+        ),
+        "$.slides[0].content",
+    )
+    assert any("3 headers" in i.message for i in issues)
+
+
+def test_data_table_non_string_cell_rejects(ss):
+    """Caller must stringify numbers with desired precision; the layout
+    cannot reason about precision."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(rows=[["G1", "Org A", 0.95]]),  # float, not str
+        "$.slides[0].content",
+    )
+    assert any("must be a string" in i.message for i in issues)
+
+
+def test_data_table_highlight_row_out_of_range_rejects(ss):
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(highlight_rows=[5]),  # only 2 rows in fixture
+        "$.slides[0].content",
+    )
+    assert any("out of range" in i.message for i in issues)
+
+
+def test_data_table_highlight_row_non_int_rejects(ss):
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(highlight_rows=["0"]),  # string, not int
+        "$.slides[0].content",
+    )
+    assert any("must be an int" in i.message for i in issues)
+
+
+def test_data_table_in_example_slides(ss):
+    """example_slide('data_table') returns a valid slide."""
+    slide = ss.example_slide("data_table", 1, "S1")
+    assert slide["layout"] == "data_table"
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        slide["content"], "$.slides[0].content")
+    assert issues == []
 
 
 def test_layout_checkers_cover_full_vocabulary(ss):
@@ -466,7 +600,7 @@ def test_dump_json_schema_round_trip(ss):
     parsed = json.loads(text)
     assert parsed == schema
     assert "$defs" in schema
-    assert len(schema["$defs"]) >= 16   # 15 layouts + diagram
+    assert len(schema["$defs"]) >= 17   # v0.3.2: 16 layouts + diagram
 
 
 def test_schema_json_on_disk_matches_dump(ss):

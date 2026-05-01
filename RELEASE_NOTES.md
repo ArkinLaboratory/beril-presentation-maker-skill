@@ -1,5 +1,89 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2 (2026-05-01) — `data_table` layout
+
+Adds the 16th layout to the production vocabulary. `data_table`
+renders ranked Top-N candidates, comparison matrices, or any small
+tabular result with KBase-branded styling. Closes the
+`add_slide.v1`-flagged gap that previously fell back to
+`claim_evidence` with bullets-as-rows (capped at 3, losing the bottom
+of any top-N list).
+
+### New
+
+- **`data_table` layout** in `slide_spec.LAYOUTS` (LAYOUTS now 16
+  entries). Schema:
+
+    ```json
+    {
+      "layout": "data_table",
+      "content": {
+        "title": "Top 5 dark-matter candidates by ensemble score.",
+        "columns": ["Gene", "Organism", "Score", "Evidence"],
+        "rows": [
+          ["AO356_11255", "P. putida", "0.92", "ML+conservation"],
+          ...
+        ],
+        "caption": "Top candidates by ensemble score (REPORT.md §4.2).",
+        "footnote": "Full ranking (n=347) in REPORT.md §4.2.",
+        "highlight_rows": [0]
+      }
+    }
+    ```
+
+  Validator-blocking caps: 2 ≤ columns ≤ 6, 1 ≤ rows ≤ 12,
+  all cells must be strings (callers own precision via
+  `f"{x:.2f}"` etc), `highlight_rows` indices must be in
+  `[0, len(rows))`. Caps are presentation-floor readability
+  constraints — wider/taller tables should link to REPORT.md.
+- **`_fill_data_table` handler** in `assemble_pptx.py`. KBase-
+  branded styling via `python-pptx`'s `add_table`:
+  - Header row: KBase blue (#007DC3) bg, white text, bold, 12pt
+  - Data rows: alternating white / light-gray (#F2F2F2) bands, 11pt
+  - Highlight rows: KBase orange (#F78E1E) bg, white text, bold
+  - Caption + footnote textboxes below the table
+  - Auto-sized row height adapts to row count (3.40-in budget /
+    n_rows; capped at 0.34 in/row).
+- **`SPEC_TO_MASTER_LAYOUT` aliasing** in `assemble_pptx.py`.
+  `data_table` reuses `data_figure`'s master-layout (same title
+  placeholder + body region; the handler removes the body and
+  renders its own freeform table). Avoids needing a source-`.potx`
+  update to add a new layout.
+- **JSON schema regenerated** with `data_table_content` defs.
+- **`add_slide.v1.md` updated**: removes the "fall back to
+  claim_evidence" workaround for top-N data shapes; references
+  v0.3.2's `data_table` directly.
+
+### Tests
+
+- 12 new schema tests in `test_slide_spec.py`: minimal-valid,
+  optional fields, missing-title, too-few/too-many cols, too-many
+  rows, zero-rows, row-length mismatch, non-string cells, out-of-
+  range highlight, non-int highlight, example-slide round-trip.
+- `test_assemble_pptx`: existing example-spec smoke updated to
+  expect 16 slides (was 15) and to recognize the data_table → data_figure
+  master-layout aliasing.
+- 483 / 483 unit tests pass (was 471 in v0.3.1).
+
+### Out of v0.3.2 scope
+
+- Per-column width hints in the schema. Equal-fraction widths
+  render acceptably for 2-6 cols at presentation distance; defer
+  until a live test surfaces a specific failure.
+- Data-driven cell highlighting (e.g., color cells whose score
+  exceeds a threshold). `highlight_rows` is sufficient for top-N
+  ranking emphasis; per-cell highlighting is v0.4+.
+- Sortable / interactive tables (PPTX is static; this would need
+  a different rendering target).
+
+### Verification
+
+- 483 / 483 unit tests pass.
+- Wheel rebuilds clean.
+- `install-skill` round-trip planned in pre-tag smoke.
+
+---
+
 ## v0.3.1 (2026-05-01) — BREAKING: 4-zone draft layout + Stream A wrinkles
 
 Layout cleanup release. Per-draft directories now use a four-zone
