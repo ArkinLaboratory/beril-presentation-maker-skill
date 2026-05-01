@@ -69,6 +69,62 @@ sys.path.insert(0, str(_TOOLS_DIR))
 import slide_spec  # noqa: E402  (sibling tool)
 
 
+# v0.3.2.1: regex to strip JSON-trailing-commas. Matches `,` followed by
+# zero-or-more whitespace (incl newlines) and a `}` or `]`. Used by
+# `_load_json_lenient` to repair LLM-emitted fragment JSON.
+#
+# This handles trailing commas — the most common LLM JSON malformation.
+# Unescaped quotes inside strings are NOT auto-repairable (per the
+# v0.1.8/v0.1.9 hub experience); those still surface as JSONDecodeError.
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _load_json_lenient(path: Path) -> dict:
+    """Load JSON from a file, with one repair pass for trailing commas.
+
+    LLM-emitted fragment JSON occasionally has a stray trailing comma
+    before a closing `}` or `]`. Python's json module rejects these
+    (correctly per spec). This helper:
+      1. Tries strict json.loads first.
+      2. On JSONDecodeError, strips trailing commas via regex and tries
+         again. If the repaired text parses, returns the dict.
+      3. On second failure, raises the ORIGINAL error so debug output
+         points at the actual location of malformation.
+
+    Logs a stderr note when the repair pass fires (so we can track
+    how often LLM JSON malformation hits in production — if it's
+    frequent, the right answer is to tighten the prompt's JSON
+    discipline rules + a worked example, per the v0.1.9 pattern in
+    `feedback_llm_json_unfixable_in_parser.md`).
+
+    Tool-emitted JSON (parse_speaker_notes.py output, etc) should
+    never trigger the repair branch; it's there as a safety net for
+    LLM-emitted fragments.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        repaired = _TRAILING_COMMA_RE.sub(r"\1", text)
+        if repaired == text:
+            # Nothing to repair → original error stands.
+            raise
+        try:
+            data = json.loads(repaired)
+        except json.JSONDecodeError:
+            # Repair didn't fix it — raise the ORIGINAL error.
+            raise e
+        # Repair fixed it. Note the repair so it's visible in the
+        # orchestrator log (without flooding output).
+        print(
+            f"  [merge] note: stripped trailing comma(s) from {path.name} "
+            f"(LLM JSON malformation; original error at line "
+            f"{e.lineno} col {e.colno})",
+            file=sys.stderr,
+        )
+        return data
+
+
 THROUGHLINE_ID_RE = re.compile(r"<!--\s*chosen:\s*(TL\d+)\s*-->")
 THROUGHLINE_PUNCHLINE_RE = re.compile(r"<!--\s*punchline:\s*(.+?)\s*-->")
 TIER_RE = re.compile(r"^\*\*Tier:\*\*\s*([A-Z]+)", re.MULTILINE)
@@ -140,7 +196,9 @@ def load_fragments(fragments_dir: Path,
                 f"fragment missing for substory {sid}: {path}"
             )
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            # v0.3.2.1: lenient loader — strips trailing commas before
+            # parsing. Surfaces a stderr note when repair fires.
+            data = _load_json_lenient(path)
         except json.JSONDecodeError as e:
             raise ValueError(
                 f"fragment {path} is not valid JSON: {e}"
@@ -253,7 +311,8 @@ def build_references_slide(slide_id: int,
     refs_short: list[str] = []
     if citation_pool_path is not None and citation_pool_path.is_file():
         try:
-            pool = json.loads(citation_pool_path.read_text(encoding="utf-8"))
+            # v0.3.2.1: lenient loader (LLM-emitted via citation_pool stage)
+            pool = _load_json_lenient(citation_pool_path)
         except (OSError, json.JSONDecodeError) as e:
             print(f"Warning: cannot parse citation pool at "
                   f"{citation_pool_path}: {e}", file=sys.stderr)
@@ -340,7 +399,9 @@ def load_intro_fragment(path: Path | None) -> list[dict]:
     if path is None or not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # v0.3.2.1: lenient loader (LLM-emitted via intro / cross_tenant /
+        # qa_anticipated stages all dispatch through this helper).
+        data = _load_json_lenient(path)
     except (OSError, json.JSONDecodeError) as e:
         print(f"Warning: cannot parse intro fragment at {path}: {e}",
               file=sys.stderr)
@@ -491,7 +552,8 @@ def main() -> int:
                          if args.cross_tenant_fragment_path else None)
     if cross_tenant_path is not None and cross_tenant_path.is_file():
         try:
-            ct_data = json.loads(cross_tenant_path.read_text(encoding="utf-8"))
+            # v0.3.2.1: lenient loader (LLM-emitted via cross_tenant.v1)
+            ct_data = _load_json_lenient(cross_tenant_path)
         except (OSError, json.JSONDecodeError) as e:
             print(f"Warning: cannot parse cross_tenant fragment at "
                   f"{cross_tenant_path}: {e}", file=sys.stderr)
@@ -522,7 +584,8 @@ def main() -> int:
                if args.qa_fragment_path else None)
     if qa_path is not None and qa_path.is_file():
         try:
-            qa_data = json.loads(qa_path.read_text(encoding="utf-8"))
+            # v0.3.2.1: lenient loader (LLM-emitted via qa_prep.v1)
+            qa_data = _load_json_lenient(qa_path)
         except (OSError, json.JSONDecodeError) as e:
             print(f"Warning: cannot parse qa fragment at {qa_path}: {e}",
                   file=sys.stderr)

@@ -931,6 +931,15 @@ Run before the `Write` step.
    `image_path: "{TBD}"` and stub `provenance`; you do NOT fill in
    actual provenance (that's `ai_image_prompt.v1`).
 8. `position` values are 0..N-1 sequential without gaps.
+9. **No trailing commas in the JSON.** Python's `json.loads` rejects
+   `,}` and `,]` (the JSON spec forbids them). The orchestrator's
+   merge step has a lenient loader that auto-repairs trailing
+   commas (v0.3.2.1) — but the repair logs a stderr warning and
+   the cleanest output is to emit valid JSON in the first place.
+   Common failure mode: last item in a `bullets` array followed by
+   `,` then `]`, or last field in a content object followed by `,`
+   then `}`. Self-check: after writing, look at every closing `]`
+   and `}` and confirm the line BEFORE it does NOT end in `,`.
 
 ### Silent traps (validator passes; downstream breaks)
 

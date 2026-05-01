@@ -1,5 +1,66 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.2 (2026-05-01) — hotfix: lenient JSON loader for LLM-emitted fragments
+
+The v0.3.2.1 re-smoke crashed at merge: `S1_slides.json` had a stray
+trailing comma between `bullets: [...]` and the enclosing content
+object's closing `}`. Python's `json.loads` rejects trailing commas
+correctly per spec, but LLM-emitted JSON fragments occasionally have
+this malformation; a single bad fragment kills the whole pipeline
+after ~$3 of LLM costs.
+
+### Fix
+
+- **`_load_json_lenient(path)`** in `merge_compose_fragments.py`. New
+  helper that:
+  1. Tries strict `json.loads` first.
+  2. On `JSONDecodeError`, strips trailing commas via regex
+     (`,(\s*[}\]])` → `\1`) and tries again.
+  3. On second failure, raises the **original** error so debug
+     output points at the actual malformation.
+  4. Logs a stderr note when the repair pass fires (so we can
+     track LLM JSON malformation frequency).
+- All 5 LLM-emitted JSON parse sites in `merge_compose_fragments.py`
+  switched to use the lenient loader: per-substory fragments,
+  citation_pool, intro fragment, cross_tenant fragment, qa_anticipated
+  fragment.
+- Tool-emitted JSON parse sites (parse_speaker_notes output, etc) are
+  left strict — they should never need repair.
+- `slide_compose.v1.md` self-review checklist gains a "no trailing
+  commas" rule + concrete failure-mode description, so the prompt
+  itself flags this before write.
+
+### Why not unfixable
+
+Per `feedback_llm_json_unfixable_in_parser.md`, LLM-malformed JSON
+with **unescaped quotes inside string values** is unfixable in the
+parser (requires prompt-side discipline + worked example). Trailing
+commas are a different beast: they're a single-character anomaly
+that's algorithmically reparable via regex without ambiguity.
+Repair-then-warn is correct here; the same approach would NOT work
+for unescaped quotes.
+
+### Tests
+
+- 6 new tests in `test_smoke_orchestrator_helpers.py`:
+  clean JSON pass-through, trailing-comma repair in array,
+  trailing-comma repair in object (mirroring the live failure shape),
+  multiple trailing commas, comma-inside-string-not-stripped guard,
+  unrepairable malformation raises original error.
+- 494 / 494 unit tests pass (was 488 in v0.3.2.1).
+
+### Verification
+
+- 494 / 494 unit tests pass.
+- Wheel rebuilds clean.
+- Re-smoke is `--resume-from merge` on the existing draft_2/ (the
+  S1_slides.json file was hand-fixed before the merge step's
+  lenient-loader fix landed; the re-run will exercise the lenient
+  loader against any remaining trailing-comma issues in the other
+  fragments — currently none, but the pattern is now defended).
+
+---
+
 ## v0.3.2.1 (2026-05-01) — hotfix: figure resolver, prompt teaching, position population
 
 Closes four bugs surfaced by the v0.3.2 live smoke on

@@ -1,0 +1,56 @@
+v0.3.2.2: hotfix — lenient JSON loader for LLM-emitted fragments
+
+The v0.3.2.1 re-smoke crashed at merge: S1_slides.json had a stray
+trailing comma between `bullets: [...]` and the enclosing content
+object's closing `}`. Python's json.loads rejects trailing commas
+correctly per spec, but LLM-emitted JSON fragments occasionally have
+this malformation; a single bad fragment kills the whole pipeline
+after ~$3 of LLM costs.
+
+Fix
+
+- _load_json_lenient(path) helper in merge_compose_fragments.py:
+  1. Tries strict json.loads first.
+  2. On JSONDecodeError, strips trailing commas via regex
+     (`,(\s*[}\]])` → `\1`) and tries again.
+  3. On second failure, raises the ORIGINAL error so debug output
+     points at the actual malformation.
+  4. Logs a stderr note when repair fires.
+- All 5 LLM-emitted parse sites switched to use the lenient loader:
+  per-substory fragments, citation_pool, intro fragment,
+  cross_tenant fragment, qa_anticipated fragment.
+- Tool-emitted JSON sites (parse_speaker_notes output) left strict.
+- slide_compose.v1.md self-review checklist gains a "no trailing
+  commas" rule + concrete failure-mode description.
+
+Why not unfixable
+
+Per feedback_llm_json_unfixable_in_parser.md: unescaped quotes
+inside string values are unfixable in the parser. Trailing commas
+are different — single-character anomaly, algorithmically reparable
+via regex without ambiguity. Repair-then-warn is correct here.
+
+Tests
+
+- 6 new tests in test_smoke_orchestrator_helpers.py:
+  clean JSON pass-through, repair in array, repair in object
+  (mirrors live failure shape), multiple commas, comma-inside-string
+  not stripped, unrepairable malformation raises original error.
+- 494/494 unit tests pass (was 488 in v0.3.2.1).
+
+Verification
+
+- 494/494 unit tests pass.
+- Wheel rebuilds clean.
+- Re-smoke is `--resume-from merge` on the existing draft_2/ (the
+  S1_slides.json file was hand-fixed before the merge step's
+  lenient-loader fix landed; the re-run will exercise the lenient
+  loader against any remaining fragments — currently none, but the
+  pattern is now defended).
+
+Refs:
+- predecessor tag: v0.3.2.1
+- next: v0.3.3 (image-gen orchestrator stage)
+- memory: feedback_llm_json_unfixable_in_parser.md (covers the
+  unrepairable case; trailing commas were excluded from that scope
+  and are now handled here)

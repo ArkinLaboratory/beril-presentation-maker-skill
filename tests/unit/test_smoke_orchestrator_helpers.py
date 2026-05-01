@@ -1040,3 +1040,96 @@ def test_merge_fails_on_bad_throughline(tmp_path: Path):
         capture_output=True, text=True,
     )
     assert rc.returncode == 2, f"expected exit 2 (bad throughline), got {rc.returncode}: {rc.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# v0.3.2.1: lenient JSON loader strips trailing commas from LLM-emitted JSON
+# ---------------------------------------------------------------------------
+
+import importlib.util as _util
+
+
+def _load_merge_module():
+    spec = _util.spec_from_file_location(
+        "merge_compose_fragments",
+        TOOLS_DIR / "merge_compose_fragments.py",
+    )
+    module = _util.module_from_spec(spec)
+    sys.modules["merge_compose_fragments"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_lenient_loader_passes_clean_json(tmp_path: Path):
+    m = _load_merge_module()
+    p = tmp_path / "clean.json"
+    p.write_text('{"a": 1, "b": [1, 2, 3]}', encoding="utf-8")
+    assert m._load_json_lenient(p) == {"a": 1, "b": [1, 2, 3]}
+
+
+def test_lenient_loader_repairs_trailing_comma_in_array(tmp_path: Path, capsys):
+    """Trailing comma after last array element → repair pass fixes it."""
+    m = _load_merge_module()
+    p = tmp_path / "dirty.json"
+    p.write_text('{"a": 1, "b": [1, 2, 3,]}', encoding="utf-8")
+    data = m._load_json_lenient(p)
+    assert data == {"a": 1, "b": [1, 2, 3]}
+    captured = capsys.readouterr()
+    assert "stripped trailing comma" in captured.err
+
+
+def test_lenient_loader_repairs_trailing_comma_in_object(tmp_path: Path, capsys):
+    """Trailing comma after last object field → repair pass fixes it.
+
+    This is the actual smoke-failure shape from core_gene_tradeoffs
+    draft_2 — a `bullets` array closed cleanly, but the enclosing
+    `content` object had a trailing comma before `}`.
+    """
+    m = _load_merge_module()
+    p = tmp_path / "dirty.json"
+    p.write_text(
+        '{"slides": [{"layout": "claim_evidence", "content": {'
+        '"title": "T", "bullets": ["a", "b"],}}]}',
+        encoding="utf-8",
+    )
+    data = m._load_json_lenient(p)
+    assert data["slides"][0]["content"]["title"] == "T"
+
+
+def test_lenient_loader_handles_multiple_trailing_commas(tmp_path: Path):
+    m = _load_merge_module()
+    p = tmp_path / "dirty.json"
+    p.write_text(
+        '{"a": [1, 2,], "b": {"c": [3,], "d": "e",},}',
+        encoding="utf-8",
+    )
+    data = m._load_json_lenient(p)
+    assert data == {"a": [1, 2], "b": {"c": [3], "d": "e"}}
+
+
+def test_lenient_loader_preserves_commas_inside_strings(tmp_path: Path):
+    """The repair pass uses regex on the raw text — verify it doesn't
+    accidentally strip commas that legitimately appear inside string
+    values that happen to be followed by whitespace + `}` or `]`."""
+    m = _load_merge_module()
+    p = tmp_path / "ok.json"
+    p.write_text(
+        '{"msg": "hello, world", "items": ["a, b, c"]}',
+        encoding="utf-8",
+    )
+    data = m._load_json_lenient(p)
+    assert data["msg"] == "hello, world"
+    assert data["items"] == ["a, b, c"]
+
+
+def test_lenient_loader_raises_original_error_on_unrepairable(tmp_path: Path):
+    """When the malformation is something OTHER than trailing commas
+    (e.g., an unescaped quote inside a string value), the lenient
+    loader raises the ORIGINAL JSONDecodeError so debug output points
+    at the actual error."""
+    m = _load_merge_module()
+    p = tmp_path / "broken.json"
+    # Unescaped quote in a string — unrepairable by the trailing-comma fix.
+    p.write_text('{"msg": "he said "hi" to me"}', encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        m._load_json_lenient(p)
