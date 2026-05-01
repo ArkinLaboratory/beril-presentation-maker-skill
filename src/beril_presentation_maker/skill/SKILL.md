@@ -117,32 +117,118 @@ Wall clock: ~10-25 min on Sonnet for STRONG-tier `talk-30`. Cost
 
 ## Output artifacts
 
+v0.3.1 introduced a 4-zone layout. Top level of every draft directory
+has exactly four entries.
+
 ```
 projects/<project_id>/talks/draft_N/
-├── 00_plan.md                       ← triage + scope from plan.v1
-├── 00_throughline.md                ← chosen throughline + evidence map
-├── 00_throughline_candidates.md     ← rejected alternatives (audit)
-├── 02_substories.md                 ← substory partition with punchlines
-├── 03_slides/                       ← per-substory + intro/qa/cross_tenant fragments
-│   ├── intro.json
-│   ├── S1_slides.json
-│   ├── ...
-│   ├── qa_anticipated.json
-│   └── cross_tenant.json (optional)
-├── 04_speaker_notes/                ← per-substory speaker notes
-├── slide_spec.json                  ← merged + validated slide spec
-├── slide_spec.raw.json              ← pre-repair fragment merge
-├── citation_pool.json               ← verified literature pool
-├── citation_map.md                  ← claim → reference index
-├── references.md                    ← human-readable
-├── bibliography.bib                 ← machine-readable (BibTeX)
-├── figures_inventory.md             ← from curate_figures.py
-├── curated_figures.md               ← mode-bounded shortlist
-├── cross_tenant_signal.md           ← optional, when applicable
-├── diagram_repair_report.md         ← post-compose diagram coercion log
-├── draft.pptx                       ← assembled deck
-└── audit/                           ← per-stage LLM call metadata
+├── deliverable/                     ← what you open / present
+│   ├── draft.pptx                   ← assembled deck
+│   ├── draft.pdf                    ← (optional)
+│   └── speaker-notes.pdf            ← (optional)
+├── narrative/                       ← human-readable story artifacts
+│   ├── 00_throughline.md            ← chosen throughline + evidence map
+│   ├── 02_substories.md             ← substory partition with punchlines
+│   ├── references.md                ← human-readable citations
+│   ├── bibliography.bib             ← machine-readable (BibTeX)
+│   └── citation_map.md              ← claim → reference index
+├── working/                         ← intermediate pipeline state
+│   ├── 00_plan.md                   ← triage + scope from plan.v1
+│   ├── 00_throughline_candidates.md ← rejected alternatives
+│   ├── 03_slides/                   ← per-substory compose fragments
+│   ├── 04_speaker_notes/            ← per-substory speaker notes
+│   ├── 05_image_requests/           ← v0.3.3 image-gen request JSONs
+│   ├── 05_images/                   ← v0.3.3 generated PNGs (draft-local)
+│   ├── citation_pool.json           ← verified literature pool
+│   ├── cross_tenant_signal.{json,md}
+│   ├── curated_figures.md           ← mode-bounded figure shortlist
+│   ├── figures_inventory.md
+│   ├── diagram_repair_report.md
+│   ├── next_actions.md              ← P1/P2 findings from revise loop
+│   └── slide_spec.json              ← LIVE merged + validated slide spec
+└── audit/                           ← provenance + debug history
+    ├── state.json                   ← orchestrator state
+    ├── cost-log.jsonl               ← per-stage LLM cost
+    ├── stage-metadata.json          ← consolidated per-stage metadata
+    ├── stage-logs/                  ← per-stage stdout/stderr
+    ├── snapshots/                   ← immutable spec snapshots
+    │   ├── slide_spec.raw.json      ← pre-repair merge
+    │   ├── slide_spec.pre_revise.json
+    │   ├── last-render.pptx         ← deck baseline for manual-edit detection
+    │   └── ...
+    ├── manual-edits/                ← preserved user edits to draft.pptx
+    ├── runs/                        ← prior orchestrator runs
+    │   └── run-N/
+    ├── adversarial_review.{json,md}
+    ├── quantitative_grounding.{json,md}
+    └── revise_loop_metadata.json
 ```
+
+**Reading the layout:**
+- Open `deliverable/draft.pptx` to see the talk.
+- Read `narrative/` to review the story (throughline + substories +
+  references). User-editable; pipeline absorbs edits via
+  `--resume-from <stage>`.
+- Look in `working/` only when debugging or hand-tweaking the spec.
+- Check `audit/` for per-run history, snapshots, and provenance.
+
+## Manual edits to the deck
+
+The pipeline owns `deliverable/draft.pptx` — it gets regenerated from
+`working/slide_spec.json` on every assemble. If you open the deck in
+PowerPoint and edit it directly, the next pipeline run **regenerates
+the deck and your manual edits are preserved (but not absorbed)** in
+`audit/manual-edits/<UTC-timestamp>.pptx`.
+
+The orchestrator detects manual edits via sha256 of the deck before
+assemble. If the hash differs from `audit/last-render.json`, your
+edited copy is archived to `audit/manual-edits/` before regeneration.
+You'll see a prominent stderr warning when this happens.
+
+**Recommended polishing workflow:**
+
+1. Run the pipeline to convergence (or until adversarial review passes).
+2. Copy `deliverable/draft.pptx` to a location of your choice (e.g.,
+   `~/Desktop/talk-2026-05-15.pptx`).
+3. Polish that copy in PowerPoint. The pipeline-owned
+   `deliverable/draft.pptx` is now considered "stale"; re-running
+   the pipeline will regenerate it from `slide_spec.json`, but your
+   polished copy is safe.
+
+**To make edits stick across re-runs:**
+
+- For content changes (revised substory, new claim): edit
+  `narrative/02_substories.md`, then run
+  `beril-presentation-maker continue <draft_dir> --resume-from slide_compose`.
+  The pipeline reads from `narrative/`, regenerates `working/03_slides/`,
+  re-merges `slide_spec.json`, re-renders the deck.
+- For surgical fixes (tweak a slide's title or bullet): edit
+  `working/slide_spec.json` directly (it's JSON), then run
+  `beril-presentation-maker assemble <draft_dir>`. The validator
+  catches schema violations; clean edits round-trip cleanly.
+- For full restart: delete the draft directory and re-run from scratch.
+
+**What the pipeline cannot absorb:**
+
+Manual PowerPoint edits to `deliverable/draft.pptx` (text reorder,
+shape moves, image swaps, slide insertion) are **not** parsed back
+into `slide_spec.json`. A future round-trip command (v0.4+) may
+support a subset of these, but for now: edit upstream
+(narrative/working) or accept that polish lives in YOUR copy of the
+deck, not the pipeline's.
+
+**Diffing manual edits against the last render:**
+
+If you want to identify what changed between your polished version
+and the pipeline's render, compare:
+
+```
+audit/snapshots/last-render.pptx   ← pipeline's render baseline
+audit/manual-edits/<timestamp>.pptx ← your edited copy
+```
+
+These are both PPTX files; use any PowerPoint diff tool, or run
+`unzip -d` and diff the inner XML.
 
 ## When to use this skill vs. alternatives
 

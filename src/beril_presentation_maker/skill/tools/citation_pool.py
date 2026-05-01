@@ -722,34 +722,52 @@ def format_citation_map_md(pool: CitationPool) -> str:
 # ---------------------------------------------------------------------------
 
 def serialize_to_disk(pool: CitationPool, draft_dir: Path) -> dict[str, Path]:
-    """Write references.md, bibliography.bib, citation_map.md, and
-    pool.json (machine-readable internal artifact for resume) to draft_dir.
+    """Write references.md, bibliography.bib, citation_map.md to
+    `draft_dir/narrative/`, and citation_pool.json to `draft_dir/working/`.
+    v0.3.1: 4-zone layout. The narrative artifacts (refs/bib/map) are
+    user-facing review material; the pool JSON is intermediate state for
+    resume.
 
     Returns a dict of {filename: path-written}.
+
+    Backwards compat: if `draft_dir/narrative/` doesn't exist (caller
+    pointed at an old-layout draft), writes everything to draft_dir/
+    directly. This is a soft fallback for the paper-writer reuse-from-
+    paper path; new presentation-maker drafts are always v0.3.1+.
     """
     draft_dir.mkdir(parents=True, exist_ok=True)
     assign_bib_keys(pool)
 
+    narrative_dir = draft_dir / "narrative"
+    working_dir = draft_dir / "working"
+    if narrative_dir.is_dir() and working_dir.is_dir():
+        refs_target = narrative_dir / "references.md"
+        bib_target = narrative_dir / "bibliography.bib"
+        map_target = narrative_dir / "citation_map.md"
+        pool_target = working_dir / "citation_pool.json"
+    else:
+        # Old-layout fallback (paper-writer reuse path)
+        refs_target = draft_dir / "references.md"
+        bib_target = draft_dir / "bibliography.bib"
+        map_target = draft_dir / "citation_map.md"
+        pool_target = draft_dir / "citation_pool.json"
+
     paths: dict[str, Path] = {}
 
-    refs_path = draft_dir / "references.md"
-    refs_path.write_text(format_references_md(pool), encoding="utf-8")
-    paths["references.md"] = refs_path
+    refs_target.write_text(format_references_md(pool), encoding="utf-8")
+    paths["references.md"] = refs_target
 
-    bib_path = draft_dir / "bibliography.bib"
-    bib_path.write_text(format_bibliography_bib(pool), encoding="utf-8")
-    paths["bibliography.bib"] = bib_path
+    bib_target.write_text(format_bibliography_bib(pool), encoding="utf-8")
+    paths["bibliography.bib"] = bib_target
 
-    map_path = draft_dir / "citation_map.md"
-    map_path.write_text(format_citation_map_md(pool), encoding="utf-8")
-    paths["citation_map.md"] = map_path
+    map_target.write_text(format_citation_map_md(pool), encoding="utf-8")
+    paths["citation_map.md"] = map_target
 
     # Internal artifact for resume — full pool JSON.
-    pool_path = draft_dir / "citation_pool.json"
-    pool_path.write_text(
+    pool_target.write_text(
         json.dumps(pool.to_dict(), indent=2) + "\n", encoding="utf-8"
     )
-    paths["citation_pool.json"] = pool_path
+    paths["citation_pool.json"] = pool_target
 
     return paths
 
@@ -757,14 +775,17 @@ def serialize_to_disk(pool: CitationPool, draft_dir: Path) -> dict[str, Path]:
 def load_from_disk(draft_dir: Path) -> CitationPool:
     """Load the citation pool from draft_dir.
 
-    Looks for `citation_pool.json` (presentation-maker convention) first,
-    falls back to `pool.json` (paper-writer convention) so a paper-
-    writer draft directory can be loaded directly without renaming.
-
-    Returns an empty pool if neither file exists.
+    v0.3.1: looks at `working/citation_pool.json` first (4-zone layout),
+    then falls back to `citation_pool.json` (old-layout / paper-writer
+    convention), then `pool.json` (paper-writer fallback). Returns an
+    empty pool if none exists.
     """
-    for fname in ("citation_pool.json", "pool.json"):
-        pool_path = draft_dir / fname
+    candidates = (
+        draft_dir / "working" / "citation_pool.json",
+        draft_dir / "citation_pool.json",
+        draft_dir / "pool.json",
+    )
+    for pool_path in candidates:
         if pool_path.is_file():
             raw = json.loads(pool_path.read_text(encoding="utf-8"))
             return CitationPool.from_dict(raw)

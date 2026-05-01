@@ -60,6 +60,7 @@ _EXECUTABLE_FILES = (
     "tools/check_quantitative_grounding.py",
     "tools/revise_loop.py",
     "tools/image_gen_calibration.py",
+    "tools/draft_paths.py",
 )
 
 

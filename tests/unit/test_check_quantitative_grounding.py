@@ -179,10 +179,12 @@ def test_no_match_when_absent(cqg):
 
 @pytest.fixture
 def fixture_dirs(tmp_path):
-    """Create a synthetic talks/draft_N/ + REPORT.md fixture."""
+    """Create a synthetic v0.3.1+ talks/draft_N/ + REPORT.md fixture."""
     project_dir = tmp_path / "synthetic"
     talks_dir = project_dir / "talks" / "draft_1"
-    talks_dir.mkdir(parents=True)
+    # v0.3.1 4-zone layout
+    for sub in ("deliverable", "narrative", "working", "audit"):
+        (talks_dir / sub).mkdir(parents=True)
     return project_dir, talks_dir
 
 
@@ -197,7 +199,9 @@ def _write_spec(talks_dir, slides):
         "substories": [],
         "slides": slides,
     }
-    (talks_dir / "slide_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    # v0.3.1: spec lives under working/
+    (talks_dir / "working" / "slide_spec.json").write_text(
+        json.dumps(spec), encoding="utf-8")
 
 
 def _write_report(project_dir, body):

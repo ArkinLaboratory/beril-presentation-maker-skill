@@ -1,5 +1,115 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.1 (2026-05-01) — BREAKING: 4-zone draft layout + Stream A wrinkles
+
+Layout cleanup release. Per-draft directories now use a four-zone
+layout instead of the v0.3.0 top-level chaos (30+ files mixing
+deliverables, narrative, intermediate state, and audit debris).
+Adam-only-tester scope: clean break, no migration of historical
+drafts, no backwards-compat in `assemble`. Sets the stage for
+v0.3.2 tables + v0.3.3 image-gen orchestrator stage without
+compounding clutter.
+
+### BREAKING
+
+- **Per-draft layout changed.** v0.3.0-shape drafts (top-level
+  `slide_spec.json`, `00_plan.md`, `audit-fail-N/`, etc) are
+  incompatible with v0.3.1. `assemble` and `continue` will error
+  with a clear "old layout" message. Start a fresh draft; old
+  drafts can be deleted.
+
+### New
+
+- **4-zone directory layout.** Top level of every `talks/draft_N/`
+  directory now has exactly 4 subdirs:
+
+    ```
+    deliverable/    what the user opens (draft.pptx, draft.pdf)
+    narrative/      story artifacts (throughline, substories, references)
+    working/        intermediate pipeline state (slide_spec.json, fragments)
+    audit/          provenance + per-run history (snapshots, logs)
+    ```
+
+  Pipeline stages route their outputs to exactly one zone. See
+  SKILL.md "Output artifacts" for the full mapping.
+- **`tools/draft_paths.py`** (new module, ~440 LOC). Single source
+  of truth for layout schema. Frozen dataclass `DraftPaths` with
+  named properties for every per-file path. Helper methods:
+  `init_layout()` (creates skeleton), `assert_initialized()`
+  (rejects old-layout drafts), `snapshot_slide_spec(label)`,
+  `record_render_hash()`, `detect_manual_edit()`,
+  `archive_manual_edit()`. CLI subcommands
+  `record-render-hash` and `detect-manual-edit` invoked by the
+  shell orchestrator. 66 unit tests pin the schema.
+- **Manual-edit detection + preservation.** Before regenerating
+  `deliverable/draft.pptx`, the orchestrator checks its sha256
+  against `audit/last-render.json`. If the user has edited the
+  deck in PowerPoint, the edited copy is archived to
+  `audit/manual-edits/<UTC-timestamp>.pptx` before regeneration,
+  with a prominent stderr warning. No blocking, no flag gymnastics
+  — edits are preserved (not absorbed) and the user is alerted.
+- **SKILL.md §manual-edits** documents the recommended polish
+  workflow (copy `deliverable/draft.pptx` → polish elsewhere) and
+  how to make edits stick across re-runs (edit narrative/ or
+  working/slide_spec.json).
+- **Stream A wrinkle A1: `_insert_slide_into_spec` position
+  fallback.** When existing slides lack `position` fields (the
+  merge step doesn't always populate them), the original
+  position-comparison loop fell through to "append at end"
+  silently. v0.3.0 draft_10 F003 hit this — a new slide intended
+  for position 9 ended up at end-of-deck. Fix: fallback chain
+  → substory_id anchor → position-as-array-index → append-with-
+  warning. 3 new unit tests.
+- **Stream A wrinkle A2: tier register propagation in
+  `add_slide.v1.md`.** v0.3.0 draft_10 F003 introduced
+  "high-confidence" on an EXPLORATORY-tier deck. The prompt now
+  has an explicit per-tier register cheat-sheet, mirrored from
+  `revise_slide.v1.md`. Self-review checklist item added.
+
+### Changed
+
+- **`presentation_maker.sh`** rewritten to use named path
+  variables (`$PLAN_PATH`, `$THROUGHLINE_PATH`, `$SLIDE_SPEC`, etc)
+  set by `set_draft_paths`. Mirror of `draft_paths.py`. Pre-stage
+  `init_draft_layout` creates the 4-zone skeleton.
+- **`tools/citation_pool.py`** writes references.md /
+  bibliography.bib / citation_map.md to `narrative/` and
+  citation_pool.json to `working/`. Old-layout fallback preserved
+  for paper-writer reuse-from-paper compatibility.
+- **`tools/revise_loop.py`** reads from `working/`, snapshots
+  pre-revise spec to `audit/snapshots/`, writes metadata to
+  `audit/`.
+- **`tools/check_quantitative_grounding.py`** reads
+  `working/slide_spec.json`. Surfaces a clear error if pointed at
+  an old-layout draft.
+- **`figures_curated.md` duplicate killed.** Canonical name is
+  `working/curated_figures.md`. Orchestrator no longer copies
+  `figures_curated.md` over `curated_figures.md`.
+- **`*.stderr` no longer leaks at top level.**
+  `curate_figures.stderr` (and any future stage stderrs) routes
+  to `audit/stage-logs/`.
+
+### Out of scope (deferred)
+
+- **Migration tool.** No `reorg <draft_dir>` command. Adam-only-
+  tester scope; old drafts can be deleted.
+- **Old-layout backwards-compat in `assemble`.** Errors instead.
+- **Stage logs split per-stage stdout/stderr/stream.log under
+  `audit/stage-logs/`.** Schema is in `draft_paths.py` but the
+  orchestrator's `invoke_claude` still writes the `.stream.log`
+  next to the expected output. Will land alongside v0.3.2's
+  consolidated stage-metadata work.
+
+### Verification
+
+- 471 unit tests pass (66 new in `test_draft_paths.py`, 3 new in
+  `test_revise_loop.py` for A1, layout fixtures updated in
+  `test_check_quantitative_grounding.py` and `test_revise_loop.py`).
+- Wheel rebuilds clean.
+- `install-skill` round-trip verified (planned in pre-tag smoke).
+
+---
+
 ## v0.3.0 (2026-04-30) — adversarial review-rewrite loop + image-gen calibrated
 
 Two-stream feature release. Stream A wires `beril-adversarial --type

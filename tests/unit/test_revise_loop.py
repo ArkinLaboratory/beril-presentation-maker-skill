@@ -175,6 +175,88 @@ def test_insert_slide_into_spec(rl, sample_spec):
 
 
 # ---------------------------------------------------------------------------
+# v0.3.1 wrinkle A1: position fallback when siblings lack `position`
+# ---------------------------------------------------------------------------
+
+
+def test_insert_slide_substory_anchor_when_positions_missing(rl):
+    """When existing slides have no `position` field but the new slide
+    has a substory_id matching some existing slides, insert immediately
+    after the LAST existing slide of that substory (not at end-of-deck).
+    """
+    spec = {
+        "slides": [
+            {"id": 1, "substory_id": "S1", "layout": "title",
+             "content": {"title": "a"}},
+            {"id": 2, "substory_id": "S1", "layout": "claim_evidence",
+             "content": {"title": "b", "bullets": ["x"]}},
+            {"id": 3, "substory_id": "S2", "layout": "claim_evidence",
+             "content": {"title": "c", "bullets": ["y"]}},
+            {"id": 4, "substory_id": "S2", "layout": "claim_evidence",
+             "content": {"title": "d", "bullets": ["z"]}},
+        ]
+    }
+    new_slide = {
+        "substory_id": "S1",
+        "layout": "claim_evidence",
+        "content": {"title": "new in S1", "bullets": ["q"]},
+    }
+    new_id = rl._insert_slide_into_spec(spec, new_slide, position=9)
+    # New slide should land immediately AFTER the last S1 slide (id=2),
+    # i.e. at array index 2. NOT at end-of-deck (which would be idx 4).
+    assert new_id == 5
+    assert spec["slides"][2]["id"] == 5  # new slide at idx 2
+    assert spec["slides"][2]["substory_id"] == "S1"
+    assert spec["slides"][3]["id"] == 3  # S2 slides shifted right
+    assert spec["slides"][4]["id"] == 4
+
+
+def test_insert_slide_position_as_array_index_fallback(rl):
+    """When positions missing AND no substory_id match, fall back to
+    interpreting `position` as a 1-based array index."""
+    spec = {
+        "slides": [
+            {"id": 1, "layout": "title", "content": {"title": "a"}},
+            {"id": 2, "layout": "claim_evidence",
+             "content": {"title": "b", "bullets": ["x"]}},
+            {"id": 3, "layout": "claim_evidence",
+             "content": {"title": "c", "bullets": ["y"]}},
+        ]
+    }
+    new_slide = {
+        # No substory_id → can't anchor by substory
+        "layout": "claim_evidence",
+        "content": {"title": "new", "bullets": ["q"]},
+    }
+    # position=2 should land at array idx 1 (between slides 1 and 2)
+    new_id = rl._insert_slide_into_spec(spec, new_slide, position=2)
+    assert new_id == 4
+    assert spec["slides"][1]["id"] == 4
+    assert spec["slides"][2]["id"] == 2
+    assert spec["slides"][3]["id"] == 3
+
+
+def test_insert_slide_append_at_end_when_all_fallbacks_fail(rl):
+    """When positions missing, no substory_id match, and position is out
+    of array range → append at end (with stderr warning, but no crash)."""
+    spec = {
+        "slides": [
+            {"id": 1, "layout": "title", "content": {"title": "a"}},
+            {"id": 2, "layout": "claim_evidence",
+             "content": {"title": "b", "bullets": ["x"]}},
+        ]
+    }
+    new_slide = {
+        # No substory_id, position=99 way out of range
+        "layout": "claim_evidence",
+        "content": {"title": "new", "bullets": ["q"]},
+    }
+    new_id = rl._insert_slide_into_spec(spec, new_slide, position=99)
+    assert new_id == 3
+    assert spec["slides"][-1]["id"] == 3
+
+
+# ---------------------------------------------------------------------------
 # LoopState
 # ---------------------------------------------------------------------------
 
@@ -204,18 +286,26 @@ def test_loop_state_dict_round_trip(rl):
 
 @pytest.fixture
 def dry_run_fixture(tmp_path, sample_spec):
-    """Build a synthetic draft_dir + audit/adversarial_review.json + spec."""
+    """Build a synthetic v0.3.1+ draft_dir with the 4-zone layout."""
     project_dir = tmp_path / "project"
     talks_dir = project_dir / "talks" / "draft_1"
-    talks_dir.mkdir(parents=True)
-    (talks_dir / "slide_spec.json").write_text(
+    # v0.3.1 4-zone layout
+    working_dir = talks_dir / "working"
+    narrative_dir = talks_dir / "narrative"
+    audit_dir = talks_dir / "audit"
+    snapshots_dir = audit_dir / "snapshots"
+    for d in (working_dir, narrative_dir, audit_dir, snapshots_dir,
+              talks_dir / "deliverable"):
+        d.mkdir(parents=True)
+
+    (working_dir / "slide_spec.json").write_text(
         json.dumps(sample_spec), encoding="utf-8")
     (project_dir / "REPORT.md").write_text("# Report\n\nNothing.\n",
                                            encoding="utf-8")
-    (talks_dir / "00_throughline.md").write_text("# TL\n", encoding="utf-8")
-    (talks_dir / "02_substories.md").write_text("# substories\n", encoding="utf-8")
-    (talks_dir / "citation_pool.json").write_text("{}", encoding="utf-8")
-    (talks_dir / "curated_figures.md").write_text("# figures\n", encoding="utf-8")
+    (narrative_dir / "00_throughline.md").write_text("# TL\n", encoding="utf-8")
+    (narrative_dir / "02_substories.md").write_text("# substories\n", encoding="utf-8")
+    (working_dir / "citation_pool.json").write_text("{}", encoding="utf-8")
+    (working_dir / "curated_figures.md").write_text("# figures\n", encoding="utf-8")
 
     review = {
         "schema_version": "adversarial-review-presentation.v2",
@@ -233,8 +323,6 @@ def dry_run_fixture(tmp_path, sample_spec):
              "issue": "the deck's biggest weakness"},
         ],
     }
-    audit_dir = talks_dir / "audit"
-    audit_dir.mkdir()
     (audit_dir / "adversarial_review.json").write_text(
         json.dumps(review), encoding="utf-8")
     return talks_dir, project_dir
@@ -266,9 +354,10 @@ def test_dry_run_writes_metadata_and_next_actions(rl, dry_run_fixture):
     talks_dir, _ = dry_run_fixture
     rl.run_revise_loop(talks_dir, severity_floor="P0", dry_run=True)
     assert (talks_dir / "audit" / "revise_loop_metadata.json").is_file()
-    assert (talks_dir / "next_actions.md").is_file()
-    # Pre-revise spec backup
-    assert (talks_dir / "slide_spec.pre_revise.json").is_file()
+    # v0.3.1: next_actions.md lives under working/
+    assert (talks_dir / "working" / "next_actions.md").is_file()
+    # Pre-revise spec backup is now a snapshot under audit/snapshots/
+    assert (talks_dir / "audit" / "snapshots" / "slide_spec.pre_revise.json").is_file()
 
 
 def test_dry_run_max_revisions_cap(rl, dry_run_fixture):
@@ -283,7 +372,8 @@ def test_dry_run_max_revisions_cap(rl, dry_run_fixture):
 def test_next_actions_renders_failed_findings(rl, dry_run_fixture):
     talks_dir, _ = dry_run_fixture
     rl.run_revise_loop(talks_dir, severity_floor="P0", dry_run=True)
-    md = (talks_dir / "next_actions.md").read_text(encoding="utf-8")
+    # v0.3.1: next_actions.md lives under working/
+    md = (talks_dir / "working" / "next_actions.md").read_text(encoding="utf-8")
     # Surface-only findings (F003, F004) appear in the markdown
     assert "F003" in md
     assert "F004" in md

@@ -523,8 +523,17 @@ def check_grounding(draft_dir: Path, report_path: Path | None = None) -> Groundi
       GroundingReport with findings list (ungrounded) and hits list (grounded).
     """
     draft_dir = Path(draft_dir).resolve()
-    spec_path = draft_dir / "slide_spec.json"
+    # v0.3.1: spec lives under working/. Fall back to old top-level location
+    # for old-layout drafts (clear error rather than silent miss).
+    spec_path = draft_dir / "working" / "slide_spec.json"
     if not spec_path.is_file():
+        legacy_path = draft_dir / "slide_spec.json"
+        if legacy_path.is_file():
+            raise FileNotFoundError(
+                f"slide_spec.json found at legacy path {legacy_path} but not "
+                f"at v0.3.1+ path {spec_path}. This draft uses the pre-v0.3.1 "
+                f"layout — start a fresh draft (no migration tool)."
+            )
         raise FileNotFoundError(f"slide_spec.json not found at {spec_path}")
     if report_path is None:
         report_path = draft_dir.parent.parent / "REPORT.md"

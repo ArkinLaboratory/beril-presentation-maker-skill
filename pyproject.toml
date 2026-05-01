@@ -1,15 +1,16 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.0 (review-rewrite loop + image-gen calibrated). The
-# fourth skill in the BERIL drop-in quartet (atlas, adversarial,
-# paper-writer, presentation-maker). All 13 stages of the drafting
-# pipeline wired end-to-end including the new adversarial-review +
-# revise-slides stages; KBase-branded master + slide_spec validator
-# + assembler + poster_fill production. Image-gen client (CBORG
-# `gemini-3-pro-image`) calibrated; ai_image_prompt.v1 prompt
-# encodes calibrated defaults. Orchestrator stage for image-gen
-# (Channel A automatic flagging) is deferred to v0.3.1.
+# Status: v0.3.1 (BREAKING — 4-zone draft layout + Stream A wrinkles).
+# Per-draft directory now uses deliverable/narrative/working/audit/
+# subdirs, replacing the v0.3.0 chaos of 30+ files at draft top-level.
+# Manual-edit detection via hash-guard preserves user PowerPoint edits
+# in audit/manual-edits/ before pipeline regeneration. Stream A live-
+# test wrinkles fixed: position fallback in revise_loop's
+# _insert_slide_into_spec (A1) + tier register propagation in
+# add_slide.v1.md (A2). v0.3.0-shape drafts are not migrated; clean
+# break, start fresh. Tables (v0.3.2) + image-gen orchestrator stage
+# (v0.3.3) build on this clean foundation.
 ####################################################################
 
 [build-system]
@@ -22,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.0"
+version = "0.3.1"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

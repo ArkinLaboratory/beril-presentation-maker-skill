@@ -1,0 +1,72 @@
+v0.3.1: BREAKING — 4-zone draft layout + Stream A wrinkles
+
+Layout cleanup release. Per-draft directories now use four zones
+instead of v0.3.0's 30+ files at top level. Sets the stage for
+v0.3.2 tables + v0.3.3 image-gen orchestrator stage without
+compounding clutter. Adam-only-tester scope: clean break, no
+migration tool, no backwards-compat in assemble.
+
+BREAKING
+
+- v0.3.0-shape drafts incompatible with v0.3.1. assemble and
+  continue error clearly; user starts a fresh draft. Old drafts
+  can be deleted manually.
+
+New
+
+- 4-zone layout: deliverable/ narrative/ working/ audit/. Each
+  pipeline stage routes its output to exactly one zone. Top level
+  of draft_N/ now has 4 entries, not 30+.
+- tools/draft_paths.py: canonical layout module (~440 LOC).
+  Frozen DraftPaths dataclass with named properties for every
+  per-file path. Helpers: init_layout, assert_initialized,
+  snapshot_slide_spec, record_render_hash, detect_manual_edit,
+  archive_manual_edit. CLI subcommands invoked from the shell
+  orchestrator. 66 unit tests pin the schema.
+- Manual-edit detection: hash-guard before assemble. If the user
+  has edited deliverable/draft.pptx in PowerPoint since the last
+  render, the edited copy is archived to audit/manual-edits/
+  before regeneration with a prominent stderr warning. No
+  blocking; edits preserved (not absorbed).
+- SKILL.md §manual-edits documents the recommended polish
+  workflow + how to make edits stick across re-runs (edit
+  narrative/ or working/slide_spec.json).
+- Stream A wrinkle A1: _insert_slide_into_spec position fallback.
+  When existing slides lack position fields, fall back to
+  substory_id anchor → position-as-array-index → append-with-
+  warning. 3 new unit tests.
+- Stream A wrinkle A2: tier register propagation in
+  add_slide.v1.md. Per-tier cheat-sheet (mirror of
+  revise_slide.v1.md) + self-review checklist item.
+
+Changed
+
+- presentation_maker.sh: named path variables (set_draft_paths)
+  + init_draft_layout. ~30 path references updated.
+- tools/citation_pool.py: writes refs/bib/map to narrative/,
+  pool.json to working/. Old-layout fallback for paper-writer.
+- tools/revise_loop.py: reads from working/, snapshots
+  pre-revise to audit/snapshots/.
+- tools/check_quantitative_grounding.py: reads
+  working/slide_spec.json with clear error on old layouts.
+- figures_curated.md duplicate killed (canonical = curated_figures.md).
+- *.stderr no longer leaks at top level (audit/stage-logs/).
+
+Out of v0.3.1 scope
+
+- reorg <draft_dir> migration command. Adam will delete old
+  drafts manually.
+- Backwards-compat detection in assemble. Errors instead.
+- Per-stage stdout/stderr split under audit/stage-logs/. Will
+  land alongside v0.3.2's consolidated stage-metadata work.
+
+Verification
+
+- 471/471 unit tests pass.
+- Wheel rebuilds clean (planned in pre-tag smoke).
+- install-skill round-trip verified.
+
+Refs:
+- presentation-maker repo: ArkinLaboratory/beril-presentation-maker-skill
+- predecessor tag: v0.3.0 (commit c39f9aa)
+- next: v0.3.2 (data_table layout)

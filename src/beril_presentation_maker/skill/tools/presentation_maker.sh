@@ -264,7 +264,6 @@ mkdir -p "$DRAFTS_DIR"
 if [[ -n "$DRAFT_DIR_OVERRIDE" ]]; then
   # Resume mode: reuse the existing draft directory
   OUTDIR="$(cd "$DRAFT_DIR_OVERRIDE" && pwd -P)"
-  mkdir -p "$OUTDIR/03_slides"
 else
   # Fresh-run mode: pick next draft_N atomically
   DRAFT_N=1
@@ -276,8 +275,78 @@ else
     fi
   done
   OUTDIR="$DRAFTS_DIR/draft_$DRAFT_N"
-  mkdir -p "$OUTDIR/03_slides"
 fi
+
+# --- v0.3.1 4-zone layout setup ---
+# Mirror of draft_paths.py DraftPaths. Test
+# tests/unit/test_draft_paths.py asserts shell + Python agree on schema.
+init_draft_layout() {
+  local outdir="$1"
+  mkdir -p \
+    "$outdir/deliverable" \
+    "$outdir/narrative" \
+    "$outdir/working" \
+    "$outdir/working/03_slides" \
+    "$outdir/working/04_speaker_notes" \
+    "$outdir/working/05_image_requests" \
+    "$outdir/working/05_images" \
+    "$outdir/audit" \
+    "$outdir/audit/stage-logs" \
+    "$outdir/audit/snapshots" \
+    "$outdir/audit/manual-edits" \
+    "$outdir/audit/runs"
+}
+
+set_draft_paths() {
+  local outdir="$1"
+  # Top-level zones
+  DELIVERABLE_DIR="$outdir/deliverable"
+  NARRATIVE_DIR="$outdir/narrative"
+  WORKING_DIR="$outdir/working"
+  AUDIT_DIR="$outdir/audit"
+  # deliverable/
+  DECK_PPTX="$DELIVERABLE_DIR/draft.pptx"
+  DECK_PDF="$DELIVERABLE_DIR/draft.pdf"
+  # narrative/
+  THROUGHLINE_PATH="$NARRATIVE_DIR/00_throughline.md"
+  SUBSTORIES_PATH="$NARRATIVE_DIR/02_substories.md"
+  REFERENCES_MD="$NARRATIVE_DIR/references.md"
+  BIBLIOGRAPHY="$NARRATIVE_DIR/bibliography.bib"
+  CITATION_MAP="$NARRATIVE_DIR/citation_map.md"
+  # working/
+  PLAN_PATH="$WORKING_DIR/00_plan.md"
+  THROUGHLINE_CANDIDATES="$WORKING_DIR/00_throughline_candidates.md"
+  SLIDES_DIR="$WORKING_DIR/03_slides"
+  SPEAKER_NOTES_DIR="$WORKING_DIR/04_speaker_notes"
+  IMAGE_REQUESTS_DIR="$WORKING_DIR/05_image_requests"
+  IMAGES_DIR="$WORKING_DIR/05_images"
+  CITATION_POOL_PATH="$WORKING_DIR/citation_pool.json"
+  CROSS_TENANT_MD="$WORKING_DIR/cross_tenant_signal.md"
+  CROSS_TENANT_JSON="$WORKING_DIR/cross_tenant_signal.json"
+  CURATED_FIGURES="$WORKING_DIR/curated_figures.md"
+  FIGURES_INVENTORY="$WORKING_DIR/figures_inventory.md"
+  DIAGRAM_REPAIR="$WORKING_DIR/diagram_repair_report.md"
+  NEXT_ACTIONS="$WORKING_DIR/next_actions.md"
+  SLIDE_SPEC="$WORKING_DIR/slide_spec.json"
+  # audit/
+  STATE_JSON="$AUDIT_DIR/state.json"
+  COST_LOG="$AUDIT_DIR/cost-log.jsonl"
+  STAGE_METADATA="$AUDIT_DIR/stage-metadata.json"
+  STAGE_LOGS_DIR="$AUDIT_DIR/stage-logs"
+  SNAPSHOTS_DIR="$AUDIT_DIR/snapshots"
+  MANUAL_EDITS_DIR="$AUDIT_DIR/manual-edits"
+  RUNS_DIR="$AUDIT_DIR/runs"
+  ADVERSARIAL_REVIEW_JSON="$AUDIT_DIR/adversarial_review.json"
+  ADVERSARIAL_REVIEW_MD="$AUDIT_DIR/adversarial_review.md"
+  QUANT_GROUNDING_JSON="$AUDIT_DIR/quantitative_grounding.json"
+  QUANT_GROUNDING_MD="$AUDIT_DIR/quantitative_grounding.md"
+  REVISE_LOOP_METADATA="$AUDIT_DIR/revise_loop_metadata.json"
+  LAST_RENDER_HASH="$AUDIT_DIR/last-render.json"
+  LAST_RENDER_PPTX="$SNAPSHOTS_DIR/last-render.pptx"
+}
+
+init_draft_layout "$OUTDIR"
+set_draft_paths "$OUTDIR"
 
 # --- Resume validation: verify required files exist for the resume point ---
 # Each stage has prerequisites that must already be on disk; fail fast if
@@ -287,32 +356,36 @@ validate_resume_prereqs() {
   local missing=()
   case "$stage" in
     throughline)
-      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md") ;;
+      [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH") ;;
     substory_design)
-      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
-      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md") ;;
+      [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH") ;;
     intro)
-      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
-      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
-      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md") ;;
+      [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
+      [[ -f "$SUBSTORIES_PATH" ]] || missing+=("$SUBSTORIES_PATH") ;;
     slide_compose)
-      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
-      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
-      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md")
-      [[ -f "$OUTDIR/03_slides/intro.json" ]] || missing+=("03_slides/intro.json") ;;
+      [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
+      [[ -f "$SUBSTORIES_PATH" ]] || missing+=("$SUBSTORIES_PATH")
+      [[ -f "$SLIDES_DIR/intro.json" ]] || missing+=("$SLIDES_DIR/intro.json") ;;
     merge)
-      [[ -f "$OUTDIR/00_plan.md" ]] || missing+=("00_plan.md")
-      [[ -f "$OUTDIR/00_throughline.md" ]] || missing+=("00_throughline.md")
-      [[ -f "$OUTDIR/02_substories.md" ]] || missing+=("02_substories.md")
-      [[ -f "$OUTDIR/03_slides/intro.json" ]] || missing+=("03_slides/intro.json")
+      [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
+      [[ -f "$SUBSTORIES_PATH" ]] || missing+=("$SUBSTORIES_PATH")
+      [[ -f "$SLIDES_DIR/intro.json" ]] || missing+=("$SLIDES_DIR/intro.json")
       # Per-substory fragments validated dynamically in stage_merge_and_assemble
       ;;
   esac
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "Error: --resume-from $stage requires the following files in --draft-dir," >&2
     echo "       but they are missing:" >&2
-    for f in "${missing[@]}"; do echo "         - $OUTDIR/$f" >&2; done
+    for f in "${missing[@]}"; do echo "         - $f" >&2; done
     echo "       Pick an earlier --resume-from stage or use a different draft." >&2
+    echo "" >&2
+    echo "       Note: v0.3.1 changed the per-draft layout. If --draft-dir was" >&2
+    echo "       created by v0.3.0 or earlier, the old layout is incompatible —" >&2
+    echo "       start a fresh draft." >&2
     exit 1
   fi
 }
@@ -469,7 +542,7 @@ ${base_user_prompt}"
 # ==============================================================================
 
 stage_plan() {
-  local out="$OUTDIR/00_plan.md"
+  local out="$PLAN_PATH"
   echo "" >&2
   echo "[Stage 1/4] plan" >&2
   local user_prompt="OUT_PATH=$out
@@ -487,12 +560,12 @@ Write the result to OUT_PATH."
 }
 
 stage_throughline() {
-  local out="$OUTDIR/00_throughline_candidates.md"
+  local out="$THROUGHLINE_CANDIDATES"
   echo "" >&2
   echo "[Stage 2/4] throughline (candidates)" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
-PLAN_PATH=$OUTDIR/00_plan.md
+PLAN_PATH=$PLAN_PATH
 MODE=$MODE
 TIER=$TIER
 
@@ -506,8 +579,8 @@ maps. Write the result to OUT_PATH."
 # Throughline pick gate. Either prompts the user or auto-picks TL1 in
 # auto-advance mode. Writes the chosen candidate to 00_throughline.md.
 gate_throughline_pick() {
-  local candidates="$OUTDIR/00_throughline_candidates.md"
-  local out="$OUTDIR/00_throughline.md"
+  local candidates="$THROUGHLINE_CANDIDATES"
+  local out="$THROUGHLINE_PATH"
 
   if [[ ! -f "$candidates" ]]; then
     echo "Error: throughline candidates not found at $candidates" >&2
@@ -537,13 +610,13 @@ gate_throughline_pick() {
 }
 
 stage_substory_design() {
-  local out="$OUTDIR/02_substories.md"
+  local out="$SUBSTORIES_PATH"
   echo "" >&2
   echo "[Stage 3/5] substory_design" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
-PLAN_PATH=$OUTDIR/00_plan.md
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+PLAN_PATH=$PLAN_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
 MODE=$MODE
 TIER=$TIER
 
@@ -561,7 +634,7 @@ Write the result to OUT_PATH."
 # guidelines" framing). 2026-04-27 #79: live failures draft_5 +
 # draft_7 produced 18-19 word punchlines.
 audit_punchline_lengths() {
-  local substories="$OUTDIR/02_substories.md"
+  local substories="$SUBSTORIES_PATH"
   local audit_out
   audit_out=$("$PYTHON_BIN" -c "
 import sys
@@ -582,7 +655,7 @@ else:
 
 # Conditional gate: only halt if capacity_verdict == overflow.
 gate_substory_overflow() {
-  local substories="$OUTDIR/02_substories.md"
+  local substories="$SUBSTORIES_PATH"
   local verdict
   verdict="$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
     --path "$substories" --field capacity_verdict)"
@@ -641,24 +714,23 @@ stage_curate_figures() {
   if "$PYTHON_BIN" "$TOOLS_DIR/curate_figures.py" curate \
       "$PROJECT_DIR" \
       --mode "$MODE" \
-      --output-dir "$OUTDIR" \
-      >/dev/null 2>"$OUTDIR/curate_figures.stderr"; then
-    # The script writes figures_curated.md AND figures_inventory.md to
-    # --output-dir. slide_compose's CURATED_FIGURES_PATH input expects
-    # a single file; point it at figures_curated.md.
-    if [[ -f "$OUTDIR/figures_curated.md" ]]; then
-      cp "$OUTDIR/figures_curated.md" "$OUTDIR/curated_figures.md"
+      --output-dir "$WORKING_DIR" \
+      >/dev/null 2>"$STAGE_LOGS_DIR/curate_figures.stderr"; then
+    # v0.3.1: curate_figures.py writes directly to working/curated_figures.md
+    # via --output-dir pointing at the working/ zone. The legacy
+    # figures_curated.md duplicate is killed.
+    if [[ -f "$CURATED_FIGURES" ]]; then
       local n_curated
-      n_curated="$(grep -c '^### [0-9]\+\.' "$OUTDIR/curated_figures.md" 2>/dev/null || echo 0)"
-      echo "  -> wrote $OUTDIR/curated_figures.md ($n_curated figure(s) curated)" >&2
+      n_curated="$(grep -c '^### [0-9]\+\.' "$CURATED_FIGURES" 2>/dev/null || echo 0)"
+      echo "  -> wrote $CURATED_FIGURES ($n_curated figure(s) curated)" >&2
     else
-      echo "  warning: curate_figures.py produced no figures_curated.md" >&2
+      echo "  warning: curate_figures.py produced no curated_figures.md" >&2
       # Don't fail — slide_compose's escape hatch handles missing figures
     fi
     return 0
   else
-    echo "  warning: curate_figures.py exited non-zero — see $OUTDIR/curate_figures.stderr" >&2
-    cat "$OUTDIR/curate_figures.stderr" >&2 || true
+    echo "  warning: curate_figures.py exited non-zero — see $STAGE_LOGS_DIR/curate_figures.stderr" >&2
+    cat "$STAGE_LOGS_DIR/curate_figures.stderr" >&2 || true
     # Don't fail the run; figures are an enrichment, not a blocker
     return 0
   fi
@@ -676,7 +748,7 @@ stage_citation_pool() {
   echo "" >&2
   echo "[Stage 3.7/5] citation_pool" >&2
 
-  local pool_path="$OUTDIR/citation_pool.json"
+  local pool_path="$CITATION_POOL_PATH"
 
   # Check for sibling paper draft to reuse from
   local paper_dir=""
@@ -699,7 +771,7 @@ DRAFT_DIR=$OUTDIR
 POOL_JSON_PATH=$pool_path
 MODE=paper
 TIER=$TIER
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
+THROUGHLINE_PATH=$THROUGHLINE_PATH
 EXISTING_POOL_PATH=$pool_path
 
 Run the citation_pool stage. Build a verify-by-resolution pool of \
@@ -723,9 +795,9 @@ stage_cross_tenant() {
   echo "" >&2
   echo "[Stage 3.8/5] cross_tenant" >&2
 
-  local signal_md="$OUTDIR/cross_tenant_signal.md"
-  local signal_json="$OUTDIR/cross_tenant_signal.json"
-  local fragment_path="$OUTDIR/03_slides/cross_tenant.json"
+  local signal_md="$CROSS_TENANT_MD"
+  local signal_json="$CROSS_TENANT_JSON"
+  local fragment_path="$SLIDES_DIR/cross_tenant.json"
 
   # Step (a): detect signal
   "$PYTHON_BIN" "$TOOLS_DIR/extract_cross_tenant.py" \
@@ -756,10 +828,10 @@ except Exception as e:
   local user_prompt="OUT_PATH=$fragment_path
 PROJECT_DIR=$PROJECT_DIR
 SIGNAL_PATH=$signal_md
-PLAN_PATH=$OUTDIR/00_plan.md
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
-SUBSTORY_PATH=$OUTDIR/02_substories.md
-CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+PLAN_PATH=$PLAN_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+SUBSTORY_PATH=$SUBSTORIES_PATH
+CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
 
@@ -774,7 +846,7 @@ as a JSON fragment with kind='cross_tenant_set' to OUT_PATH."
 }
 
 stage_intro() {
-  local out="$OUTDIR/03_slides/intro.json"
+  local out="$SLIDES_DIR/intro.json"
   echo "" >&2
   echo "[Stage 4/5] intro" >&2
 
@@ -801,9 +873,9 @@ EOF
 
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
-PLAN_PATH=$OUTDIR/00_plan.md
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
-SUBSTORY_PATH=$OUTDIR/02_substories.md
+PLAN_PATH=$PLAN_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+SUBSTORY_PATH=$SUBSTORIES_PATH
 MODE=$MODE
 TIER=$TIER
 
@@ -818,7 +890,7 @@ marketing voice. Write the result to OUT_PATH."
 }
 
 stage_slide_compose() {
-  local substories="$OUTDIR/02_substories.md"
+  local substories="$SUBSTORIES_PATH"
   echo "" >&2
   echo "[Stage 5/5] slide_compose (per substory)" >&2
 
@@ -836,15 +908,15 @@ stage_slide_compose() {
   for sid in $substory_ids; do
     echo "" >&2
     echo "  -> composing $sid" >&2
-    local out="$OUTDIR/03_slides/${sid}_slides.json"
+    local out="$SLIDES_DIR/${sid}_slides.json"
     local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 SUBSTORY_PATH=$substories
 SUBSTORY_ID=$sid
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
-PLAN_PATH=$OUTDIR/00_plan.md
-CURATED_FIGURES_PATH=$OUTDIR/curated_figures.md
-CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+PLAN_PATH=$PLAN_PATH
+CURATED_FIGURES_PATH=$CURATED_FIGURES
+CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
 PRIOR_SUBSTORY_OUTPUTS=$prior_outputs
@@ -896,11 +968,11 @@ stage_qa_prep() {
     *)              qa_budget=3 ;;
   esac
 
-  local fragment_path="$OUTDIR/03_slides/qa_anticipated.json"
+  local fragment_path="$SLIDES_DIR/qa_anticipated.json"
 
   # Build comma-separated FRAGMENT_PATHS list (all substory composes)
   local fragment_paths=""
-  for f in "$OUTDIR/03_slides/"S?_slides.json; do
+  for f in "$SLIDES_DIR/"S?_slides.json; do
     if [[ -f "$f" ]]; then
       fragment_paths="${fragment_paths}${f},"
     fi
@@ -909,11 +981,11 @@ stage_qa_prep() {
 
   local user_prompt="OUT_PATH=$fragment_path
 PROJECT_DIR=$PROJECT_DIR
-SUBSTORY_PATH=$OUTDIR/02_substories.md
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
-PLAN_PATH=$OUTDIR/00_plan.md
+SUBSTORY_PATH=$SUBSTORIES_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+PLAN_PATH=$PLAN_PATH
 FRAGMENT_PATHS=$fragment_paths
-CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
 QA_SLIDE_BUDGET=$qa_budget
@@ -939,14 +1011,14 @@ stage_speaker_notes() {
   echo "" >&2
   echo "[Stage 5.5/7] speaker_notes (per substory)" >&2
 
-  local notes_dir="$OUTDIR/04_speaker_notes"
+  local notes_dir="$SPEAKER_NOTES_DIR"
   mkdir -p "$notes_dir"
 
   local substory_ids
   substory_ids=$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
-    --path "$OUTDIR/02_substories.md" --field substory_ids)
+    --path "$SUBSTORIES_PATH" --field substory_ids)
   if [[ -z "$substory_ids" ]]; then
-    echo "Error: no substory IDs parsed from $OUTDIR/02_substories.md" >&2
+    echo "Error: no substory IDs parsed from $SUBSTORIES_PATH" >&2
     return 1
   fi
 
@@ -955,7 +1027,7 @@ stage_speaker_notes() {
     echo "  -> notes for $sid" >&2
     local notes_md="$notes_dir/${sid}_speaker_notes.md"
     local notes_json="$notes_dir/${sid}_notes.json"
-    local fragment_path="$OUTDIR/03_slides/${sid}_slides.json"
+    local fragment_path="$SLIDES_DIR/${sid}_slides.json"
 
     # Build prior-notes path list for voice consistency (read-only)
     local prior_notes=""
@@ -969,10 +1041,10 @@ stage_speaker_notes() {
     local user_prompt="OUT_PATH=$notes_md
 PROJECT_DIR=$PROJECT_DIR
 FRAGMENT_PATH=$fragment_path
-SUBSTORY_PATH=$OUTDIR/02_substories.md
-THROUGHLINE_PATH=$OUTDIR/00_throughline.md
-PLAN_PATH=$OUTDIR/00_plan.md
-CITATION_POOL_PATH=$OUTDIR/citation_pool.json
+SUBSTORY_PATH=$SUBSTORIES_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+PLAN_PATH=$PLAN_PATH
+CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
 PRIOR_NOTES=$prior_notes
@@ -1006,9 +1078,10 @@ stage_merge_and_assemble() {
   echo "" >&2
   echo "[Final] merge fragments + validate + assemble" >&2
 
-  local spec_raw="$OUTDIR/slide_spec.raw.json"
-  local spec="$OUTDIR/slide_spec.json"
-  local repair_report="$OUTDIR/diagram_repair_report.md"
+  # v0.3.1: spec snapshots live in audit/snapshots/, not at top level.
+  local spec_raw="$SNAPSHOTS_DIR/slide_spec.raw.json"
+  local spec="$SLIDE_SPEC"
+  local repair_report="$DIAGRAM_REPAIR"
 
   "$PYTHON_BIN" "$TOOLS_DIR/merge_compose_fragments.py" \
     --outdir "$OUTDIR" \
@@ -1016,14 +1089,14 @@ stage_merge_and_assemble() {
     --mode "$MODE" \
     --tier "$TIER" \
     --audience "$AUDIENCE" \
-    --throughline-path "$OUTDIR/00_throughline.md" \
-    --substory-path "$OUTDIR/02_substories.md" \
-    --fragments-dir "$OUTDIR/03_slides" \
-    --intro-fragment-path "$OUTDIR/03_slides/intro.json" \
-    --speaker-notes-dir "$OUTDIR/04_speaker_notes" \
-    --citation-pool-path "$OUTDIR/citation_pool.json" \
-    --cross-tenant-fragment-path "$OUTDIR/03_slides/cross_tenant.json" \
-    --qa-fragment-path "$OUTDIR/03_slides/qa_anticipated.json" \
+    --throughline-path "$THROUGHLINE_PATH" \
+    --substory-path "$SUBSTORIES_PATH" \
+    --fragments-dir "$SLIDES_DIR" \
+    --intro-fragment-path "$SLIDES_DIR/intro.json" \
+    --speaker-notes-dir "$SPEAKER_NOTES_DIR" \
+    --citation-pool-path "$CITATION_POOL_PATH" \
+    --cross-tenant-fragment-path "$SLIDES_DIR/cross_tenant.json" \
+    --qa-fragment-path "$SLIDES_DIR/qa_anticipated.json" \
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
@@ -1044,7 +1117,15 @@ stage_merge_and_assemble() {
     return 0
   fi
 
-  local pptx="$OUTDIR/draft.pptx"
+  # v0.3.1 manual-edit detection: before clobbering deliverable/draft.pptx,
+  # check whether the user has manually edited it since the last render.
+  # If so, archive their edited copy to audit/manual-edits/ before
+  # proceeding so they don't lose work.
+  if [[ -f "$DECK_PPTX" ]] && [[ -f "$LAST_RENDER_HASH" ]]; then
+    "$PYTHON_BIN" "$TOOLS_DIR/draft_paths.py" detect-manual-edit "$OUTDIR" 2>/dev/null || true
+  fi
+
+  local pptx="$DECK_PPTX"
   "$PYTHON_BIN" "$TOOLS_DIR/assemble_pptx.py" \
     "$spec" \
     --out "$pptx" \
@@ -1053,12 +1134,19 @@ stage_merge_and_assemble() {
     return 1
   }
 
+  # v0.3.1: record the rendered deck's hash for next-run manual-edit
+  # detection. Also copies the deck to audit/snapshots/last-render.pptx
+  # as the diff baseline.
+  "$PYTHON_BIN" "$TOOLS_DIR/draft_paths.py" record-render-hash "$OUTDIR" \
+    >/dev/null 2>&1 || \
+    echo "  warning: failed to record render hash for manual-edit detection" >&2
+
   # 2026-04-28 (v0.2.1): mechanical post-checker — every number on a slide
   # must appear verbatim (or in a normalized form) in REPORT.md. Advisory
   # only (exit 1 doesn't halt); writes audit/quantitative_grounding.{md,json}
   # for the user / next stage to consult. The deeper semantic checks
-  # (register drift, caveat omission, narrative arc) are deferred to
-  # beril-adversarial --type presentation (planned v0.4.0).
+  # (register drift, caveat omission, narrative arc) are handled by
+  # beril-adversarial --type presentation (v0.4.0+).
   echo "  running quantitative-grounding check..." >&2
   "$PYTHON_BIN" "$TOOLS_DIR/check_quantitative_grounding.py" \
     "$OUTDIR" --severity-floor low 2>&1 | sed 's/^/    /' >&2 || true
@@ -1097,8 +1185,8 @@ stage_adversarial_review() {
     adversarial_sh=""
   fi
 
-  local review_path="$OUTDIR/audit/adversarial_review.json"
-  local review_md="$OUTDIR/audit/adversarial_review.md"
+  local review_path="$ADVERSARIAL_REVIEW_JSON"
+  local review_md="$ADVERSARIAL_REVIEW_MD"
 
   # Invoke the CLI; --type presentation takes a draft_dir
   if [[ -n "$adversarial_sh" ]]; then
@@ -1138,7 +1226,7 @@ stage_revise_slides() {
   echo "[Stage 13/13] revise_slides (review-rewrite loop)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
-  local review_path="$OUTDIR/audit/adversarial_review.json"
+  local review_path="$ADVERSARIAL_REVIEW_JSON"
   if [[ ! -f "$review_path" ]]; then
     echo "  no adversarial_review.json found; skipping revise loop" >&2
     return 0
@@ -1158,13 +1246,13 @@ stage_revise_slides() {
 
   local rc=$?
   if [[ $rc -ne 0 && $rc -ne 1 ]]; then
-    echo "  revise_loop.py crashed (rc=$rc); spec may be corrupt — pre-revise backup at $OUTDIR/slide_spec.pre_revise.json" >&2
+    echo "  revise_loop.py crashed (rc=$rc); spec may be corrupt — pre-revise backup at $SNAPSHOTS_DIR/slide_spec.pre_revise.json" >&2
     return 1
   fi
 
   # If the loop made any changes, re-run validate + assemble against the
   # revised spec.
-  local meta="$OUTDIR/audit/revise_loop_metadata.json"
+  local meta="$REVISE_LOOP_METADATA"
   if [[ -f "$meta" ]]; then
     local n_changed
     n_changed=$("$PYTHON_BIN" -c "
@@ -1175,8 +1263,8 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
 " 2>/dev/null || echo "0")
     if [[ "$n_changed" -gt 0 ]]; then
       echo "  revise loop applied $n_changed change(s); re-assembling deck..." >&2
-      local spec="$OUTDIR/slide_spec.json"
-      local pptx="$OUTDIR/draft.pptx"
+      local spec="$SLIDE_SPEC"
+      local pptx="$DECK_PPTX"
       "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
         echo "  post-revise validation FAILED — spec at $spec" >&2
         return 1
@@ -1188,14 +1276,17 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
         echo "  post-revise assemble_pptx FAILED" >&2
         return 1
       }
+      # Re-record render hash after the post-revise re-assemble.
+      "$PYTHON_BIN" "$TOOLS_DIR/draft_paths.py" record-render-hash "$OUTDIR" \
+        >/dev/null 2>&1 || true
       echo "  re-assembled deck: $pptx" >&2
     else
       echo "  revise loop made no changes (all findings were surface-only or skipped)" >&2
     fi
   fi
 
-  if [[ -f "$OUTDIR/next_actions.md" ]]; then
-    echo "  next_actions.md written: $OUTDIR/next_actions.md" >&2
+  if [[ -f "$NEXT_ACTIONS" ]]; then
+    echo "  next_actions.md written: $NEXT_ACTIONS" >&2
   fi
 }
 
@@ -1269,9 +1360,9 @@ if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
   if should_run adversarial_review; then
     stage_adversarial_review || {
       echo "[warn] adversarial_review failed — skipping revise loop" >&2
-      echo "       Inspect: $OUTDIR/audit/adversarial_review.* (if any)" >&2
+      echo "       Inspect: $ADVERSARIAL_REVIEW_JSON (if any)" >&2
     }
-    if [[ -f "$OUTDIR/audit/adversarial_review.json" ]]; then
+    if [[ -f "$ADVERSARIAL_REVIEW_JSON" ]]; then
       if should_run revise_slides; then
         stage_revise_slides || {
           echo "[warn] revise_slides loop failed — slide_spec may be at backup" >&2
@@ -1294,12 +1385,15 @@ echo "" >&2
 echo "==================================================================" >&2
 echo "PIPELINE COMPLETE" >&2
 echo "==================================================================" >&2
-echo "  draft_dir: $OUTDIR" >&2
-if [[ -f "$OUTDIR/draft.pptx" ]]; then
-  echo "  deck:      $OUTDIR/draft.pptx" >&2
+echo "  draft_dir:   $OUTDIR" >&2
+if [[ -f "$DECK_PPTX" ]]; then
+  echo "  deliverable: $DECK_PPTX" >&2
 fi
-if [[ -f "$OUTDIR/next_actions.md" ]]; then
-  echo "  next:      $OUTDIR/next_actions.md" >&2
+if [[ -f "$THROUGHLINE_PATH" ]]; then
+  echo "  narrative:   $NARRATIVE_DIR/" >&2
+fi
+if [[ -f "$NEXT_ACTIONS" ]]; then
+  echo "  next:        $NEXT_ACTIONS" >&2
 fi
 echo "==================================================================" >&2
 

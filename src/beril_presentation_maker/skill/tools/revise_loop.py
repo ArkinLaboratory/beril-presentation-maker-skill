@@ -174,25 +174,35 @@ class LoopState:
 # ---------------------------------------------------------------------------
 
 def _draft_paths(draft_dir: Path, review_path: Optional[Path] = None) -> dict[str, Path]:
-    """Build the canonical paths the loop reads/writes."""
+    """Build the canonical paths the loop reads/writes.
+
+    v0.3.1: 4-zone layout. Reads from working/, snapshots to
+    audit/snapshots/, writes intermediate state to working/, and
+    audit metadata to audit/.
+    """
     project_dir = draft_dir.parent.parent  # talks/draft_N → ../..
     audit_dir = draft_dir / "audit"
+    snapshots_dir = audit_dir / "snapshots"
     revisions_dir = audit_dir / "revisions"
+    working_dir = draft_dir / "working"
+    narrative_dir = draft_dir / "narrative"
     return {
         "draft_dir": draft_dir,
         "project_dir": project_dir,
         "report": project_dir / "REPORT.md",
-        "spec": draft_dir / "slide_spec.json",
-        "spec_backup": draft_dir / "slide_spec.pre_revise.json",
-        "throughline": draft_dir / "00_throughline.md",
-        "substories": draft_dir / "02_substories.md",
-        "citation_pool": draft_dir / "citation_pool.json",
-        "curated_figures": draft_dir / "curated_figures.md",
+        "spec": working_dir / "slide_spec.json",
+        # Pre-revise backup is now a snapshot under audit/snapshots/.
+        "spec_backup": snapshots_dir / "slide_spec.pre_revise.json",
+        "throughline": narrative_dir / "00_throughline.md",
+        "substories": narrative_dir / "02_substories.md",
+        "citation_pool": working_dir / "citation_pool.json",
+        "curated_figures": working_dir / "curated_figures.md",
         "review": review_path or (audit_dir / "adversarial_review.json"),
         "audit_dir": audit_dir,
+        "snapshots_dir": snapshots_dir,
         "revisions_dir": revisions_dir,
         "metadata": audit_dir / "revise_loop_metadata.json",
-        "next_actions": draft_dir / "next_actions.md",
+        "next_actions": working_dir / "next_actions.md",
     }
 
 
@@ -243,21 +253,83 @@ def _insert_slide_into_spec(spec: dict[str, Any],
                             new_slide: dict[str, Any],
                             position: int) -> int:
     """Insert new_slide at the given position. Subsequent slides shift +1.
-    Assigns the next-available id. Returns the assigned id."""
+    Assigns the next-available id. Returns the assigned id.
+
+    v0.3.1 wrinkle A1 fix: when existing slides lack `position` fields
+    (the `merge_compose_fragments.py` output is array-ordered but does
+    not always populate `position`), the original "find insertion idx by
+    comparing positions" loop fell through to "append at end" silently.
+    Live test draft_10 F003: new slide had position=9, but it landed at
+    end-of-deck (~position 27) because no existing slide had position
+    populated.
+
+    Fallback chain:
+      1. If any existing slides have integer position fields → use the
+         position-comparison path (original behavior; works when merge
+         emits positions).
+      2. Else if new_slide has substory_id → find the substory's last
+         slide by array order and insert immediately after it.
+      3. Else if 1 ≤ position ≤ len(slides) → use position as a literal
+         array index (caller-trusts-the-position interpretation).
+      4. Else → append at end with stderr warning surfacing the drift.
+    """
     slides = spec.get("slides", [])
     # Next-available id = max existing + 1
     existing_ids = [s.get("id", 0) for s in slides if isinstance(s.get("id"), int)]
     next_id = max(existing_ids) + 1 if existing_ids else 1
     new_slide["id"] = next_id
 
-    # Find insertion index by position
-    insert_idx = len(slides)
-    for i, s in enumerate(slides):
-        if s.get("position", -1) >= position:
-            insert_idx = i
-            break
+    # Detect whether existing slides have positions populated.
+    has_positions = any(isinstance(s.get("position"), int) for s in slides)
 
-    # Shift positions of subsequent slides
+    insert_idx: Optional[int] = None
+    fallback_reason = ""
+
+    if has_positions:
+        # Path 1: original position-comparison logic.
+        insert_idx = len(slides)
+        for i, s in enumerate(slides):
+            if s.get("position", -1) >= position:
+                insert_idx = i
+                break
+    else:
+        # Path 2: substory_id-anchored fallback.
+        target_substory = new_slide.get("substory_id")
+        if target_substory:
+            last_match = None
+            for i, s in enumerate(slides):
+                if s.get("substory_id") == target_substory:
+                    last_match = i
+            if last_match is not None:
+                insert_idx = last_match + 1
+                fallback_reason = (
+                    f"siblings lack position fields; anchored after last "
+                    f"slide of substory {target_substory!r} (idx {last_match})"
+                )
+
+        # Path 3: position-as-array-index.
+        if insert_idx is None and isinstance(position, int) and 1 <= position <= len(slides):
+            insert_idx = position - 1  # position is 1-based; idx is 0-based
+            fallback_reason = (
+                f"siblings lack position fields and substory_id anchor "
+                f"failed; using position {position} as array index"
+            )
+
+        # Path 4: append-at-end with warning.
+        if insert_idx is None:
+            insert_idx = len(slides)
+            fallback_reason = (
+                f"siblings lack position fields, substory_id anchor failed, "
+                f"position {position} out of array range — appending at end "
+                f"(this drifts from the finding's intended position)"
+            )
+
+    if fallback_reason:
+        print(f"  [revise_loop] _insert_slide_into_spec fallback: "
+              f"{fallback_reason}", file=sys.stderr)
+
+    # Shift positions of subsequent slides (only meaningful when
+    # has_positions is True; otherwise this is a no-op).
     for s in slides[insert_idx:]:
         if isinstance(s.get("position"), int):
             s["position"] += 1

@@ -164,7 +164,30 @@ rest. Never emit 4+ bullets in a claim_evidence content fragment.
    decimal). No inventions.
 3. **Tier register matches the deck.** STRONG-tier decks don't get
    new slides with hedged language; EXPLORATORY decks don't get new
-   slides with confident verbs.
+   slides with confident verbs. **This is the most-violated rule.**
+   The `revise_slide.v1` prompt fixes register drift on existing slides;
+   `add_slide.v1` (this prompt) introduces NEW slides into the deck and
+   must not introduce drift in the first place.
+
+   **Per-tier register cheat-sheet** (mirror of `revise_slide.v1`):
+
+   | Tier | Forbidden verbs (in title or bullets) | Required hedging language |
+   |---|---|---|
+   | STRONG | "merely suggests", "might possibly", "tentative" | (none — confident verbs OK) |
+   | THIN | "high-confidence", "robust", "definitive", "proves" | "preliminary", "candidate", "early-stage", "suggests" |
+   | EXPLORATORY | "high-confidence", "robust", "definitive", "proves", "demonstrates" | "preliminary", "candidate", "exploratory", "hypothesis-generating", "to be tested" |
+
+   **Title is the most exposed surface.** A title saying "82%
+   high-confidence functional hypotheses" on an EXPLORATORY-tier deck
+   is the same overclaim that `revise_slide.v1` rewrites elsewhere.
+   Read the `TIER` input verbatim BEFORE composing the title;
+   self-reject any title that uses a forbidden verb for the deck's
+   tier. Bullets get the same scrutiny.
+
+   **Live failure** (v0.3.0 draft_10 F003): the new slide's title used
+   "high-confidence" on an EXPLORATORY deck because the prompt focused
+   on "filling the gap" without checking register. v0.3.1 wrinkle A2
+   fix.
 4. **No content duplication with adjacent slides.** Read the slides
    immediately before and after the insertion position; ensure your
    new slide doesn't repeat their content.
@@ -193,6 +216,11 @@ rest. Never emit 4+ bullets in a claim_evidence content fragment.
 - **Citation invention.** The new slide needs to cite a paper that's
   not in the pool; you cite it anyway. The orchestrator's pool-key
   validator will catch this; the prompt should HALT first.
+- **Tier-register drift via the new slide.** EXPLORATORY/THIN deck;
+  you write a title with "high-confidence", "robust", or "definitive"
+  because the gap-data is convincing-looking. `revise_slide.v1` would
+  flag this on an existing slide via `register_drift`; `add_slide.v1`
+  must not INTRODUCE this drift on a new one. v0.3.1 wrinkle A2.
 
 ## Self-review checklist
 
@@ -208,6 +236,11 @@ Before Write:
 8. Will `slide_spec.py validate` pass for the slide alone?
 9. Does the `revision_log` entry name the finding correctly?
 10. Is `added_by_revise_loop: true` set?
+11. **Tier register check.** Read `TIER` verbatim. Scan the title and
+    every bullet against the per-tier cheat-sheet (Discipline §3). Does
+    any line contain a forbidden verb for the deck's tier? If yes,
+    rewrite before Write. (v0.3.1 A2 fix — live test caught
+    "high-confidence" introduced on EXPLORATORY deck.)
 
 ## Tool use
 
