@@ -4,4 +4,4 @@ See SPEC.md for design intent; LAYOUT.md for runtime contracts;
 RELEASE_NOTES.md for v0.3 capabilities.
 """
 
-__version__ = "0.3.2.3"
+__version__ = "0.3.2.4"

@@ -1,5 +1,31 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.4 (2026-05-02) — hotfix: model bump + adversarial CLI name fix
+
+Two one-line fixes flagged during the v0.3.2.3 adversarial-loop A/B
+prep.
+
+### Fixes
+
+- **Default model bumped** `claude-sonnet-4-20250514` →
+  `claude-sonnet-4-6`. The orchestrator's hardcoded default was the
+  original Sonnet 4 from May 2025, ~12 months stale. Sonnet 4.5
+  (Sept 2025) and 4.6 (current) have shipped since. Every deck
+  produced under v0.2.0–v0.3.2.3 ran on a year-old model.
+
+- **`beril-adversarial-cli` → `beril-adversarial`** in the
+  orchestrator's stage_adversarial_review function. The actual
+  installed binary (per beril-adversarial pyproject.toml's
+  `[project.scripts]`) is `beril-adversarial`. The `-cli` suffix in
+  our orchestrator was a historical typo that happened to work on
+  Adam's earlier setup but blocked fresh installs. Updated install
+  hint to reference beril-adversarial v0.5.1.
+
+No new tests required (model id is opaque; CLI name fix is a string
+change). 496/496 unit tests still pass.
+
+---
+
 ## v0.3.2.3 (2026-05-01) — hotfix: data_table allows empty corner-cell header
 
 The v0.3.2.2 re-smoke (resume-from-merge) made it past the trailing-

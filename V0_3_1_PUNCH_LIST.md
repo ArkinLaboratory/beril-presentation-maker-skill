@@ -460,6 +460,37 @@ Not a build cycle; an audit + tag.
 
 ---
 
+## v0.3.5 — per-stage model routing (deferred)
+
+**Why.** Currently the orchestrator hardcodes
+`claude-sonnet-4-20250514` for every LLM-touching stage with one
+deck-wide `--model` override. We've identified per-stage cost-quality
+tradeoffs that argue for routing different models to different stages:
+
+| Stage | Current | Possible upgrade | Rationale |
+|---|---|---|---|
+| `throughline_candidates` | sonnet ($0.29) | opus ($0.60) | Throughline is the deck's spine; one-shot leverage worth the cost |
+| `qa_prep` | sonnet ($0.31) | opus ($0.60) | Adversarial framing benefits from deeper reasoning |
+| All others | sonnet | sonnet | Cost-quality fit |
+
+**Out of scope (settled):** Haiku for intro / cross_tenant. Cost
+savings (~$0.40/deck) don't justify the increased malformation risk
+(the lenient JSON loader is new; weaker models stress-test it harder).
+
+**Design options when we get there:**
+1. Per-stage flags: `--model-throughline opus --model-intro haiku ...`
+2. Config file: `~/.beril/presentation-maker.toml` `[models]` section
+3. Env-var convention: `BERIL_PM_MODEL_THROUGHLINE=opus ...`
+
+Adam-leans-3 if it's cheap to wire. Defer to v0.3.5 (after image-gen
+orchestrator + multi-project smoke).
+
+**Empirical gate first:** before building the routing, A/B test Opus
+on adversarial_review against Sonnet on the same draft. If Opus
+catches >30% more real findings, the routing is justified. If not,
+all-Sonnet is the right answer and we can simplify the design back
+to deck-wide `--model`.
+
 ## Out of v0.3.x scope
 
 - KBase Co-Scientist orchestrator integration (separate stream).
@@ -467,6 +498,8 @@ Not a build cycle; an audit + tag.
   Research-grade hard; v0.4+ if at all.
 - `reorg` migration command for v0.3.0-shape drafts. Adam will
   delete manually.
+- Cross-model review (Gemini reviewing Claude's work via CBORG
+  for blind-spot diversity). Different deployment shape; v1.0+.
 
 ---
 

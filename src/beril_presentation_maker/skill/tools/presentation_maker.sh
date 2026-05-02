@@ -64,7 +64,7 @@ TIER="STRONG"
 AUDIENCE="peer"
 AUTO_ADVANCE=0
 SKIP_ASSEMBLY=0
-MODEL="claude-sonnet-4-20250514"
+MODEL="claude-sonnet-4-6"   # v0.3.2.4: bumped from claude-sonnet-4-20250514 (~12 mo old)
 NO_STREAM=0
 RESUME_FROM=""        # 2026-04-26 #58: skip earlier stages on prompt iteration
 DRAFT_DIR_OVERRIDE="" # required when RESUME_FROM is set
@@ -1170,10 +1170,13 @@ stage_adversarial_review() {
   echo "[Stage 12/13] adversarial_review (--type presentation)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
-  if ! command -v beril-adversarial-cli >/dev/null 2>&1; then
-    echo "  beril-adversarial-cli not on PATH; skipping adversarial review." >&2
+  # v0.3.2.4: the actual installed binary is `beril-adversarial`, not
+  # `beril-adversarial-cli`. The `-cli` name was a historical typo in
+  # the orchestrator that happened to work on Adam's earlier setup.
+  if ! command -v beril-adversarial >/dev/null 2>&1; then
+    echo "  beril-adversarial not on PATH; skipping adversarial review." >&2
     echo "  Install: pipx install --pip-args=\"--no-cache-dir\" \\" >&2
-    echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.4.0" >&2
+    echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.5.1" >&2
     echo "  Or pass --no-adversarial to skip this warning." >&2
     return 0
   fi
@@ -1195,8 +1198,10 @@ stage_adversarial_review() {
       return 1
     }
   else
-    beril-adversarial-cli --type presentation "$OUTDIR" || {
-      echo "  beril-adversarial-cli failed (rc=$?); revise loop will halt" >&2
+    # v0.3.2.4: corrected from beril-adversarial-cli (didn't exist) to
+    # beril-adversarial (the actual installed binary).
+    beril-adversarial --type presentation "$OUTDIR" || {
+      echo "  beril-adversarial failed (rc=$?); revise loop will halt" >&2
       return 1
     }
   fi

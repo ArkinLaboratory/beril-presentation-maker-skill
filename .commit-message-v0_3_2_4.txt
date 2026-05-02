@@ -1,0 +1,26 @@
+v0.3.2.4: hotfix — model bump + adversarial CLI name fix
+
+Two one-line fixes surfaced during v0.3.2.3 adversarial-loop A/B prep.
+
+Fixes
+
+- Default model: claude-sonnet-4-20250514 → claude-sonnet-4-6.
+  Orchestrator's hardcoded default was ~12 months stale (original
+  Sonnet 4, May 2025). Every deck produced v0.2.0–v0.3.2.3 ran on
+  year-old model.
+
+- beril-adversarial-cli → beril-adversarial in orchestrator's
+  stage_adversarial_review. The actual installed binary (per
+  beril-adversarial pyproject [project.scripts]) is `beril-adversarial`.
+  The -cli suffix was a historical typo that happened to work on
+  Adam's earlier setup but blocked fresh installs (live failure
+  during v0.3.2.3 adversarial A/B). Updated install-hint message
+  to reference beril-adversarial v0.5.1 (sibling release with same
+  model bump).
+
+No new tests required. 496/496 unit tests still pass.
+
+Refs:
+- predecessor tag: v0.3.2.3
+- companion: beril-adversarial v0.5.1 (same model bump)
+- next: v0.3.3 (image-gen orchestrator stage)
