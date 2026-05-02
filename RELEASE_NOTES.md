@@ -1,5 +1,31 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.3 (2026-05-01) — hotfix: data_table allows empty corner-cell header
+
+The v0.3.2.2 re-smoke (resume-from-merge) made it past the trailing-
+comma issue but the validator rejected slide 14 — a 2×2 selection-
+signature matrix data_table with `columns: ["", "Conserved", "Variable"]`.
+The empty corner-cell header is the matrix-table convention and is
+faithfully reproduced from the `slide_compose.v1.md` worked example.
+The validator was too strict.
+
+### Fix
+
+- **`_check_data_table` columns relaxation** in `slide_spec.py`. Empty
+  string headers are now allowed (matrix corner-cell pattern). Other
+  constraints unchanged: 2 ≤ len(columns) ≤ 6, all entries must be
+  strings (type-check still enforced).
+
+### Tests
+
+- `test_data_table_empty_corner_cell_allowed`: confirms the live
+  failure shape (`["", "Conserved", "Variable"]`) validates clean.
+- `test_data_table_non_string_header_rejects`: confirms type-check
+  still fires for non-string headers (e.g. `[1, "B", "C"]`).
+- 496 / 496 unit tests pass (was 494 in v0.3.2.2).
+
+---
+
 ## v0.3.2.2 (2026-05-01) — hotfix: lenient JSON loader for LLM-emitted fragments
 
 The v0.3.2.1 re-smoke crashed at merge: `S1_slides.json` had a stray

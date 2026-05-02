@@ -420,15 +420,29 @@ def _check_data_table(content: dict, path: str) -> list[ValidatorIssue]:
     iss: list[ValidatorIssue] = []
     _check_required_str(content, "title", path, iss)
 
-    # columns
+    # columns — list of 2-6 strings. Empty-string headers ARE allowed
+    # (matrix-table convention: the corner cell where row labels meet
+    # column labels is conventionally empty, e.g.
+    # `["", "Conserved", "Variable"]` for a quadrant classification).
+    # v0.3.2.2: relaxed from "non-empty header strings" — the v0.3.2
+    # worked example in slide_compose.v1.md uses this exact pattern,
+    # and the LLM faithfully reproduced it (caught in core_gene_tradeoffs
+    # draft_2 selection-signature-matrix slide).
     cols = content.get("columns")
     if cols is None:
         iss.append(ValidatorIssue(f"{path}.columns", "required field missing"))
         cols = []
-    elif not _is_str_list(cols, min_len=2):
+    elif not isinstance(cols, list):
         iss.append(ValidatorIssue(
             f"{path}.columns",
-            f"must be a list of 2-{DATA_TABLE_MAX_COLS} non-empty header strings",
+            "must be a list of 2-6 header strings",
+        ))
+        cols = []
+    elif len(cols) < 2:
+        iss.append(ValidatorIssue(
+            f"{path}.columns",
+            f"must have at least 2 columns; got {len(cols)} "
+            "(singleton-column tables aren't tables — use a bullet list)",
         ))
     elif len(cols) > DATA_TABLE_MAX_COLS:
         iss.append(ValidatorIssue(
@@ -436,6 +450,13 @@ def _check_data_table(content: dict, path: str) -> list[ValidatorIssue]:
             f"too many columns: {len(cols)} (max {DATA_TABLE_MAX_COLS}; "
             "data_table is for presentation-floor readability, not data dumps)",
         ))
+    else:
+        for j, header in enumerate(cols):
+            if not isinstance(header, str):
+                iss.append(ValidatorIssue(
+                    f"{path}.columns[{j}]",
+                    f"must be a string; got {type(header).__name__}",
+                ))
 
     # rows
     rows = content.get("rows")

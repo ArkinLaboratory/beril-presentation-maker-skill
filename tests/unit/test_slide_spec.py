@@ -110,6 +110,38 @@ def test_data_table_too_few_columns_rejects(ss):
     assert any("columns" in i.path for i in issues)
 
 
+def test_data_table_empty_corner_cell_allowed(ss):
+    """v0.3.2.2: matrix-table convention — first column header may be
+    empty (corner cell where row labels meet column labels). The
+    selection-signature-matrix pattern from slide_compose.v1.md's
+    worked example uses this. Live failure: core_gene_tradeoffs draft_2
+    slide 14 was rejected before the relaxation."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(
+            columns=["", "Conserved (core)", "Variable (accessory)"],
+            rows=[
+                ["Costly in lab",  "28,017", "5,526"],
+                ["Neutral in lab", "86,761", "21,886"],
+            ],
+        ),
+        "$.slides[0].content",
+    )
+    assert issues == [], (
+        "matrix corner-cell empty header should be allowed; got: "
+        + "; ".join(i.message for i in issues)
+    )
+
+
+def test_data_table_non_string_header_rejects(ss):
+    """Type-correctness check: headers must be strings (empty-OK), not
+    integers or other types."""
+    issues = ss.LAYOUT_CHECKERS["data_table"](
+        _dt_content(columns=[1, "B", "C"], rows=[["a", "b", "c"]]),
+        "$.slides[0].content",
+    )
+    assert any("must be a string" in i.message for i in issues)
+
+
 def test_data_table_too_many_columns_rejects(ss):
     """Cap at DATA_TABLE_MAX_COLS (6). Wide tables exceed presentation
     floor readability and should be summarized or split."""
