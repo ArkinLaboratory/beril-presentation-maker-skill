@@ -491,6 +491,43 @@ catches >30% more real findings, the routing is justified. If not,
 all-Sonnet is the right answer and we can simplify the design back
 to deck-wide `--model`.
 
+## v0.3.x backlog: citation grounding check
+
+**Why.** During the May 2026 Sonnet-vs-Opus adversarial A/B,
+Sonnet caught a hallucinated citation in slide 20's Q&A speaker
+notes ("Scott et al. 2010 ribosome limitation framework") — the
+paper isn't in REPORT.md, RESEARCH_PLAN.md, or the citation pool.
+The deck would have shipped with this hallucination if the
+adversarial loop hadn't fired.
+
+The catch was reviewer judgment. We should have a **mechanical
+post-check** (mirrors `check_quantitative_grounding.py`) that
+extracts every citation reference from `slide_spec.json` (slides +
+speaker notes) and verifies each resolves to:
+1. The citation_pool.json
+2. REPORT.md references
+3. RESEARCH_PLAN.md references
+
+**Design sketch:**
+
+- New tool: `tools/check_citation_grounding.py`. Same exit-code
+  semantics as `check_quantitative_grounding.py`: 0 = all grounded,
+  2 = ungrounded citations found (advisory).
+- Citation extraction: regex for "Author et al. YYYY", "AuthorYYYY",
+  "(Author, YYYY)" patterns; or parse the `citations[]` field on
+  slides; both.
+- Resolution: load citation_pool.json keys + parse references.md
+  bibliography entries + RESEARCH_PLAN's references; check each
+  extracted citation against the union.
+- Output: `audit/citation_grounding.{json,md}`.
+- Wire into orchestrator after `check_quantitative_grounding`.
+
+**Effort:** ~half day. Mirror paper-writer's similar check if it
+exists.
+
+**Triggered by:** v0.5.3 adversarial A/B (Sonnet caught Scott et al.
+2010 hallucination). Captured 2026-05-02.
+
 ## Out of v0.3.x scope
 
 - KBase Co-Scientist orchestrator integration (separate stream).
