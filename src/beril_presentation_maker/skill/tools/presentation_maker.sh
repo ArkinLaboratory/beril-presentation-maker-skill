@@ -125,12 +125,15 @@ case "$TIER" in
   *) echo "Error: invalid --tier '$TIER'" >&2; exit 1 ;;
 esac
 
-# Validate --resume-from + --draft-dir pairing
+# Validate --resume-from + --draft-dir pairing.
+# v0.3.2.6: list extended to include adversarial_review + revise_slides
+# (added in v0.3.0). Previously this case statement disagreed with the
+# should_run() ordinal table, blocking --resume-from revise_slides.
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge) ;;
+  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge|adversarial_review|revise_slides) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge" >&2
+    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge|adversarial_review|revise_slides" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then

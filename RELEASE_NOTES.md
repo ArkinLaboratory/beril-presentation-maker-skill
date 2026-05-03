@@ -1,5 +1,33 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.6 (2026-05-03) — `--resume-from` accepts adversarial_review + revise_slides
+
+One-line fix surfaced by the live revise-loop test on draft_2.
+
+### Bug
+
+`presentation_maker.sh` had two lists of valid stages that disagreed:
+
+- The arg-validation `case "$RESUME_FROM"` (line 129) listed stages
+  through `merge` (the v0.2.x set) but never got the v0.3.0
+  additions.
+- The `should_run()` ordinal table (line ~1220) correctly included
+  `adversarial_review:12` and `revise_slides:13`.
+
+Result: `--resume-from revise_slides` (or `--resume-from
+adversarial_review`) errored out at argument validation despite
+`should_run()` knowing how to gate them.
+
+Live failure: 2026-05-03 revise-loop test on draft_2 hit
+`Error: invalid --resume-from 'revise_slides'`.
+
+### Fix
+
+Extend the case statement to include both stages. Update the error
+message's "valid stages" list to match.
+
+---
+
 ## v0.3.2.5 (2026-05-03) — adversarial dispatch via `beril-adversarial review` subcommand
 
 beril-adversarial v0.6.0 (2026-05-02) added a `review` Python CLI
