@@ -526,7 +526,13 @@ FIGURE_REGIONS = {
     # the body area below banner, ABOVE the logos at y=5.00.
     "big_idea":             (1.00, 1.10, 8.00, 3.85),
     # Body placeholder removed; figure fills former body region.
-    "data_figure":          (0.50, 1.40, 9.00, 3.10),
+    # 2026-05-03 (v0.3.2.8): figure H 3.10 → 2.85 (top 1.40 → 1.30, bottom
+    # 4.50 → 4.15) to give a 0.65-in caption band + 0.15-in data_source
+    # band. Live failure draft_2 slide 8: revise-loop produced ~410-char
+    # caption that auto-size'd into the data_source's y=4.82 anchor;
+    # texts overlapped. Geometry now budgets ~3 wrapped lines at 12pt
+    # for the caption + 1 line at 10pt for data_source.
+    "data_figure":          (0.50, 1.30, 9.00, 2.85),
     # Body placeholder removed; image on the right of the slide.
     "concept_illustration": (5.30, 1.30, 4.50, 3.70),
 }
@@ -857,25 +863,32 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
                                 "data_figure.figure")
     if path:
         _add_picture(slide, path, *FIGURE_REGIONS["data_figure"])
-    # Caption + data source go in the body region just below the figure,
-    # above the bottom logos at y=5.00.
+    # Caption + data source budget under the figure (which now ends at
+    # y=4.15 per FIGURE_REGIONS["data_figure"] update in v0.3.2.8):
+    #   y=4.15..4.80 → caption (0.65 in, ~3 wrapped lines at 12pt)
+    #   y=4.83..4.98 → data_source (0.15 in, ~1 line at 10pt)
+    #   y=5.00       → logo strip
     #
-    # 2026-04-28 (v0.2.1 fix #2, draft_9 walk):
-    #   Caption box was H=0.30 holding 110-121 chars at 12pt without
-    #   word_wrap — overflowed every data_figure slide (9, 13, 19) by
-    #   running off the right edge. Source box was H=0.13 holding 60-73
-    #   chars at 10pt, same failure mode. Both now use word_wrap=True
-    #   and adequate height for ~3 wrapped lines at 12pt + ~2 lines at
-    #   10pt. The figure's bottom is at 1.40 + 3.10 = 4.50 in; bottom
-    #   logos start at 5.00 in — gives 0.50 in for caption + source.
-    _add_textbox(slide, content["caption"], 0.50, 4.50, 9.00, 0.30,
+    # auto_size=False is critical: it prevents the caption box from
+    # growing downward and overlapping the data_source band when the
+    # caption is long. Captions that exceed the budget are visually
+    # clipped at the box edge — better than overlap, and the prompt
+    # should cap caption length at the source.
+    #
+    # History:
+    # 2026-04-28 (v0.2.1 fix #2, draft_9 walk): word_wrap=True introduced.
+    # 2026-05-03 (v0.3.2.8, draft_2 slide 8): drop auto_size, grow caption
+    #   H to 0.65, shrink figure region. Live failure: revise-loop produced
+    #   ~410-char caption; auto_size grew caption box past data_source's
+    #   y=4.82 anchor, producing visual overlap.
+    _add_textbox(slide, content["caption"], 0.50, 4.18, 9.00, 0.65,
                  font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
-                 word_wrap=True, auto_size=True)
+                 word_wrap=True)
     if content.get("data_source"):
         _add_textbox(slide, content["data_source"],
-                     0.50, 4.82, 9.00, 0.18,
+                     0.50, 4.83, 9.00, 0.15,
                      font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB,
-                     word_wrap=True, auto_size=True)
+                     word_wrap=True)
 
 
 def _fill_data_table(slide, content, draft_dir, warnings):

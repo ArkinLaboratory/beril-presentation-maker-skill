@@ -1,5 +1,46 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.8 (2026-05-03) — data_figure caption/data_source overlap fix
+
+Live failure surfaced by the post-revise visual review of draft_2.
+
+### Bug
+
+`_fill_data_figure`'s caption box used `auto_size=True`, which lets
+the box grow downward to fit text. With short captions (~150 chars)
+this works fine — caption fits in ~1.5 lines, no collision. With
+the longer caption the revise loop produced for slide 8 (~410
+chars, 5+ wrapped lines at 12pt), the caption box grew past the
+data_source's y=4.82 anchor, producing visual overlap on the
+slide.
+
+### Fix
+
+- Drop `auto_size=True` from both caption and data_source textboxes.
+  Caption stays at fixed H=0.65 (~3 wrapped lines at 12pt); longer
+  captions get clipped at box edge instead of overlapping the
+  data_source band.
+- Shrink `FIGURE_REGIONS["data_figure"]` from `(0.50, 1.40, 9.00,
+  3.10)` to `(0.50, 1.30, 9.00, 2.85)` — figure top moves up 0.10 in;
+  bottom moves up to 4.15 in. Frees 0.35 in below figure for the
+  expanded caption band.
+- Caption box: y=4.18, H=0.65 (was y=4.50, H=0.30).
+- Data_source box: y=4.83, H=0.15 (was y=4.82, H=0.18).
+
+### Mitigation strategy
+
+Geometry now budgets ~3 wrapped caption lines at 12pt. Captions
+exceeding that are visually clipped at the box edge — the audience
+loses the trailing text, but no overlap with data_source or the
+logo strip at y=5.00. Acceptable as a render-side fail-safe.
+
+The cleaner fix is content-side: cap caption length in the
+slide_compose / revise_slide prompts at ~200 chars. Filed as a
+v0.3.x backlog item; the render-side budget is the immediate
+defensive measure.
+
+---
+
 ## v0.3.2.7 (2026-05-03) — control flow: revise_slides dispatch independent of adversarial_review
 
 The third bug uncovered by the live revise-loop test on draft_2.
