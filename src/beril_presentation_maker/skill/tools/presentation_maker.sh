@@ -1377,23 +1377,38 @@ stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
 
 # v0.3.0: adversarial review-rewrite loop (after assembly, before final summary).
 # Skip when --no-adversarial OR when --skip-assembly (no spec to review).
+#
+# v0.3.2.7: control-flow restructure. Previously, the revise_slides
+# dispatch was nested INSIDE the should_run adversarial_review branch —
+# which meant `--resume-from revise_slides` skipped adversarial_review
+# (correctly) but ALSO skipped revise_slides (incorrectly, because the
+# whole enclosing block was bypassed). Each stage now has its own
+# top-level should_run gate.
 if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
+  # Adversarial review stage
   if should_run adversarial_review; then
     stage_adversarial_review || {
-      echo "[warn] adversarial_review failed — skipping revise loop" >&2
+      echo "[warn] adversarial_review failed — revise loop will use whatever JSON exists" >&2
       echo "       Inspect: $ADVERSARIAL_REVIEW_JSON (if any)" >&2
     }
-    if [[ -f "$ADVERSARIAL_REVIEW_JSON" ]]; then
-      if should_run revise_slides; then
-        stage_revise_slides || {
-          echo "[warn] revise_slides loop failed — slide_spec may be at backup" >&2
-        }
-      else
-        echo "[skip] revise_slides (resume from $RESUME_FROM)" >&2
-      fi
-    fi
   else
     echo "[skip] adversarial_review (resume from $RESUME_FROM)" >&2
+  fi
+
+  # Revise loop stage — dispatched independently, contingent on
+  # the review JSON being present (whether produced by this run or
+  # a prior one in the same draft_dir).
+  if should_run revise_slides; then
+    if [[ -f "$ADVERSARIAL_REVIEW_JSON" ]]; then
+      stage_revise_slides || {
+        echo "[warn] revise_slides loop failed — slide_spec may be at backup" >&2
+      }
+    else
+      echo "[skip] revise_slides — no $ADVERSARIAL_REVIEW_JSON present" >&2
+      echo "       Run adversarial review first, or pass --resume-from adversarial_review" >&2
+    fi
+  else
+    echo "[skip] revise_slides (resume from $RESUME_FROM)" >&2
   fi
 else
   if [[ $NO_ADVERSARIAL -eq 1 ]]; then

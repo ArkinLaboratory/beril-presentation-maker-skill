@@ -1,5 +1,53 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.7 (2026-05-03) — control flow: revise_slides dispatch independent of adversarial_review
+
+The third bug uncovered by the live revise-loop test on draft_2.
+
+### Bug
+
+The orchestrator's main flow nested the `revise_slides` dispatch
+INSIDE the `should_run adversarial_review` branch:
+
+```bash
+if should_run adversarial_review; then
+    stage_adversarial_review
+    if [[ -f $ADVERSARIAL_REVIEW_JSON ]]; then
+        if should_run revise_slides; then
+            stage_revise_slides
+        fi
+    fi
+else
+    echo "[skip] adversarial_review"
+fi
+```
+
+When the user passes `--resume-from revise_slides`:
+- `should_run adversarial_review` returns false (ordinal 12 < 13).
+- The whole `if` block is bypassed, including the nested
+  revise_slides dispatch.
+- Output prints "[skip] adversarial_review" and proceeds to
+  PIPELINE COMPLETE. Revise loop never fires.
+
+Live failure: 2026-05-03 revise-loop test on draft_2 had a valid
+adversarial_review.json in audit/ but the loop didn't run.
+
+### Fix
+
+Restructure: each stage gets its own top-level `should_run` gate at
+the same nesting level. Revise loop runs IFF
+`should_run revise_slides` AND the review JSON exists. Whether the
+review came from this run or a prior run is irrelevant.
+
+```bash
+if should_run adversarial_review; then stage_adversarial_review; fi
+if should_run revise_slides; then
+  if [[ -f $ADVERSARIAL_REVIEW_JSON ]]; then stage_revise_slides; fi
+fi
+```
+
+---
+
 ## v0.3.2.6 (2026-05-03) — `--resume-from` accepts adversarial_review + revise_slides
 
 One-line fix surfaced by the live revise-loop test on draft_2.
