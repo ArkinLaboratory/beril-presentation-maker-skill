@@ -305,6 +305,11 @@ based on current state, pending upstream pull).
 
 ## v0.3.3 — image-gen orchestrator stage
 
+**Authoritative design:** [`V0_3_3_ARCHITECTURE.md`](V0_3_3_ARCHITECTURE.md).
+The summary below is a release-tracking pointer; concrete file/path/
+test/flag decisions live in the architecture doc and supersede the
+prose here on any conflict.
+
 **BLOCKED-BY:** v0.3.2 ships (so tables exist as a "never use image"
 exemption case in the decision layer).
 
