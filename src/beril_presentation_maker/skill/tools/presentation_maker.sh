@@ -1170,38 +1170,51 @@ stage_adversarial_review() {
   echo "[Stage 12/13] adversarial_review (--type presentation)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
-  # v0.3.2.4: the actual installed binary is `beril-adversarial`, not
-  # `beril-adversarial-cli`. The `-cli` name was a historical typo in
-  # the orchestrator that happened to work on Adam's earlier setup.
+  # v0.3.2.5: prefer the v0.6.0+ Python CLI subcommand
+  # `beril-adversarial review --type presentation <draft_dir>`. Cleaner
+  # than the prior sibling-shell-script invocation; doesn't depend on
+  # filesystem-path discovery to find adversarial_review.sh.
   if ! command -v beril-adversarial >/dev/null 2>&1; then
     echo "  beril-adversarial not on PATH; skipping adversarial review." >&2
     echo "  Install: pipx install --pip-args=\"--no-cache-dir\" \\" >&2
-    echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.5.1" >&2
+    echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.6.3" >&2
     echo "  Or pass --no-adversarial to skip this warning." >&2
     return 0
-  fi
-
-  local adversarial_sh
-  adversarial_sh="$(dirname "$(dirname "$TOOLS_DIR")")/beril-adversarial/tools/adversarial_review.sh"
-  if [[ ! -f "$adversarial_sh" ]]; then
-    # Fall back to whatever the CLI dispatches to
-    adversarial_sh=""
   fi
 
   local review_path="$ADVERSARIAL_REVIEW_JSON"
   local review_md="$ADVERSARIAL_REVIEW_MD"
 
-  # Invoke the CLI; --type presentation takes a draft_dir
-  if [[ -n "$adversarial_sh" ]]; then
-    bash "$adversarial_sh" "$OUTDIR" --type presentation || {
-      echo "  adversarial_review.sh failed (rc=$?); revise loop will halt" >&2
+  # Detect whether the Python CLI has the `review` subcommand (v0.6.0+).
+  # On older installs, fall back to the sibling shell script. We probe
+  # by calling --help once and grep'ing for the subcommand name; cheap
+  # and avoids hard pinning a min-version requirement here.
+  local has_review_subcmd=0
+  if beril-adversarial --help 2>&1 | grep -qE "^[[:space:]]*review[[:space:]]"; then
+    has_review_subcmd=1
+  fi
+
+  if [[ $has_review_subcmd -eq 1 ]]; then
+    # v0.6.0+ path — clean Python CLI dispatch
+    beril-adversarial review --type presentation "$OUTDIR" || {
+      echo "  beril-adversarial review failed (rc=$?); revise loop will halt" >&2
       return 1
     }
   else
-    # v0.3.2.4: corrected from beril-adversarial-cli (didn't exist) to
-    # beril-adversarial (the actual installed binary).
-    beril-adversarial --type presentation "$OUTDIR" || {
-      echo "  beril-adversarial failed (rc=$?); revise loop will halt" >&2
+    # Legacy fallback — find the sibling shell script and invoke it.
+    # This path is for beril-adversarial v0.5.x installs that predate
+    # the `review` Python subcommand.
+    local adversarial_sh
+    adversarial_sh="$(dirname "$(dirname "$TOOLS_DIR")")/beril-adversarial/tools/adversarial_review.sh"
+    if [[ ! -f "$adversarial_sh" ]]; then
+      echo "  beril-adversarial v0.5.x detected but sibling adversarial_review.sh not found at:" >&2
+      echo "    $adversarial_sh" >&2
+      echo "  Upgrade to v0.6.0+ (which exposes 'beril-adversarial review' subcommand) OR" >&2
+      echo "  re-run 'beril-adversarial install-skill <BERIL_ROOT>' to deploy the script." >&2
+      return 1
+    fi
+    bash "$adversarial_sh" "$OUTDIR" --type presentation || {
+      echo "  adversarial_review.sh failed (rc=$?); revise loop will halt" >&2
       return 1
     }
   fi

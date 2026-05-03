@@ -1,5 +1,40 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.2.5 (2026-05-03) — adversarial dispatch via `beril-adversarial review` subcommand
+
+beril-adversarial v0.6.0 (2026-05-02) added a `review` Python CLI
+subcommand that dispatches to the canonical shell script. Cleaner
+than our prior sibling-script-path discovery dance.
+
+### Fix
+
+`stage_adversarial_review` in `presentation_maker.sh` now probes
+`beril-adversarial --help` for the `review` subcommand:
+
+- v0.6.0+ detected → invoke `beril-adversarial review --type presentation <draft_dir>` (clean Python CLI path).
+- Older v0.5.x install → falls back to sibling shell script lookup at `.claude/skills/beril-adversarial/tools/adversarial_review.sh`.
+- Neither available → halt with a clear message that user should upgrade adversarial to v0.6.0+ OR re-run `beril-adversarial install-skill`.
+
+The probe-then-dispatch pattern avoids hard-pinning a minimum
+adversarial version in the orchestrator; existing v0.5.x installs
+keep working.
+
+### Why
+
+The previous v0.3.2.4 fallback called `beril-adversarial --type
+presentation` directly, which failed on v0.5.x installs because the
+top-level Python CLI didn't have a review-dispatch subcommand. v0.6.0
+fixed that on the adversarial side; this release closes the loop on
+the consumer side.
+
+### No tests required
+
+The probe pattern is shell logic; the underlying CLI is exercised
+by adversarial's own test suite. Cross-skill smoke (orchestrator
+end-to-end) is the v0.3.4 gate, not blocking here.
+
+---
+
 ## v0.3.2.4 (2026-05-02) — hotfix: model bump + adversarial CLI name fix
 
 Two one-line fixes flagged during the v0.3.2.3 adversarial-loop A/B
