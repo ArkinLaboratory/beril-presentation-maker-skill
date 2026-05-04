@@ -1,0 +1,96 @@
+v0.3.4: hub-readiness docs (Tier A) — SKILL.md rewrite + slash commands + HUB_INSTALL
+
+Closes the hub-deployment readiness gap surfaced by the audit on
+2026-05-04. SKILL.md was stale at v0.2.0 (hadn't been updated through
+v0.3.0/3.1/3.2/3.3/3.3.1/3.3.2); slash commands referenced pre-v0.3.1
+flat layout paths (e.g., draft.pptx at draft_N root rather than
+deliverable/draft.pptx); no operator runbook for hub install; no
+git-branch signal in the agent's project resolution flow.
+
+Docs-only release. Zero code changes. Tests still 663/663 passing.
+
+Changes
+
+1. SKILL.md fully rewritten against v0.3.3.2 reality.
+
+   - Status line current (was "v0.2.0 — first install-shippable").
+   - Adopts adversarial v0.7.0.1's structural pattern:
+     * Two-surfaces table explicitly comparing slash command vs.
+       CLI subcommand syntax with "DO NOT conflate the two" warning
+       (mirrors adversarial v0.7.0.1's hub-test fix).
+     * 6-mode matrix as single source of truth for talk-30 / talk-15
+       / talk-45 / lightning-5 / poster-h / poster-v.
+     * Numbered Steps 1-5 workflow (resolve project → resolve draft
+       → invoke orchestrator → verify completion → guidance), plus
+       Step-2 4-signal resolution tree (explicit arg → git branch
+       projects/<id> → cwd → ask user) lifted from adversarial and
+       adapted for talks/draft_N.
+     * 14-stage pipeline catalog with per-stage cost estimates.
+     * Output artifacts catalog reflecting v0.3.1+ 4-zone layout
+       (deliverable/, narrative/, working/, audit/) including all
+       v0.3.3 image-gen artifacts (05_image_decisions.json,
+       05_images/manifest.json, 03_slides_pre_image_gen/ snapshots,
+       audit/image_provenance.json).
+     * Cost-control flag table covering all 9 v0.3.x flags
+       (--no-adversarial, --max-revise-cost-usd, --max-revisions,
+       --no-images, --auto-approve-images, --max-image-cost-usd,
+       --image-allow-exploratory, --image-style, --no-stream).
+     * Updated alternatives matrix (presentation-maker vs.
+       paper-writer vs. adversarial vs. atlas).
+
+2. commands/beril-presentation-maker.md rewritten with:
+   - Step 2 4-signal project resolution tree (was 3-signal: missing
+     git-branch check).
+   - Step 4 invocation example covering all v0.3.x flags.
+   - Step 5 output paths corrected to deliverable/draft.pptx,
+     working/slide_spec.json, audit/ — was at draft_N root pre-v0.3.1.
+   - Step 6 guidance section covering adversarial findings,
+     citation_reality routing (v3 schema), quantitative-grounding
+     warnings.
+   - Failure-modes table updated with 7 v0.3.x error patterns
+     (image-gen worst-case rejection, CBORG_API_KEY missing,
+     adversarial CLI version mismatch, etc.).
+
+3. commands/beril-presentation-maker-continue.md rewritten with:
+   - Same 4-signal tree pattern (Step 2).
+   - Resume-stage table extended for all 14 stages including
+     image_gen / adversarial_review / revise_slides.
+   - Required-artifacts table updated for v0.3.1+ zone paths
+     (working/00_plan.md, narrative/00_throughline.md, etc.).
+   - Common resume scenarios documented (re-roll AI images,
+     re-run adversarial after deck edit, FREE re-render via
+     --resume-from merge, etc.).
+
+4. NEW HUB_INSTALL.md operator runbook covering:
+   - Prerequisites verification (pipx, claude CLI, BERIL_ROOT/.env,
+     CBORG_API_KEY, optional beril-adversarial).
+   - 3-step install (pipx install / install-skill / configure).
+   - First-run validation (recommended smoke command + expected
+     outcomes).
+   - Slash-command auto-discovery verification.
+   - Upgrade / uninstall procedures.
+   - 8 troubleshooting recipes covering the failure modes we hit
+     during v0.3.3 ship-validation (manifest_arg unbound, CBORG_API_KEY
+     not set, image-gen worst-case rejection, adversarial CLI version
+     mismatch, v0.3.0-shape draft incompatibility, etc.).
+   - Hub-specific notes (CBORG vs. Anthropic auth, per-user
+     storage, concurrency, resumability).
+
+Closes task #66 (Tier A hub-readiness docs).
+
+Doesn't close
+
+Tier B operational improvements (#62/63 already shipped; remaining
+are #50 multi-project smoke, prune/clean subcommand, audit/runs
+population, stage_metadata.json consolidation, CONTRACT.md). These
+ride v0.3.x point releases or post-v0.3.4 follow-ups.
+
+Tier C polish (README.md update, V0_3_1_PUNCH_LIST.md archive).
+
+Refs
+
+- predecessor tag: v0.3.3.2
+- audit: 2026-05-04 conversation grounding-truth against four skill
+  repos (adversarial v0.7.0.1 as reference pattern)
+- next: task #50 multi-project smoke + KBERDL hub install — should
+  now complete cleanly against the docs in this release
