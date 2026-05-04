@@ -71,6 +71,8 @@ LAYOUT_SUBDIRS = (
     "working/05_images",           # v0.3.3 generated PNGs (draft-local)
     "audit/stage-logs",
     "audit/snapshots",
+    "audit/snapshots/03_slides_pre_image_gen",   # v0.3.3: fragment snapshots
+                                                 # before image-gen mutation
     "audit/manual-edits",
     "audit/runs",
 )
@@ -207,6 +209,27 @@ class DraftPaths:
         before each mutation."""
         return self.working / "slide_spec.json"
 
+    @property
+    def image_decisions_json(self) -> Path:
+        """v0.3.3: per-slide decision-layer output.
+
+        Each entry says emit=True/False + reason for that slide's
+        layout. Consumed by the image-gen orchestrator stage to drive
+        the per-slide LLM-prompt loop.
+        """
+        return self.working / "05_image_decisions.json"
+
+    @property
+    def image_manifest_json(self) -> Path:
+        """v0.3.3: per-image manifest. Records every approved /
+        rejected / budget-skipped slide_id → image_path binding plus
+        provenance metadata.
+
+        Lives inside images_dir so the manifest travels with the PNGs
+        when the user copies the dir somewhere else for review.
+        """
+        return self.images_dir / "manifest.json"
+
     # ---- working/ slide-fragment helpers (per-substory + per-image) ----
 
     def slide_fragment(self, fragment_id: str) -> Path:
@@ -282,6 +305,39 @@ class DraftPaths:
     @property
     def revise_loop_metadata(self) -> Path:
         return self.audit / "revise_loop_metadata.json"
+
+    @property
+    def image_provenance_json(self) -> Path:
+        """v0.3.3: append-only provenance log for image_client.py.
+
+        Schema documented in image_client.append_provenance(). Each
+        entry records model + prompt + cost + elapsed + channel +
+        approved_at + quant_content_score for one image-generation
+        call. Survives across re-runs in the same draft (orchestrator
+        appends; never truncates).
+        """
+        return self.audit / "image_provenance.json"
+
+    @property
+    def pre_image_gen_snapshots_dir(self) -> Path:
+        """v0.3.3: where slide_compose fragments are snapshotted before
+        the image-gen stage mutates them (writing real image_path /
+        provenance over the {TBD} placeholders).
+
+        Used by R6's Option-A rejection path: a rejected concept_illustration
+        slide is dropped from the live fragment, but the pre-mutation
+        version remains here for recovery if the user changes their mind.
+        """
+        return self.snapshots_dir / "03_slides_pre_image_gen"
+
+    def pre_image_gen_snapshot(self, fragment_id: str) -> Path:
+        """Per-fragment pre-image-gen snapshot path.
+
+        fragment_id matches slide_fragment(): 'S1_slides', 'intro',
+        'cross_tenant', etc. The snapshot is a verbatim copy of the
+        fragment JSON before image-gen mutates it.
+        """
+        return self.pre_image_gen_snapshots_dir / f"{fragment_id}.json"
 
     @property
     def last_render_hash(self) -> Path:
@@ -592,6 +648,9 @@ def shell_exports(paths: DraftPaths) -> str:
         ("DIAGRAM_REPAIR", paths.diagram_repair),
         ("NEXT_ACTIONS", paths.next_actions),
         ("SLIDE_SPEC", paths.slide_spec),
+        # v0.3.3 image-gen
+        ("IMAGE_DECISIONS_JSON", paths.image_decisions_json),
+        ("IMAGE_MANIFEST_JSON", paths.image_manifest_json),
         # audit/
         ("STATE_JSON", paths.state),
         ("COST_LOG", paths.cost_log),
@@ -605,6 +664,8 @@ def shell_exports(paths: DraftPaths) -> str:
         ("QUANT_GROUNDING_JSON", paths.quantitative_grounding_json),
         ("QUANT_GROUNDING_MD", paths.quantitative_grounding_md),
         ("REVISE_LOOP_METADATA", paths.revise_loop_metadata),
+        ("IMAGE_PROVENANCE_JSON", paths.image_provenance_json),
+        ("PRE_IMAGE_GEN_SNAPSHOTS_DIR", paths.pre_image_gen_snapshots_dir),
         ("LAST_RENDER_HASH", paths.last_render_hash),
         ("LAST_RENDER_PPTX", paths.last_render_pptx),
     ]

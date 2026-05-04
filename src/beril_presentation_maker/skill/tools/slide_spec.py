@@ -102,7 +102,19 @@ DIAGRAM_NODE_SHAPES: tuple[str, ...] = (
 
 DIAGRAM_EDGE_KINDS: tuple[str, ...] = ("straight", "elbow", "curved")
 
-CONCEPT_STYLES: tuple[str, ...] = ("metaphor", "infographic", "conceptual_diagram")
+CONCEPT_STYLES: tuple[str, ...] = (
+    # Original 3 styles (pre-v0.3.0).
+    "metaphor", "infographic", "conceptual_diagram",
+    # v0.3.0 calibration added these. scientific_illustration is the
+    # T2-winning default per ai_image_prompt.v1.md; the other three are
+    # available via STYLE_HINT override. ai_image_prompt.v1.md is the
+    # source of truth for this enumeration — adding a style there
+    # without updating this tuple breaks the spec validator on any
+    # concept_illustration slide using the new style. (v0.3.3 smoke
+    # 2026-05-03 surfaced this drift; the validator hard-rejected
+    # 'scientific_illustration' even though calibration ratified it.)
+    "scientific_illustration", "watercolor", "minimalist", "abstract",
+)
 
 CONCEPT_CHANNELS: tuple[str, ...] = ("A", "B")  # SPEC §8.3 two-channel
 

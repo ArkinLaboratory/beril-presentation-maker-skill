@@ -44,14 +44,25 @@
 #   --resume-from <stage>    Skip earlier stages; reuse their on-disk artifacts
 #                            in --draft-dir. Stages in order:
 #                              plan | throughline | substory_design |
-#                              intro | slide_compose | merge
+#                              intro | slide_compose | image_gen | merge
 #                            Cost savings on prompt-iteration:
 #                              from intro:         ~$1.50 (saves plan+throughline+substory)
 #                              from slide_compose: ~$1.20 (saves plan+throughline+substory+intro)
+#                              from image_gen:     re-run image generation only
 #                              from merge:         FREE (no LLM; assembly only)
 #                            Requires --draft-dir.
 #   --draft-dir <path>       Existing draft_N directory to resume into.
 #                            Required when --resume-from is set.
+#   --no-images              Skip image_gen stage entirely (v0.3.3).
+#   --auto-approve-images    Bypass per-slide approval gate for image_gen
+#                            (CI / power users). Cost cap still enforced.
+#   --image-allow-exploratory
+#                            Allow concept_illustration on EXPLORATORY tier
+#                            (default: skipped per architecture R6).
+#   --max-image-cost-usd <n> Cumulative image-gen cap in USD (default: 0.50,
+#                            ~30 images at $0.014 / gemini-3-pro-image).
+#   --image-style <style>    Force style override across all images this run
+#                            (e.g., scientific_illustration / metaphor).
 #   --help                   Show this message
 
 set -euo pipefail
@@ -72,12 +83,24 @@ NO_ADVERSARIAL=0      # 2026-04-29 v0.3.0: skip adversarial review + revise loop
 MAX_REVISE_COST_USD="5.00"  # cost cap for revise loop (per-run)
 MAX_REVISIONS=6       # max findings the revise loop will process per run
 
+# v0.3.3 image-gen flags
+NO_IMAGES=0                   # skip image_gen stage entirely
+AUTO_APPROVE_IMAGES=0         # bypass per-slide approval gate (CI / power users)
+IMAGE_ALLOW_EXPLORATORY=0     # allow concept_illustration on EXPLORATORY tier
+MAX_IMAGE_COST_USD="0.50"     # cumulative cap; default ~30 images at $0.014/each
+IMAGE_STYLE=""                # optional style override forwarded to ai_image_prompt
+
 CLAUDE_TOOLS="Read,Write,Bash,Grep,Glob,WebSearch,Agent,ToolSearch"
 
 # --- Usage ---
 usage() {
   local exit_code="${1:-0}"
-  sed -n '4,38p' "$0"
+  # Print the file's leading comment block (everything from line 4
+  # up to but not including `set -euo pipefail`). awk-driven so
+  # future flag additions don't require editing magic line numbers
+  # — the previous fixed-range form silently truncated the v0.3.3
+  # help output mid-flag-block.
+  awk '/^set -euo pipefail/{exit} NR>=4{print}' "$0"
   exit "$exit_code"
 }
 
@@ -97,6 +120,12 @@ while [[ $# -gt 0 ]]; do
     --no-adversarial)    NO_ADVERSARIAL=1; shift ;;
     --max-revise-cost-usd) MAX_REVISE_COST_USD="$2"; shift 2 ;;
     --max-revisions)     MAX_REVISIONS="$2"; shift 2 ;;
+    # v0.3.3 image-gen flags
+    --no-images)             NO_IMAGES=1; shift ;;
+    --auto-approve-images)   AUTO_APPROVE_IMAGES=1; shift ;;
+    --image-allow-exploratory) IMAGE_ALLOW_EXPLORATORY=1; shift ;;
+    --max-image-cost-usd)    MAX_IMAGE_COST_USD="$2"; shift 2 ;;
+    --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
     --help)              usage ;;
     -*)                  echo "Error: Unknown option $1" >&2; usage 1 ;;
     *)
@@ -127,13 +156,13 @@ esac
 
 # Validate --resume-from + --draft-dir pairing.
 # v0.3.2.6: list extended to include adversarial_review + revise_slides
-# (added in v0.3.0). Previously this case statement disagreed with the
-# should_run() ordinal table, blocking --resume-from revise_slides.
+# (added in v0.3.0). v0.3.3: extended to include image_gen (between
+# speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3).
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge|adversarial_review|revise_slides) ;;
+  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|merge|adversarial_review|revise_slides" >&2
+    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -260,6 +289,32 @@ if missing:
 fi
 echo "[pre-flight] OK" >&2
 
+# --- v0.3.3 image-gen: resolve CBORG_API_KEY ---
+# Mirrors image_gen_calibration.py's _resolve_api_key precedence: shell
+# env wins; otherwise read from BERIL_ROOT/.env (the standard BERIL
+# secret location, matches what atlas + adversarial use). Never echoes
+# the value. Per memory feedback_secret_file_handling.md, we extract
+# the single variable we need rather than `source`-ing the whole file.
+if [[ -z "${CBORG_API_KEY:-}" ]] && [[ -f "$BERIL_ROOT/.env" ]]; then
+  CBORG_API_KEY=$("$PYTHON_BIN" -c "
+import re, sys
+from pathlib import Path
+env_file = Path('$BERIL_ROOT/.env')
+for line in env_file.read_text(encoding='utf-8').splitlines():
+    m = re.match(r'^CBORG_API_KEY=(.*)$', line.strip())
+    if m:
+        v = m.group(1).strip()
+        if (v.startswith('\"') and v.endswith('\"')) or (v.startswith(\"'\") and v.endswith(\"'\")):
+            v = v[1:-1]
+        sys.stdout.write(v)
+        break
+" 2>/dev/null) || true
+  if [[ -n "$CBORG_API_KEY" ]]; then
+    export CBORG_API_KEY
+    echo "[orchestrator] CBORG_API_KEY loaded from BERIL_ROOT/.env" >&2
+  fi
+fi
+
 # --- Output dir setup ---
 DRAFTS_DIR="$PROJECT_DIR/talks"
 mkdir -p "$DRAFTS_DIR"
@@ -331,6 +386,9 @@ set_draft_paths() {
   DIAGRAM_REPAIR="$WORKING_DIR/diagram_repair_report.md"
   NEXT_ACTIONS="$WORKING_DIR/next_actions.md"
   SLIDE_SPEC="$WORKING_DIR/slide_spec.json"
+  # v0.3.3 image-gen working-zone artifacts (mirrors draft_paths.py)
+  IMAGE_DECISIONS_JSON="$WORKING_DIR/05_image_decisions.json"
+  IMAGE_MANIFEST_JSON="$IMAGES_DIR/manifest.json"
   # audit/
   STATE_JSON="$AUDIT_DIR/state.json"
   COST_LOG="$AUDIT_DIR/cost-log.jsonl"
@@ -344,6 +402,9 @@ set_draft_paths() {
   QUANT_GROUNDING_JSON="$AUDIT_DIR/quantitative_grounding.json"
   QUANT_GROUNDING_MD="$AUDIT_DIR/quantitative_grounding.md"
   REVISE_LOOP_METADATA="$AUDIT_DIR/revise_loop_metadata.json"
+  # v0.3.3 image-gen audit-zone artifacts
+  IMAGE_PROVENANCE_JSON="$AUDIT_DIR/image_provenance.json"
+  PRE_IMAGE_GEN_SNAPSHOTS_DIR="$SNAPSHOTS_DIR/03_slides_pre_image_gen"
   LAST_RENDER_HASH="$AUDIT_DIR/last-render.json"
   LAST_RENDER_PPTX="$SNAPSHOTS_DIR/last-render.pptx"
 }
@@ -372,6 +433,13 @@ validate_resume_prereqs() {
       [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
       [[ -f "$SUBSTORIES_PATH" ]] || missing+=("$SUBSTORIES_PATH")
       [[ -f "$SLIDES_DIR/intro.json" ]] || missing+=("$SLIDES_DIR/intro.json") ;;
+    image_gen)
+      # v0.3.3: image_gen needs slide_compose fragments AND throughline +
+      # substory paths (fed to ai_image_prompt.v1 as context).
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
+      [[ -f "$SUBSTORIES_PATH" ]] || missing+=("$SUBSTORIES_PATH")
+      [[ -d "$SLIDES_DIR" ]] || missing+=("$SLIDES_DIR (no fragments)")
+      ;;
     merge)
       [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
       [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH")
@@ -1077,6 +1145,294 @@ schema. Write the result to OUT_PATH."
   return 0
 }
 
+stage_image_gen() {
+  # v0.3.3: per-slide AI image generation pipeline.
+  # Decision (deterministic Python) → ai_image_prompt.v1 (LLM) → user
+  # approval gate → image_client.py generate → manifest update +
+  # fragment mutation. Architecture: V0_3_3_ARCHITECTURE.md.
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[Stage 11/14] image_gen (concept_illustration → AI image)" >&2
+  echo "──────────────────────────────────────────────────" >&2
+
+  # 1. Run the deterministic decision layer (no LLM cost).
+  local exploratory_flag=""
+  if [[ $IMAGE_ALLOW_EXPLORATORY -eq 1 ]]; then
+    exploratory_flag="--allow-exploratory"
+  fi
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/image_gen_decision.py" emit-decisions \
+      --slides-dir "$SLIDES_DIR" \
+      --tier "$TIER" --mode "$MODE" \
+      $exploratory_flag \
+      --out "$IMAGE_DECISIONS_JSON"; then
+    echo "  image_gen_decision failed; skipping image-gen stage" >&2
+    return 0
+  fi
+
+  # 2. Enumerate emit=true slide_ids. Empty list → nothing to do.
+  local yes_list
+  yes_list="$("$PYTHON_BIN" "$TOOLS_DIR/image_gen_decision.py" \
+    list-yes "$IMAGE_DECISIONS_JSON")"
+  if [[ -z "$yes_list" ]]; then
+    echo "  no slides flagged for image-gen (decision layer)" >&2
+    return 0
+  fi
+  local n_yes
+  n_yes=$(echo "$yes_list" | wc -l | tr -d ' ')
+  echo "  decision layer flagged $n_yes slide(s) for image-gen" >&2
+
+  # Per-slide loop. bulk_mode is set when user picks [A]/[R]; subsequent
+  # slides short-circuit through the gate.
+  local bulk_mode=""
+  local n_approved=0 n_rejected=0 n_skipped=0
+  local slide_id
+
+  while IFS= read -r slide_id; do
+    [[ -z "$slide_id" ]] && continue
+    echo "" >&2
+    echo "  ── $slide_id ──" >&2
+
+    # 3a. Snapshot fragment (idempotent across multiple slides per fragment).
+    "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" snapshot-fragment \
+      --draft-dir "$OUTDIR" --slide-id "$slide_id" >/dev/null || {
+      echo "    failed to snapshot fragment for $slide_id; skipping" >&2
+      continue
+    }
+
+    # 3b. Budget pre-flight. Worst-case for one image is ~$0.04 per
+    # gemini-3-pro-image; if remaining < that, record skip + continue.
+    local budget_remaining
+    budget_remaining=$("$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" \
+      budget-remaining --draft-dir "$OUTDIR" --cap-usd "$MAX_IMAGE_COST_USD")
+    # Compare with awk (bash doesn't do floats natively).
+    local under_budget
+    under_budget=$(awk -v b="$budget_remaining" 'BEGIN{print (b > 0.04) ? "yes" : "no"}')
+    if [[ "$under_budget" == "no" ]]; then
+      echo "    budget exhausted (remaining \$$budget_remaining); skipping" >&2
+      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-skipped \
+        --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+        --reason "budget cap \$${MAX_IMAGE_COST_USD} exhausted (remaining \$${budget_remaining})" \
+        >/dev/null
+      n_skipped=$((n_skipped + 1))
+      continue
+    fi
+
+    # 3c. Resolve the slide's stub path (the fragment is the stub for v0.3.3).
+    local stub_path
+    stub_path=$("$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" \
+      find-fragment --draft-dir "$OUTDIR" --slide-id "$slide_id")
+    if [[ -z "$stub_path" || ! -f "$stub_path" ]]; then
+      echo "    fragment not found for $slide_id; skipping" >&2
+      continue
+    fi
+
+    # 3d. Author the image request via ai_image_prompt.v1.md.
+    local request_path="$IMAGE_REQUESTS_DIR/${slide_id}_request.json"
+    local style_directive=""
+    if [[ -n "$IMAGE_STYLE" ]]; then
+      style_directive="STYLE_HINT=$IMAGE_STYLE"$'\n'
+    fi
+    local user_prompt="OUT_PATH=$request_path
+CHANNEL=A
+SLIDE_ID_TARGET=$slide_id
+STUB_PATH=$stub_path
+USER_PROMPT_TEXT=
+${style_directive}THROUGHLINE_PATH=$THROUGHLINE_PATH
+SUBSTORY_PATH=$SUBSTORIES_PATH
+MODE=$MODE
+TIER=$TIER
+BUDGET_USD_REMAINING=$budget_remaining
+
+Run ai_image_prompt.v1 for slide $slide_id (Channel A — LLM-initiated).
+Read STUB_PATH for slide content; read THROUGHLINE_PATH and SUBSTORY_PATH
+for context; emit a model-ready image-request.v1 JSON to OUT_PATH.
+slide_id_target MUST exactly equal $slide_id; the orchestrator verifies
+this on write."
+
+    if ! invoke_claude_with_retry "$PROMPTS_DIR/ai_image_prompt.v1.md" \
+        "$user_prompt" "$request_path" "ai_image_prompt-$slide_id"; then
+      echo "    ai_image_prompt failed; recording rejection" >&2
+      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+        --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+        --reason "ai_image_prompt invocation failed (LLM error)" \
+        >/dev/null
+      n_rejected=$((n_rejected + 1))
+      continue
+    fi
+
+    # 3e. Trust-but-verify: confirm slide_id_target matches what we
+    # passed in. LLMs occasionally drop or rewrite the field.
+    if ! "$PYTHON_BIN" "$TOOLS_DIR/image_gen_approval.py" verify \
+        "$request_path" "$slide_id" >&2; then
+      echo "    request verification failed; recording rejection" >&2
+      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+        --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+        --reason "ai_image_prompt produced malformed request (slide_id_target mismatch)" \
+        --request-path "$request_path" \
+        >/dev/null
+      n_rejected=$((n_rejected + 1))
+      continue
+    fi
+
+    # 3f. Approval gate. --auto-approve-images or a prior bulk choice
+    # short-circuits the prompt.
+    local verdict_rc
+    if [[ $AUTO_APPROVE_IMAGES -eq 1 ]]; then
+      verdict_rc=0  # treat as APPROVE
+    else
+      local bulk_arg=""
+      if [[ -n "$bulk_mode" ]]; then
+        bulk_arg="--bulk-mode $bulk_mode"
+      fi
+      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_approval.py" prompt \
+        "$request_path" \
+        --budget-remaining-usd "$budget_remaining" \
+        $bulk_arg
+      verdict_rc=$?
+    fi
+
+    case "$verdict_rc" in
+      0)  # APPROVE
+        _generate_and_record_image "$slide_id" "$request_path" \
+          && n_approved=$((n_approved + 1)) \
+          || n_rejected=$((n_rejected + 1))
+        ;;
+      1)  # REJECT
+        echo "    user rejected $slide_id" >&2
+        "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+          --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+          --reason "user-rejected via approval gate" \
+          --request-path "$request_path" \
+          >/dev/null
+        n_rejected=$((n_rejected + 1))
+        ;;
+      10) # APPROVE_ALL
+        bulk_mode="approve_all"
+        echo "    bulk approve enabled for remaining slides" >&2
+        _generate_and_record_image "$slide_id" "$request_path" \
+          && n_approved=$((n_approved + 1)) \
+          || n_rejected=$((n_rejected + 1))
+        ;;
+      11) # REJECT_ALL
+        bulk_mode="reject_all"
+        echo "    bulk reject enabled for remaining slides" >&2
+        "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+          --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+          --reason "user-rejected via approval gate (bulk reject)" \
+          --request-path "$request_path" \
+          >/dev/null
+        n_rejected=$((n_rejected + 1))
+        ;;
+      20) # QUIT
+        echo "    user quit image-gen stage" >&2
+        break
+        ;;
+      *)
+        echo "    unexpected approval gate exit $verdict_rc; recording rejection" >&2
+        "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+          --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+          --reason "approval gate returned unexpected exit code $verdict_rc" \
+          --request-path "$request_path" \
+          >/dev/null
+        n_rejected=$((n_rejected + 1))
+        ;;
+    esac
+  done <<< "$yes_list"
+
+  echo "" >&2
+  echo "  image_gen summary: $n_approved approved, $n_rejected rejected, $n_skipped skipped" >&2
+  return 0
+}
+
+# Helper for stage_image_gen: invoke image_client.py, on success
+# update manifest + bind image into the fragment. Returns 0 on
+# success, 1 on failure (caller increments rejected counter).
+_generate_and_record_image() {
+  local slide_id="$1"
+  local request_path="$2"
+  local image_path="$IMAGES_DIR/${slide_id}.png"
+
+  local image_prompt cost_ceil
+  image_prompt=$("$PYTHON_BIN" -c "
+import json
+with open('$request_path') as f:
+    print(json.load(f)['image_prompt'])
+")
+  cost_ceil=$("$PYTHON_BIN" -c "
+import json
+with open('$request_path') as f:
+    print(json.load(f)['worst_case_cost_usd'])
+")
+
+  local budget_remaining
+  budget_remaining=$("$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" \
+    budget-remaining --draft-dir "$OUTDIR" --cap-usd "$MAX_IMAGE_COST_USD")
+
+  echo "    generating image (worst-case \$$cost_ceil; remaining \$$budget_remaining)" >&2
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/image_client.py" generate \
+      --prompt "$image_prompt" \
+      --out "$image_path" \
+      --budget "$budget_remaining" \
+      --channel A \
+      --provenance "$IMAGE_PROVENANCE_JSON"; then
+    echo "    image_client.py failed for $slide_id" >&2
+    "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+      --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+      --reason "image_client.py generation failed" \
+      --request-path "$request_path" \
+      >/dev/null
+    return 1
+  fi
+
+  # image_client appended to image_provenance.json. Pull the entry it
+  # just wrote to get the actual cost + timestamp.
+  local approved_at cost_usd model
+  approved_at=$("$PYTHON_BIN" -c "
+import json
+with open('$IMAGE_PROVENANCE_JSON') as f:
+    entries = json.load(f)['entries']
+print(entries[-1]['approved_at'])
+")
+  cost_usd=$("$PYTHON_BIN" -c "
+import json
+with open('$IMAGE_PROVENANCE_JSON') as f:
+    entries = json.load(f)['entries']
+print(entries[-1]['cost_usd'])
+")
+  model=$("$PYTHON_BIN" -c "
+import json
+with open('$IMAGE_PROVENANCE_JSON') as f:
+    entries = json.load(f)['entries']
+print(entries[-1]['model'])
+")
+
+  # Manifest entry.
+  "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-approved \
+    --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+    --image-path "$image_path" \
+    --request-path "$request_path" \
+    --channel A \
+    --model "$model" \
+    --cost-usd "$cost_usd" \
+    --approved-at "$approved_at" \
+    >/dev/null
+
+  # Bind into the fragment so merge picks it up via the manifest;
+  # also writes back the placeholder fields in the fragment so a
+  # spec-validator-only run (e.g. --resume-from merge) sees real data.
+  "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" mutate-fragment-bind \
+    --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+    --image-path "$image_path" \
+    --model "$model" \
+    --cost-usd "$cost_usd" \
+    --channel A \
+    --approved-at "$approved_at" \
+    >/dev/null
+
+  echo "    -> $image_path (\$$cost_usd)" >&2
+  return 0
+}
+
 stage_merge_and_assemble() {
   echo "" >&2
   echo "[Final] merge fragments + validate + assemble" >&2
@@ -1085,6 +1441,21 @@ stage_merge_and_assemble() {
   local spec_raw="$SNAPSHOTS_DIR/slide_spec.raw.json"
   local spec="$SLIDE_SPEC"
   local repair_report="$DIAGRAM_REPAIR"
+
+  # v0.3.3: optionally pass --image-manifest-path so merge binds
+  # approved image_path + provenance and drops rejected/skipped slides.
+  # If the manifest is absent (NO_IMAGES, image_gen skipped, or
+  # image_gen failed), merge_compose_fragments treats it as a no-op.
+  #
+  # 2026-05-03 fix: under `set -u`, expanding "${manifest_arg[@]}"
+  # on an empty array fails with "unbound variable". The
+  # `${name[@]+"${name[@]}"}` form expands to the inner only when set,
+  # so an empty array safely expands to nothing. Verified against bash
+  # 4.x and 5.x — both honor this idiom.
+  local manifest_arg=()
+  if [[ -f "$IMAGE_MANIFEST_JSON" ]]; then
+    manifest_arg=(--image-manifest-path "$IMAGE_MANIFEST_JSON")
+  fi
 
   "$PYTHON_BIN" "$TOOLS_DIR/merge_compose_fragments.py" \
     --outdir "$OUTDIR" \
@@ -1100,6 +1471,7 @@ stage_merge_and_assemble() {
     --citation-pool-path "$CITATION_POOL_PATH" \
     --cross-tenant-fragment-path "$SLIDES_DIR/cross_tenant.json" \
     --qa-fragment-path "$SLIDES_DIR/qa_anticipated.json" \
+    ${manifest_arg[@]+"${manifest_arg[@]}"} \
     --out "$spec_raw"
 
   echo "  repairing diagram stubs..." >&2
@@ -1326,10 +1698,11 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
 should_run() {
   local stage="$1"
   if [[ -z "$RESUME_FROM" ]]; then return 0; fi
-  # Map stages to integer ordinals (curate_figures inserted at 4;
-  # later stages shifted by 1).
+  # Stage ordinals. v0.3.3: image_gen inserted at 11 (between
+  # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3); merge,
+  # adversarial_review, revise_slides shift by 1.
   local order_resume order_stage
-  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 merge:11 adversarial_review:12 revise_slides:13; do
+  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -1371,6 +1744,16 @@ if should_run qa_prep;          then stage_qa_prep         || { echo "FAIL at qa
 
 if should_run speaker_notes;    then stage_speaker_notes   || { echo "FAIL at speaker_notes" >&2; exit 1; }
                                 else echo "[skip] speaker_notes (resume from $RESUME_FROM)" >&2; fi
+
+# v0.3.3: image_gen between speaker_notes and merge. Stage owns its own
+# error handling; failures are recorded as rejections in the manifest
+# rather than halting the pipeline.
+if [[ $NO_IMAGES -eq 0 ]]; then
+  if should_run image_gen;      then stage_image_gen        || { echo "FAIL at image_gen" >&2; exit 1; }
+                                else echo "[skip] image_gen (resume from $RESUME_FROM)" >&2; fi
+else
+  echo "[skip] image_gen (--no-images)" >&2
+fi
 
 # merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }

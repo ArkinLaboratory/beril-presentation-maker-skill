@@ -150,7 +150,11 @@
           "enum": [
             "metaphor",
             "infographic",
-            "conceptual_diagram"
+            "conceptual_diagram",
+            "scientific_illustration",
+            "watercolor",
+            "minimalist",
+            "abstract"
           ]
         },
         "title": {

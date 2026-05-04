@@ -38,6 +38,7 @@ _VALID_STAGES = (
     "slide_compose",
     "qa_prep",
     "speaker_notes",
+    "image_gen",          # v0.3.3
     "merge",
     "adversarial_review",
     "revise_slides",
@@ -64,6 +65,16 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         required=True,
         choices=_VALID_STAGES,
         help="Stage to resume from. Earlier-stage artifacts are reused.",
+    )
+    p.add_argument(
+        "--beril-root",
+        default=None,
+        help=(
+            "Override BERIL_ROOT. If unset, auto-derived from "
+            "<draft_dir>/../../../.. (the path layout is "
+            "BERIL_ROOT/projects/<id>/talks/draft_N), since the "
+            "orchestrator requires this even when resuming."
+        ),
     )
     p.add_argument(
         "--mode",
@@ -93,6 +104,16 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--no-stream",
         action="store_true",
     )
+    # v0.3.0 review-rewrite loop flags
+    p.add_argument("--no-adversarial", action="store_true")
+    p.add_argument("--max-revise-cost-usd", default=None)
+    p.add_argument("--max-revisions", default=None)
+    # v0.3.3 image-gen flags
+    p.add_argument("--no-images", action="store_true")
+    p.add_argument("--auto-approve-images", action="store_true")
+    p.add_argument("--image-allow-exploratory", action="store_true")
+    p.add_argument("--max-image-cost-usd", default=None)
+    p.add_argument("--image-style", default=None)
     p.set_defaults(func=run)
     return p
 
@@ -129,9 +150,19 @@ def run(args: argparse.Namespace) -> int:
     # ignores it when resuming.
     project_id_placeholder = draft_dir.parent.parent.name
 
+    # The orchestrator also requires --beril-root unconditionally (even
+    # in resume mode, since it validates BERIL_ROOT/projects/<id>/ exists
+    # before any stage runs). Derive from the draft_dir layout if the
+    # user didn't override: draft_N → talks → project → projects → BERIL_ROOT.
+    if args.beril_root:
+        beril_root = Path(args.beril_root).expanduser().resolve()
+    else:
+        beril_root = draft_dir.parents[3]
+
     argv = [
         "bash", str(sh_path),
         project_id_placeholder,
+        "--beril-root", str(beril_root),
         "--resume-from", args.resume_from,
         "--draft-dir", str(draft_dir),
     ]
@@ -147,6 +178,24 @@ def run(args: argparse.Namespace) -> int:
         argv += ["--model", args.model]
     if args.no_stream:
         argv += ["--no-stream"]
+    # v0.3.0 review-rewrite loop flags
+    if args.no_adversarial:
+        argv += ["--no-adversarial"]
+    if args.max_revise_cost_usd is not None:
+        argv += ["--max-revise-cost-usd", str(args.max_revise_cost_usd)]
+    if args.max_revisions is not None:
+        argv += ["--max-revisions", str(args.max_revisions)]
+    # v0.3.3 image-gen flags
+    if args.no_images:
+        argv += ["--no-images"]
+    if args.auto_approve_images:
+        argv += ["--auto-approve-images"]
+    if args.image_allow_exploratory:
+        argv += ["--image-allow-exploratory"]
+    if args.max_image_cost_usd is not None:
+        argv += ["--max-image-cost-usd", str(args.max_image_cost_usd)]
+    if args.image_style:
+        argv += ["--image-style", args.image_style]
 
     print(f"▸ Running: {' '.join(argv)}", file=sys.stderr)
     print("", file=sys.stderr)

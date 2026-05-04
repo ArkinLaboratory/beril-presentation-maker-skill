@@ -101,6 +101,54 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         action="store_true",
         help="Disable stream-json parser pipe (loses cost summary + Write verification).",
     )
+    # v0.3.0 adversarial review-rewrite loop flags
+    p.add_argument(
+        "--no-adversarial",
+        action="store_true",
+        help="Skip adversarial review + revise-loop stages (v0.3.0+).",
+    )
+    p.add_argument(
+        "--max-revise-cost-usd",
+        default=None,
+        help="Cost cap for the revise loop in USD (default: 5.00).",
+    )
+    p.add_argument(
+        "--max-revisions",
+        default=None,
+        help="Max findings the revise loop will process per run (default: 6).",
+    )
+    # v0.3.3 image-gen flags
+    p.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Skip the image_gen stage entirely (v0.3.3+).",
+    )
+    p.add_argument(
+        "--auto-approve-images",
+        action="store_true",
+        help=(
+            "Bypass per-slide image-approval gate for image_gen "
+            "(CI / power users). Cost cap still enforced."
+        ),
+    )
+    p.add_argument(
+        "--image-allow-exploratory",
+        action="store_true",
+        help=(
+            "Allow concept_illustration on EXPLORATORY tier "
+            "(default: skipped per architecture R6)."
+        ),
+    )
+    p.add_argument(
+        "--max-image-cost-usd",
+        default=None,
+        help="Cumulative image-gen cap in USD (default: 0.50).",
+    )
+    p.add_argument(
+        "--image-style",
+        default=None,
+        help="Force style override across all images this run.",
+    )
     p.set_defaults(func=run)
     return p
 
@@ -144,6 +192,24 @@ def run(args: argparse.Namespace) -> int:
         argv += ["--model", args.model]
     if args.no_stream:
         argv += ["--no-stream"]
+    # v0.3.0 review-rewrite loop flags
+    if args.no_adversarial:
+        argv += ["--no-adversarial"]
+    if args.max_revise_cost_usd is not None:
+        argv += ["--max-revise-cost-usd", str(args.max_revise_cost_usd)]
+    if args.max_revisions is not None:
+        argv += ["--max-revisions", str(args.max_revisions)]
+    # v0.3.3 image-gen flags
+    if args.no_images:
+        argv += ["--no-images"]
+    if args.auto_approve_images:
+        argv += ["--auto-approve-images"]
+    if args.image_allow_exploratory:
+        argv += ["--image-allow-exploratory"]
+    if args.max_image_cost_usd is not None:
+        argv += ["--max-image-cost-usd", str(args.max_image_cost_usd)]
+    if args.image_style:
+        argv += ["--image-style", args.image_style]
 
     print(f"▸ Running: {' '.join(argv)}", file=sys.stderr)
     print("", file=sys.stderr)

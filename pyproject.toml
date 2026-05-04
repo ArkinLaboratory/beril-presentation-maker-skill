@@ -1,16 +1,16 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.1 (BREAKING — 4-zone draft layout + Stream A wrinkles).
-# Per-draft directory now uses deliverable/narrative/working/audit/
-# subdirs, replacing the v0.3.0 chaos of 30+ files at draft top-level.
-# Manual-edit detection via hash-guard preserves user PowerPoint edits
-# in audit/manual-edits/ before pipeline regeneration. Stream A live-
-# test wrinkles fixed: position fallback in revise_loop's
-# _insert_slide_into_spec (A1) + tier register propagation in
-# add_slide.v1.md (A2). v0.3.0-shape drafts are not migrated; clean
-# break, start fresh. Tables (v0.3.2) + image-gen orchestrator stage
-# (v0.3.3) build on this clean foundation.
+# Status: v0.3.3 — image-gen orchestrator stage SHIPPED. Channel A
+# (LLM-initiated) concept_illustration → AI image pipeline is live:
+# deterministic Python decision layer + ai_image_prompt.v1 LLM call
+# per slide + per-slide approval gate + image_client.py generation
+# + manifest binding through merge. Architecture in
+# V0_3_3_ARCHITECTURE.md. Backwards-compat: --no-images skips the
+# stage; pre-v0.3.3 drafts merge with no manifest binding. Channel B
+# (user-initiated) deferred to v0.4.x. Builds on v0.3.1's 4-zone
+# layout (deliverable/narrative/working/audit) and v0.3.2's
+# data_table layout.
 ####################################################################
 
 [build-system]
@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.2.8"
+version = "0.3.3"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

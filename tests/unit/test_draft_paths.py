@@ -81,6 +81,8 @@ WORKING_ATTRS = (
     "cross_tenant_md", "cross_tenant_json",
     "curated_figures", "figures_inventory",
     "diagram_repair", "next_actions", "slide_spec",
+    # v0.3.3 image-gen working-zone artifacts
+    "image_decisions_json", "image_manifest_json",
 )
 AUDIT_ATTRS = (
     "state", "cost_log", "stage_metadata",
@@ -90,6 +92,8 @@ AUDIT_ATTRS = (
     "quantitative_grounding_json", "quantitative_grounding_md",
     "revise_loop_metadata",
     "last_render_hash",
+    # v0.3.3 image-gen audit-zone artifacts
+    "image_provenance_json", "pre_image_gen_snapshots_dir",
 )
 
 
@@ -196,6 +200,50 @@ def test_run_archive_dir(tmp_path):
     paths = DraftPaths.from_draft_dir(tmp_path)
     assert paths.run_archive_dir(1) == paths.runs_dir / "run-1"
     assert paths.run_archive_dir(42) == paths.runs_dir / "run-42"
+
+
+# ---------------------------------------------------------------------------
+# v0.3.3 image-gen paths
+# ---------------------------------------------------------------------------
+
+def test_image_decisions_json_path(tmp_path):
+    paths = DraftPaths.from_draft_dir(tmp_path)
+    assert paths.image_decisions_json == paths.working / "05_image_decisions.json"
+
+
+def test_image_manifest_lives_inside_images_dir(tmp_path):
+    """Manifest travels with the PNGs — lives inside images_dir, not at
+    working/ root, so users copying the dir for review get both."""
+    paths = DraftPaths.from_draft_dir(tmp_path)
+    assert paths.image_manifest_json == paths.images_dir / "manifest.json"
+    assert paths.image_manifest_json.parent == paths.images_dir
+
+
+def test_image_provenance_lives_in_audit_zone(tmp_path):
+    """Provenance is append-only audit data — survives across re-runs.
+    Must live in audit/, not working/."""
+    paths = DraftPaths.from_draft_dir(tmp_path)
+    assert paths.image_provenance_json == paths.audit / "image_provenance.json"
+    assert paths.audit in paths.image_provenance_json.parents
+
+
+def test_pre_image_gen_snapshot_path(tmp_path):
+    """Per-fragment snapshot path lives under audit/snapshots/03_slides_pre_image_gen/."""
+    paths = DraftPaths.from_draft_dir(tmp_path)
+    assert paths.pre_image_gen_snapshots_dir == \
+        paths.snapshots_dir / "03_slides_pre_image_gen"
+    assert paths.pre_image_gen_snapshot("S1_slides") == \
+        paths.pre_image_gen_snapshots_dir / "S1_slides.json"
+    assert paths.pre_image_gen_snapshot("intro") == \
+        paths.pre_image_gen_snapshots_dir / "intro.json"
+
+
+def test_pre_image_gen_snapshots_dir_created_by_init_layout(tmp_path):
+    """init_layout must create the snapshot subdir so image-gen can
+    write to it without prior mkdir."""
+    paths = DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    assert paths.pre_image_gen_snapshots_dir.is_dir()
 
 
 # ---------------------------------------------------------------------------

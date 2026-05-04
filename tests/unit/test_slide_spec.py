@@ -236,9 +236,45 @@ def test_diagram_node_shapes_include_swimlane(ss):
     assert len(ss.DIAGRAM_NODE_SHAPES) == 7
 
 
-def test_concept_styles_match_decisions(ss):
-    """D-028: one layout with three style variants."""
-    assert set(ss.CONCEPT_STYLES) == {"metaphor", "infographic", "conceptual_diagram"}
+def test_concept_styles_match_ai_image_prompt(ss):
+    """v0.3.3: CONCEPT_STYLES must match the styles enumerated in
+    ai_image_prompt.v1.md (the source of truth for image-request styles).
+
+    Drift between these two surfaces produces silent contract-drift
+    bugs: a concept_illustration slide with a calibration-ratified
+    style passes the request schema but fails the spec validator.
+    Caught in v0.3.3 smoke 2026-05-03 — validator hard-rejected
+    'scientific_illustration' (the T2-winning default per calibration)
+    because this tuple still listed only the original 3.
+
+    If ai_image_prompt.v1.md adds or removes a style, this tuple MUST
+    be updated in the same commit.
+    """
+    expected = {
+        # Original 3 (pre-v0.3.0).
+        "metaphor", "infographic", "conceptual_diagram",
+        # v0.3.0 calibration additions.
+        "scientific_illustration", "watercolor", "minimalist", "abstract",
+    }
+    assert set(ss.CONCEPT_STYLES) == expected, (
+        f"CONCEPT_STYLES drifted from ai_image_prompt.v1.md: "
+        f"{set(ss.CONCEPT_STYLES)} != {expected}"
+    )
+
+
+def test_concept_illustration_accepts_scientific_illustration(ss):
+    """The T2-winning calibration default must validate cleanly."""
+    spec = ss.example_slide_spec()
+    # Find the concept_illustration slide in the example
+    for slide in spec["slides"]:
+        if slide.get("layout") == "concept_illustration":
+            slide["content"]["style"] = "scientific_illustration"
+            break
+    issues = ss.validate_slide_spec(spec)
+    assert issues == [], (
+        "scientific_illustration must validate (calibration default): "
+        + "; ".join(i.format() for i in issues)
+    )
 
 
 def test_concept_channels_match_two_channel_design(ss):

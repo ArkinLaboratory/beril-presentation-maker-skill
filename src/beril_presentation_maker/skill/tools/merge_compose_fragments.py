@@ -60,7 +60,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # slide_spec.py for SCHEMA_VERSION; if running from source, sys.path
 # may not include the tools dir, so we resolve relative to this file.
@@ -225,6 +225,90 @@ def strip_orchestrator_metadata(slide: dict) -> dict:
         if k not in ("speaker_notes_seed", "evidence_anchors", "position")
     }
     return cleaned
+
+
+# v0.3.3: image-manifest binding. The image-gen stage (between
+# speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3) writes a
+# manifest at working/05_images/manifest.json; merge consumes it
+# here to bind approved image_path + provenance onto the matching
+# concept_illustration slide, and to drop slides for rejected /
+# budget-skipped entries (R6 Option A).
+#
+# Backwards-compat: when the manifest is absent (pre-v0.3.3 drafts,
+# or `--no-images` runs), apply_image_manifest is a no-op.
+
+def apply_image_manifest(
+    slide_dict: dict,
+    manifest,
+    slide_id_target: str,
+):
+    """Apply manifest binding to one slide.
+
+    Args:
+      slide_dict: the cleaned slide dict (post strip_orchestrator_metadata).
+        Mutated in place when an approved entry is bound.
+      manifest: an image_gen_manifest.Manifest, or None (no-op).
+      slide_id_target: "S2-pos4" pattern matching the manifest entry's slide_id.
+
+    Returns:
+      The slide dict (possibly mutated) when approved or no manifest entry.
+      None when the slide is rejected or budget-skipped (caller drops it).
+    """
+    if manifest is None:
+        return slide_dict
+    entry = manifest.get(slide_id_target)
+    if entry is None:
+        return slide_dict
+    if not entry.get("approved"):
+        # Rejected (user choice) or budget-skipped — caller drops.
+        return None
+
+    # Approved: bind image_path + provenance into content. The
+    # concept_illustration validator (slide_spec._check_concept_illustration)
+    # requires both, so we populate them from the manifest entry's fields.
+    content = slide_dict.setdefault("content", {})
+    content["image_path"] = entry["image_path"]
+    content["provenance"] = {
+        "model": entry["model"],
+        "cost_usd": entry["cost_usd"],
+        "channel": entry["channel"],
+        "approved_at": entry["approved_at"],
+    }
+    return slide_dict
+
+
+def load_image_manifest(path: Optional[Path]):
+    """Load the image manifest at `path`. Defensive: missing /
+    malformed → returns None with a stderr warning, so merge can
+    proceed without binding (legacy v0.3.2 behavior preserved).
+
+    Returned object is an image_gen_manifest.Manifest (lazy-imported
+    to keep merge runnable when the package isn't installed).
+    """
+    if path is None or not path.is_file():
+        return None
+    try:
+        # Lazy-import: the sibling module path-resolves the same way
+        # merge does. Keeps the test isolation clean.
+        import image_gen_manifest as igm  # noqa: PLC0415
+    except ImportError:
+        # Package layout drift would surface here. Warn but don't
+        # crash merge — the pipeline can proceed without binding.
+        print(
+            f"  [merge] warning: image_gen_manifest module not importable; "
+            f"skipping manifest binding from {path}",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        return igm.Manifest.load(path)
+    except Exception as e:  # noqa: BLE001 — defensive
+        print(
+            f"  [merge] warning: image manifest at {path} not loadable: {e}; "
+            f"proceeding without image binding",
+            file=sys.stderr,
+        )
+        return None
 
 
 def build_title_slide(slide_id: int, throughline_punchline: str,
@@ -448,6 +532,14 @@ def main() -> int:
                          "(qa_prep stage output). If present, splice "
                          "qa_anticipated slides at deck end before "
                          "acknowledgments.")
+    ap.add_argument("--image-manifest-path", default=None,
+                    help="Optional path to working/05_images/manifest.json "
+                         "(v0.3.3 image-gen stage output). If present, "
+                         "approved entries bind image_path + provenance "
+                         "onto matching concept_illustration slides; "
+                         "rejected/skipped entries drop the slide from "
+                         "the deck (R6 Option A). Absent → no binding "
+                         "(v0.3.2-and-earlier behavior preserved).")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -497,6 +589,15 @@ def main() -> int:
                   if args.intro_fragment_path else None)
     intro_slides = load_intro_fragment(intro_path)
 
+    # v0.3.3: load the image manifest (defensive — None when absent).
+    # Drives both image-binding (approved entries) and slide-drop
+    # (rejected/skipped entries) below.
+    manifest_path = (Path(args.image_manifest_path)
+                     if args.image_manifest_path else None)
+    image_manifest = load_image_manifest(manifest_path)
+    n_images_bound = 0
+    n_slides_dropped = 0
+
     # Build the merged slide list with global IDs.
     slides: list[dict] = []
     next_id = 1
@@ -508,14 +609,25 @@ def main() -> int:
 
     # 2. Intro slides (deck-level; no substory_id; not in any substory's
     #    slide_ids list; spliced between title and S1 divider).
-    for intro_slide in intro_slides:
+    for intro_position, intro_slide in enumerate(intro_slides):
         cleaned = strip_orchestrator_metadata(intro_slide)
         # intro slides also have an `intro_role` field that's
         # orchestrator metadata, not in slide_spec — strip it.
         cleaned.pop("intro_role", None)
-        cleaned["id"] = next_id
         # Intro slides have no substory_id; clear if present (defensive)
         cleaned.pop("substory_id", None)
+        # v0.3.3: image-manifest binding for intro slides. Slide_id
+        # uses 'intro-pos{N}' convention (matches image_gen_decision).
+        slide_id_target = f"intro-pos{intro_position}"
+        bound = apply_image_manifest(cleaned, image_manifest, slide_id_target)
+        if bound is None:
+            # Rejected / budget-skipped → drop slide.
+            n_slides_dropped += 1
+            continue
+        cleaned = bound
+        if image_manifest is not None and image_manifest.get(slide_id_target):
+            n_images_bound += 1
+        cleaned["id"] = next_id
         slides.append(cleaned)
         next_id += 1
 
@@ -534,6 +646,18 @@ def main() -> int:
         )
         for fragment_position, slide in enumerate(fragment["slides"]):
             cleaned = strip_orchestrator_metadata(slide)
+            # v0.3.3: image-manifest binding (approve / drop). Must
+            # happen before global-id assignment so dropped slides
+            # don't consume an id. slide_id matches image_gen_decision.
+            slide_id_target = f"{sid}-pos{fragment_position}"
+            bound = apply_image_manifest(cleaned, image_manifest, slide_id_target)
+            if bound is None:
+                n_slides_dropped += 1
+                continue
+            cleaned = bound
+            if image_manifest is not None and image_manifest.get(slide_id_target):
+                if image_manifest.get(slide_id_target).get("approved"):
+                    n_images_bound += 1
             cleaned["id"] = next_id
             cleaned["substory_id"] = sid
             substory["slide_ids"].append(next_id)
@@ -642,6 +766,10 @@ def main() -> int:
           f"{len(substories)} substories)", file=sys.stderr)
     if n_notes_injected > 0:
         print(f"  -> injected speaker_notes on {n_notes_injected} slide(s)",
+              file=sys.stderr)
+    if image_manifest is not None:
+        print(f"  -> image-manifest: bound {n_images_bound} approved image(s); "
+              f"dropped {n_slides_dropped} rejected/skipped slide(s)",
               file=sys.stderr)
     print(f"     wrote {out_path}", file=sys.stderr)
     return 0
