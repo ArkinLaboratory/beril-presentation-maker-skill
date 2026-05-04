@@ -1,0 +1,100 @@
+v0.3.4.2: audit hygiene closer (audit/runs + stage_metadata.json)
+
+Closes two long-standing gaps surfaced by the v0.3.4 hub-readiness
+audit (2026-05-04):
+
+1. **`audit/runs/` was declared but unused.** v0.3.1's
+   draft_paths.py defined runs_dir + run_archive_dir(N) helpers
+   intended for per-orchestrator-invocation audit history, but no
+   code populated the directory.
+
+2. **`audit/stage-metadata.json` was declared but unwritten.** The
+   path was reserved for "consolidated provenance, replacing
+   v0.3.0's 13 scattered `*.metadata.json` files at draft-root,"
+   but the consolidation step itself was never built.
+
+Pre-v0.3.4.2, post-mortem on a failed run meant grep-walking
+working/ for individual `<artifact>.metadata.json` sidecars and
+hand-summing tokens / cost. v0.3.4.2 closes both: a single
+finalize_run.py helper + a trap EXIT in the bash orchestrator do
+the consolidation automatically at the end of every invocation.
+
+Changes
+
+1. New `tools/finalize_run.py` (~250 LOC) with three public APIs
+   plus CLI dispatch:
+   - `collect_stage_metadata(working_dir)` — recursive walk of
+     working/ for *.metadata.json sidecars; returns dict keyed by
+     stage label (e.g., "plan", "slide_compose-S1",
+     "ai_image_prompt-S2-pos5"). Stage-label derivation handles 13
+     known patterns (plan, throughline_candidates, substory_design,
+     citation_pool, cross_tenant, intro, qa_prep, plus regex
+     patterns for per-substory slide_compose / speaker_notes /
+     per-slide ai_image_prompt). Falls back to filename-as-label
+     for unrecognized targets.
+   - `aggregate_run_totals(stage_metadata)` — sums cost / tokens /
+     elapsed across stages. Tracks distinct models_used (set →
+     sorted list).
+   - `write_stage_metadata(paths, stage_metadata)` — emits
+     audit/stage-metadata.json keyed by stage label. Idempotent
+     (always reflects current state). New schema:
+     `stage-metadata.v1`.
+   - `write_run_summary(paths, exit_code, started_at,
+     stage_metadata)` — allocates next run-N atomically (scans
+     existing runs_dir/run-* directories), writes
+     audit/runs/run-N/summary.json. New schema: `run-summary.v1`
+     with started_at / finished_at / exit_code / stages_run /
+     totals.
+
+2. CLI: `python3 finalize_run.py write --draft-dir <draft>
+   --exit-code <N> [--started-at <ISO-8601>]`. Used by the bash
+   orchestrator's trap-exit hook.
+
+3. Bash orchestrator hook: trap EXIT registered after the draft
+   layout is initialized + before any stage runs. Captures
+   $RUN_STARTED_AT (ISO-8601 UTC). On exit (any reason —
+   success, failure, Ctrl-C), invokes finalize_run.py write with
+   the actual exit code. Errors from finalize_run itself are
+   tolerated — they don't change the orchestrator's reported exit
+   code.
+
+4. 36 new unit tests (tests/unit/test_finalize_run.py):
+   - 13 parametrized tests on _stage_label covering the full
+     known-pattern set.
+   - Unknown-pattern fallback test.
+   - collect_stage_metadata: walks subdirs, handles malformed JSON
+     silently, handles missing dir, dedupes by mtime.
+   - aggregate_run_totals: sums correctly, handles multi-model,
+     includes cache tokens, tolerates missing optional fields,
+     handles empty input.
+   - write_stage_metadata: creates v1 envelope, idempotent on
+     repeat, sorts stage keys.
+   - write_run_summary: allocates run-1, increments to run-2/3,
+     correct shape with all fields, captures failure exit codes,
+     fallback when started_at not provided.
+   - CLI: full write dispatch, uninitialized draft → rc=1, empty
+     metadata still emits valid envelope.
+
+Backwards compatibility
+
+- Pre-v0.3.4.2 drafts: no per-stage metadata files exist for
+  prior runs, so audit/runs/run-1/summary.json from a re-run will
+  show empty stages_run. That's correct behavior — only stages
+  run by THIS invocation appear in THIS run summary. Historical
+  reconstruction would need file-mtime walking, which is out of
+  scope.
+- audit/runs/ allocation is sequential, not stable: re-running
+  presentation_maker.sh against an existing draft_dir allocates
+  run-2, run-3, etc., preserving prior summaries. This is
+  consistent with the v0.3.1 LAYOUT.md design intent.
+
+Tests: 690 → 726 passed (36 new), 1 marker-gated live integration
+test still skipped in sandbox.
+
+Refs
+
+- predecessor tag: v0.3.4.1
+- task #68 closes
+- audit-driven: 2026-05-04 hub-readiness audit findings
+- next: CONTRACT.md for cross-skill interop pinning, then
+  task #50 multi-project smoke + KBERDL hub install (the v1.0 gate)

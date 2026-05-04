@@ -412,6 +412,31 @@ set_draft_paths() {
 init_draft_layout "$OUTDIR"
 set_draft_paths "$OUTDIR"
 
+# --- v0.3.4.2 finalize-on-exit hook ---
+# Run finalize_run.py at the end of every orchestrator invocation
+# (success, failure, Ctrl-C). Consolidates per-stage .metadata.json
+# sidecars into audit/stage-metadata.json + writes
+# audit/runs/run-N/summary.json. The hook captures the exit code
+# and the start time; finalize_run does the rest.
+#
+# trap order: EXIT fires after the script exits (any reason). It
+# runs in the same shell so OUTDIR + RUN_STARTED_AT are visible.
+# Errors from finalize_run.py are tolerated — it shouldn't change
+# the orchestrator's reported exit code.
+RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+finalize_run_on_exit() {
+  local rc=$?
+  if [[ -d "$OUTDIR/audit" ]]; then
+    "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" write \
+      --draft-dir "$OUTDIR" \
+      --exit-code "$rc" \
+      --started-at "$RUN_STARTED_AT" \
+      2>/dev/null || true
+  fi
+  return $rc
+}
+trap finalize_run_on_exit EXIT
+
 # --- Resume validation: verify required files exist for the resume point ---
 # Each stage has prerequisites that must already be on disk; fail fast if
 # they're missing rather than running the LLM and then crashing in merge.
