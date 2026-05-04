@@ -30,7 +30,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from beril_presentation_maker import __version__
+from beril_presentation_maker import __version__, discovery
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
@@ -175,9 +175,27 @@ def run(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    argv = ["bash", str(sh_path), args.project]
-    if args.beril_root:
-        argv += ["--beril-root", args.beril_root]
+    # v0.3.4.6: auto-detect BERIL_ROOT when --beril-root not passed.
+    # The bash orchestrator requires it explicitly; relying on
+    # subprocess inheriting $BERIL_ROOT works only if the user
+    # `export`-ed it, which hub users routinely forget. Use the
+    # discovery module's walk-up logic (matches paper-writer +
+    # adversarial behavior).
+    beril_root = args.beril_root
+    if not beril_root:
+        try:
+            beril_root = str(discovery.find_beril_root())
+        except discovery.BerilRootNotFound as e:
+            print(f"Error: {e}", file=sys.stderr)
+            print(
+                "\nHint: cd into your BERIL checkout, OR pass "
+                "--beril-root <path>, OR `export BERIL_ROOT=<path>` "
+                "before invoking.",
+                file=sys.stderr,
+            )
+            return 1
+
+    argv = ["bash", str(sh_path), args.project, "--beril-root", beril_root]
     if args.mode:
         argv += ["--mode", args.mode]
     if args.tier:

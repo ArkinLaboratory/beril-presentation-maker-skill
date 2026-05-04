@@ -1,17 +1,17 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.4.5 — configure-command bug fixes from first hub
-# install dry-run. Two fixes: (1) configure now looks for
-# `beril-adversarial` (not the never-existed `beril-adversarial-cli`)
-# + probes for v0.6.0+ `review` subcommand and reports version,
-# (2) configure now actually checks CBORG_API_KEY (shell env →
-# BERIL_ROOT/.env fallback; never echoes the value per
-# feedback_secret_file_handling.md). Both surfaced when Adam ran
-# the first hub install configure 2026-05-04 — adversarial showed
-# as [absent] despite being installed; CBORG_API_KEY check was
-# absent entirely despite HUB_INSTALL.md claiming it was reported.
-# 12 new unit tests covering the resolver + binary-name pin.
+# Status: v0.3.4.6 — draft CLI auto-detects BERIL_ROOT via
+# discovery walk-up. Hub-install ergonomic bug surfaced 2026-05-04:
+# `BERIL_ROOT=...` (no export) doesn't propagate to Python
+# subprocess; bash orchestrator hard-failed with "must set
+# --beril-root or $BERIL_ROOT". Fix: draft.py calls
+# discovery.find_beril_root() when --beril-root not passed and
+# forwards the resolved path to the subprocess explicitly. Same
+# walk-up logic the configure command already uses; matches
+# paper-writer + adversarial precedent. 5 new unit tests pinning
+# auto-detection / explicit-override / env-var / discovery-failure
+# / explicit-pass-through.
 ####################################################################
 
 [build-system]
@@ -24,7 +24,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.4.5"
+version = "0.3.4.6"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"
