@@ -31,14 +31,20 @@ shell orchestrator (`tools/presentation_maker.sh`) that invokes
 per-stage prompts as `claude -p` subagents and writes a validated
 `slide_spec.json` that `assemble_pptx.py` renders to .pptx.
 
-**Status: v0.3.4 — hub-readiness docs.** Builds on v0.3.3.2's
-production-ready stack: 14-stage pipeline including image_gen
-(Channel A, CBORG-calibrated $0.014/image) + adversarial v0.7.0.1
-review-rewrite loop with `central_objection` + `citation_reality`
-class routing. KBase-branded master + slide_spec validator (16
-layouts) + 4-zone draft layout + manual-edit hash guard +
-request-cache reuse. 663 unit tests + 1 marker-gated live integration
-test. See `RELEASE_NOTES.md` for v0.3.x trajectory.
+**Status: v0.3.4.4 — production-ready, hub-deployable.** v0.3.4.x
+trajectory: docs (v0.3.4) → prune CLI subcommand (v0.3.4.1) →
+audit/runs + stage-metadata.json consolidation (v0.3.4.2) →
+CONTRACT.md cross-skill interop pinning (v0.3.4.3) → README +
+RELEASE_NOTES rollup (v0.3.4.4). Production stack: 14-stage
+pipeline including image_gen (Channel A, CBORG-calibrated
+$0.014/image) + adversarial v0.7.0.1 review-rewrite loop with
+`central_objection` + `citation_reality` class routing.
+KBase-branded master + slide_spec validator (16 layouts) + 4-zone
+draft layout + manual-edit hash guard + request-cache reuse +
+prune subcommand + per-run audit summaries via trap-EXIT hook.
+726 unit tests + 1 marker-gated live integration test. See
+`RELEASE_NOTES.md` for the v0.3.x trajectory and `CONTRACT.md`
+for cross-skill interop.
 
 ## Two ways to invoke a draft
 
@@ -441,7 +447,25 @@ deck, not the pipeline's.
 ## Pitfall detection
 
 When you encounter errors, unexpected results, or surprising drafting
-outcomes during invocation of this skill, follow the pitfall-capture
-protocol. Read `.claude/skills/pitfall-capture/SKILL.md` and follow
-its instructions to determine whether the issue belongs in
-`docs/pitfalls.md`.
+outcomes during invocation of this skill, the recovery path is:
+
+1. Check `audit/stage-logs/<stage>.stderr` for the failed stage's
+   live output. Most pipeline errors include enough context here to
+   diagnose without re-running.
+2. Check `audit/runs/run-N/summary.json` for the run-level totals
+   (cost, stages_run, exit_code) to confirm whether the issue was
+   pre-LLM (cheap to recover from) or mid-pipeline (re-run from a
+   later `--resume-from` to save cost).
+3. Cross-reference `HUB_INSTALL.md` "Troubleshooting" for the 8
+   recipe-shaped recoveries covering common failures (CBORG_API_KEY
+   missing, image-gen worst-case rejection, adversarial CLI version
+   mismatch, v0.3.0-shape draft incompatibility, etc.).
+
+If you encounter a pitfall that isn't covered there, surface it to
+the user with the audit log paths and recommend they file an issue
+on the GitHub repo. The maintainer will fold it into HUB_INSTALL.md
+on the next docs release.
+
+If a sibling `pitfall-capture` skill is installed at
+`.claude/skills/pitfall-capture/SKILL.md`, follow its protocol
+instead — it supersedes this section when present.

@@ -2,10 +2,11 @@
 # presentation_maker.sh — production orchestrator for the
 # beril-presentation-maker drafting pipeline.
 #
-# Drives the 11-stage flow:
+# Drives the 14-stage flow:
 #   plan → throughline → substory_design → curate_figures →
 #   citation_pool → cross_tenant → intro → slide_compose →
-#   qa_prep → speaker_notes → merge_and_assemble
+#   qa_prep → speaker_notes → image_gen → merge_and_assemble →
+#   adversarial_review → revise_slides
 #
 # Each stage invokes a `claude -p` subagent against a per-stage
 # system prompt under prompts/<stage>.v1.md. Output is piped through
@@ -15,7 +16,7 @@
 #
 # Forked structurally from beril-adversarial v0.1.x adversarial_review.sh
 # (claude -p invocation pattern, stream_progress.py piping, retry on
-# rc=2). The 11-stage flow with one interactive gate (throughline-pick,
+# rc=2). The 14-stage flow with one interactive gate (throughline-pick,
 # unless --auto-advance is set) is the production shape; the original
 # v0.1.0 "smoke" framing is now obsolete (kept the filename until v0.2.0
 # rename for git-history continuity).

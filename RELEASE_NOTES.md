@@ -1,5 +1,134 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.3.4.4 (2026-05-04) — docs cleanup pre-hub-install
+
+Docs-only release prepping for KBERDL hub install. README rewritten
+from v0.1-spec-only state to reflect v0.3.4.3 reality (14-stage
+pipeline, 16-layout vocabulary, 4-zone layout, image_gen, adversarial
+loop, prune subcommand). HUB_INSTALL pinned to v0.3.4.3+ install
+URLs. SKILL.md output-artifacts catalog updated for v0.3.4.2 audit
+hygiene additions. RELEASE_NOTES rolled up the v0.3.3 → v0.3.4.3
+trajectory.
+
+## v0.3.4.3 (2026-05-04) — CONTRACT.md cross-skill interop pinning
+
+New canonical CONTRACT.md at repo root pinning every schema
+presentation-maker emits (slide_spec.v1, image-manifest.v1,
+image-decisions.v1, image-request.v1, image_provenance,
+stage-metadata.v1, run-summary.v1, 4-zone draft layout) and every
+schema it consumes (adversarial-review-presentation.v3 incl class
+dispatch, citation_pool reuse-from-paper, project inputs). Includes
+CLI surface guarantees, versioning policy, known interop quirks,
+cross-skill smoke test catalog. Mirrors adversarial v0.6.0+ pattern.
+Closes the audit's "no CONTRACT.md" gap. v1.0 prerequisite stack
+(v0.3.4 + v0.3.4.1 + v0.3.4.2 + v0.3.4.3) now complete.
+
+## v0.3.4.2 (2026-05-04) — audit hygiene closer
+
+New tools/finalize_run.py helper consolidates per-stage `.metadata.json`
+sidecars into single `audit/stage-metadata.json` (stage-metadata.v1
+schema) AND populates the previously-empty `audit/runs/run-N/` tree
+with per-orchestrator-invocation summaries (run-summary.v1 schema:
+started_at, finished_at, exit_code, stages_run, total_cost_usd, token
+totals, models_used). Bash orchestrator hooks via `trap EXIT` so
+finalize fires even on partial runs / Ctrl-C / failure. 36 new unit
+tests (stage-label derivation, recursive metadata collection,
+sequential run-N allocation). Closes the audit's "audit/runs declared
+but unused" + "stage_metadata declared but unwritten" gaps.
+
+## v0.3.4.1 (2026-05-04) — prune/clean CLI subcommand
+
+New `beril-presentation-maker prune <project_id>` subcommand for
+cleaning up old drafts under projects/<id>/talks/. Dry-run by default;
+`--apply` to delete, `--archive <path>` to move. `--keep N` keeps
+the latest N drafts (default 3); `.kept` marker file pins specific
+drafts (e.g., a published talk). Detects orphan entries, reports
+without touching unless `--also-orphans`. Never modifies project
+source files. 26 new unit tests. Hub-readiness operational
+improvement.
+
+## v0.3.4 (2026-05-04) — hub-readiness docs (Tier A)
+
+SKILL.md fully rewritten against v0.3.3.2 reality: status line
+current, two-surfaces table (slash vs CLI subcommand) with "DO NOT
+conflate" warning, 6-mode matrix as single source of truth, numbered
+Steps 1-5 workflow including image_gen + adversarial loop, 14-stage
+pipeline catalog, output-artifacts catalog reflecting 4-zone layout +
+all v0.3.3 image-gen artifacts, cost-control flag table covering all
+9 v0.3.x flags. Both slash command files (commands/beril-presentation-maker.md,
+beril-presentation-maker-continue.md) updated with the 4-signal
+project resolution tree (lifted from adversarial v0.7.0.1). NEW
+HUB_INSTALL.md operator runbook covering pipx install + install-skill
++ configure + first-run validation + upgrade + uninstall + 8
+troubleshooting recipes. Docs-only release.
+
+## v0.3.3.2 (2026-05-03) — image-gen efficiency point release
+
+Two cost-side fixes informed by the v0.3.3 ship-validation smoke:
+
+- **#63 stage_image_gen reuses cached request.json on retry.** New
+  `image_gen_approval.can_reuse_cached_request` helper: True when
+  cached request exists, slide_id_target verifier passes, and any
+  `--image-style` override matches. Saves ~$0.14/slide on every
+  retry. New CLI subcommand `image_gen_approval.py check-reuse`
+  for bash dispatch.
+- **#62 image_client worst-case preflight recalibrated.** Constant
+  `_WORST_CASE_COST_USD = 0.05` (was 32K-output × $12/M = $0.404,
+  30× over the v0.3.0 calibrated mean of $0.014/image). Pre-recal
+  was rejecting legitimate $0.10 caps mid-pipeline AFTER
+  ai_image_prompt LLM had spent ~$0.14. New regression test pins
+  the constant in [$0.03, $0.10] band.
+
+15 new unit tests. 663/663 pass.
+
+## v0.3.3.1 (2026-05-03) — adversarial v0.7.0.1 schema migration
+
+Consumer-side migration for `adversarial-review-presentation.v3`
+(shipped in beril-adversarial v0.7.0; v0.7.0.1 is byte-identical
+except docs). Three changes:
+
+- **Class enum dispatch:** `narrative_weakness` → `central_objection`
+  in `revise_loop.SURFACE_ONLY_CLASSES`. Both names accepted for
+  one transition release per adversarial team's "Optionally accept
+  BOTH" guidance.
+- **New class routing:** `citation_reality` added to surface-only
+  (per adversarial team: human verification needed; required field
+  is `citation_id`).
+- **Consumer-side smoke** at `tests/integration/test_adversarial_interop.py`:
+  3 unit-level shape checks (always run) + 1 marker-gated live
+  integration (`pytest -m integration`; ~$0.50/run). Catches
+  cross-skill drift cheaply.
+
+10 new unit tests; v2 audit files still readable for forensic compat.
+648/648 pass.
+
+## v0.3.3 (2026-05-03) — image-gen orchestrator stage SHIPPED
+
+Channel A end-to-end: deterministic Python decision + ai_image_prompt
+LLM + per-slide approval + image_client.py + manifest binding through
+merge. 7 new modules (~1,845 LOC, 140 tests):
+
+- `tools/image_gen_decision.py` — closed-set partition over 16
+  layouts; concept_illustration is the only YES.
+- `tools/image_gen_manifest.py` — image-manifest.v1 schema +
+  writer.
+- `tools/image_gen_approval.py` — per-slide approval gate +
+  slide_id_target trust-but-verify.
+- `tools/image_gen_orchestrate.py` — Python orchestration helpers
+  wrapping manifest + budget + fragment-mutation.
+- `tools/draft_paths.py` extension — image_decisions, manifest,
+  provenance paths + snapshot subdir.
+- `tools/merge_compose_fragments.py` extension — `--image-manifest-path`
+  + binding + slide-drop.
+- `tools/presentation_maker.sh` extension — stage_image_gen + 5 new
+  flags + `--resume-from image_gen` + CBORG_API_KEY auto-load.
+
+Live smoke validated forced concept_illustration on
+core_gene_tradeoffs (729KB PNG, $0.014 actual cost matched v0.3.0
+calibration). 5 late-arrival fixes captured during smoke (usage
+help truncation, wrapper flag pass-through, empty-array bash bug,
+CBORG_API_KEY load, CONCEPT_STYLES contract drift). 638/638 pass.
+
 ## v0.3.2.8 (2026-05-03) — data_figure caption/data_source overlap fix
 
 Live failure surfaced by the post-revise visual review of draft_2.

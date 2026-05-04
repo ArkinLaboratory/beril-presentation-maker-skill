@@ -1,8 +1,15 @@
-# beril-presentation-maker — Specification (v0.1)
+# beril-presentation-maker — Specification (v0.1 design rationale)
 
-**Status:** v0.1 — community-facing design rationale. Implementation has not
-started. Decisions captured here are load-bearing for the build; changes
-require updates to [DECISIONS.md](DECISIONS.md).
+**Status:** v0.1 design rationale, captured pre-implementation
+(2026-04-25). The skill has since shipped through v0.3.4.4 and is
+production-ready. This document remains the load-bearing rationale
+for the original design choices; for the current operational state
+see [README.md](README.md), [SKILL.md](src/beril_presentation_maker/skill/SKILL.md),
+[CONTRACT.md](CONTRACT.md), and [RELEASE_NOTES.md](RELEASE_NOTES.md).
+Decisions captured here are load-bearing for the build; deltas
+between this spec and the shipped behavior should be reflected in
+[DECISIONS.md](DECISIONS.md) with explicit "superseded by Dxxx"
+annotations.
 
 This document explains *what* the skill does and *why* the design choices
 were made. It is the document an external reviewer should read to decide

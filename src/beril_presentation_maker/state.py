@@ -1,11 +1,11 @@
 """state.json — read/write helpers (orchestrator is canonical).
 
-In v0.2.0, presentation_maker.sh is the canonical owner of per-draft
+In v0.2.0+, presentation_maker.sh is the canonical owner of per-draft
 state. Unlike beril-paper-writer (which has a Python state machine
 with explicit phase transitions and revision counters), presentation-
-maker's orchestrator runs the 11-stage pipeline in one shot with
-`--resume-from` for re-runs. There is no Python-level state machine
-to maintain in v0.2.0.
+maker's orchestrator runs the 14-stage pipeline (v0.3.3+) in one shot
+with `--resume-from` for re-runs. There is no Python-level state
+machine to maintain.
 
 This module exposes minimal read/write helpers for the limited cases
 where Python code needs to inspect a draft's state.json (e.g., a

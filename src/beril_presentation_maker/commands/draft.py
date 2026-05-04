@@ -1,7 +1,7 @@
 """`beril-presentation-maker draft <project>` — start a fresh presentation draft.
 
 Thin Python wrapper around `tools/presentation_maker.sh`. The shell script
-is the canonical orchestrator for the 11-stage drafting pipeline (plan →
+is the canonical orchestrator for the 14-stage drafting pipeline (plan →
 throughline → substory_design → curate_figures → citation_pool →
 cross_tenant → intro → slide_compose → qa_prep → speaker_notes →
 merge_and_assemble). This command:

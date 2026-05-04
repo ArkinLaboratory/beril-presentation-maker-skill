@@ -1,144 +1,194 @@
 # beril-presentation-maker-skill
 
-A scientific presentation drafter for BERDL analysis projects. Takes a
-finished project (research plan, report, notebooks, figures, references,
-optional adversarial review, optional paper-writer outputs) and produces
-a beautiful, evidence-grounded slide deck (talks) or poster, in KBase
-brand. Speaker notes and a Q&A-prep deliverable accompany the deck.
+A scientific presentation drafter for BERDL analysis projects. Takes
+a finished project (research plan, report, notebooks, figures,
+optional adversarial review, optional paper-writer outputs) and
+produces a beautiful, evidence-grounded slide deck (talk) or poster,
+in KBase brand. Speaker notes, anticipated Q&A, citation pool, and
+AI-generated illustrations for concept slides accompany the deck.
 
-Distributed as a Claude Code skill that runs inside a BERIL deployment.
-Sister skill to `/beril-adversarial` (harsh review), `/beril-atlas`
-(corpus metrics), and `/beril-paper-writer` (manuscript drafter). The
-fourth in the BERIL drop-in skill quartet.
+Distributed as a Claude Code skill that runs inside a BERIL
+deployment. Sister skill to `/beril-adversarial` (harsh review),
+`/beril-atlas` (corpus metrics), and `/beril-paper-writer` (manuscript
+drafter). The fourth in the BERIL drop-in skill quartet.
 
 ## Status
 
-**v0.1 — specification only.** No drafting code. The spec, layout,
-decision log, and reference extracts are checked in for community
-review. Implementation begins after spec sign-off.
+**v0.3.4.4 — production-ready, hub-deployable.** Builds on:
 
-## What it does (one paragraph)
+- v0.3.0 — Stream A (revise loop + add_slide.v1) + Stream B
+  (image_gen calibration; CBORG-Gemini at $0.014/image).
+- v0.3.1 — BREAKING 4-zone draft layout (deliverable / narrative /
+  working / audit).
+- v0.3.2 — `data_table` layout (16th in production vocabulary).
+- v0.3.3 — image-gen orchestrator stage (Channel A end-to-end:
+  per-slide decision + ai_image_prompt + approval gate +
+  image_client + manifest binding through merge).
+- v0.3.3.1 — adversarial v0.7.0.1 schema migration
+  (`central_objection` rename, `citation_reality` routing).
+- v0.3.3.2 — image-gen efficiency (request-cache reuse +
+  worst-case-cost recalibration).
+- v0.3.4 — hub-readiness docs (SKILL.md rewrite + slash commands +
+  HUB_INSTALL.md).
+- v0.3.4.1 — `prune` CLI subcommand for cleaning up old drafts.
+- v0.3.4.2 — `audit/runs/run-N/summary.json` + `audit/stage-metadata.json`
+  consolidations via finalize_run.py + bash trap-EXIT hook.
+- v0.3.4.3 — CONTRACT.md cross-skill interop pinning.
+- v0.3.4.4 — README + RELEASE_NOTES rollup; pre-hub-install cleanup.
 
-1. Reads the project artifacts; classifies project quality (strong /
-   thin / exploratory) — same tiering as paper-writer.
-2. Extracts 2–3 candidate scientific throughlines from the evidence
-   and surfaces them with evidence maps. **The user picks** (or
-   `--throughline auto`/`--throughline auto-from-paper` opts into the
-   maker's / paper-writer's choice).
-3. Identifies the *critical analyses* in REPORT and groups them into
-   semantic clusters — substories. The user reviews and may split,
-   merge, drop, or re-order. Mode capacity overflow halts the gate
-   with three options (pick / escalate-mode / merge); critical
-   analyses are never silently dropped.
-4. Drafts slides per substory using a closed 15-layout vocabulary
-   (title, divider, big_idea, big_number, claim_evidence,
-   two_column_compare, data_figure, workflow_diagram, methods_summary,
-   concept_illustration, cross_tenant_integration, implications,
-   acknowledgments, references, qa_anticipated). Slide titles are
-   punchlines, not topics.
-5. Reuses figures from the project's `figures/` and notebook outputs
-   only — no fabrication of quantitative content. Procedural diagrams
-   (workflows, schematics) are generated in python-pptx native shapes.
-   AI-generated conceptual illustrations (CBORG-Gemini) are opt-in
-   with per-image approval and a "AI-generated illustration"
-   disclosure footer.
-6. Writes 100–150-word speaker notes per slide, evidence-anchored to
-   notebook+cell or REPORT line via `notes_provenance.md`.
-7. Builds a Q&A-prep deliverable: 10 anticipated peer-reviewer
-   questions with concise answers and evidence pointers.
-8. Generates a required cross-tenant integration section even when
-   signal is minimal — quantification is best-effort from project-
-   local artifacts (DB count, tenant count, sibling-project ref count).
-9. Hands off to `/beril-adversarial --type paper` for harsh review
-   (or a fallback inline reviewer if `beril-adversarial` is not
-   installed). Up to 2 review-driven rewrite passes.
-10. Optional final assembly step (`beril-presentation-maker assemble`)
-    renders `slide_spec.json` into `slides.pptx` (and `slides.pdf` if
-    LibreOffice is on PATH).
+726 unit tests + 1 marker-gated live integration test, all passing.
+Multi-project smoke + KBERDL hub install (#50) is the v1.0 gate.
+
+## What it does
+
+Reads BERDL project artifacts and runs a 14-stage drafting pipeline:
+
+```
+1.  plan.v1                  triage tier + scope                   ~$0.20
+2.  throughline.v1           2-3 candidates → user picks           ~$0.25
+3.  substory_design.v1       partition into substories             ~$0.20
+4.  curate_figures           inventory + shortlist (Python)        ~$0
+5.  citation_pool.v1         verify-by-resolution pool             ~$0.30
+6.  cross_tenant.v1          K-BERDL signal (optional)             ~$0-0.10
+7.  intro.v1                 opening framing slides                ~$0.15
+8.  slide_compose.v1         per-substory composition              ~$0.30-0.50
+9.  qa_prep.v1               anticipated Q&A slides                ~$0.20
+10. speaker_notes.v1         per-slide speaker notes               ~$0.20-0.40
+11. image_gen                concept_illustration → AI image       ~$0-0.50
+12. merge_and_assemble       slide_spec + .pptx render             ~$0
+13. adversarial_review       v0.7.0.1 v3 schema review             ~$0.50
+14. revise_slides            review-rewrite loop (capped)          ~$0-5
+```
+
+Total typical: ~$2-4 on Sonnet for `talk-30 STRONG`. ~$5-7 if the
+revise loop fires heavily.
+
+The pipeline:
+- Tiers project quality (STRONG / THIN / EXPLORATORY).
+- Extracts 2-3 candidate scientific throughlines and surfaces them
+  with evidence maps. The user picks (or `--auto-advance` picks TL1).
+- Identifies critical analyses in REPORT.md, groups into 2-4
+  substories with punchlines.
+- Drafts slides per substory using a closed 16-layout vocabulary
+  (`title`, `section_divider`, `big_idea`, `big_number`,
+  `claim_evidence`, `two_column_compare`, `data_figure`, `data_table`,
+  `workflow_diagram`, `methods_summary`, `concept_illustration`,
+  `cross_tenant_integration`, `implications`, `acknowledgments`,
+  `references`, `qa_anticipated`). Slide titles are punchlines, not
+  topics.
+- Reuses figures from `figures/` and notebook outputs verbatim — no
+  fabrication of quantitative content.
+- Generates AI illustrations for `concept_illustration` slides via
+  CBORG-Gemini. Per-slide approval gate; calibrated $0.014/image;
+  cumulative budget cap; "AI-generated illustration" disclosure
+  footer.
+- Writes 200-400-word speaker notes per slide, evidence-anchored.
+- Builds anticipated Q&A slides for the back of the deck.
+- Hands off to `/beril-adversarial --type presentation` for harsh
+  review. Up to 6 P0 findings auto-revised in-loop (cost-capped at
+  $5 default).
+- Surfaces `citation_reality` findings (v3) for human verification —
+  citations don't auto-revise.
+- Final assembly renders `slide_spec.json` to KBase-branded `.pptx`.
 
 The skill **pauses** at user-decision points and resumes via
-`beril-presentation-maker continue <draft_dir>`. State lives on disk in
-`talks/draft_N/state.json`. Targeted post-assembled revision is
-supported via `beril-presentation-maker revise <draft_dir>` (per-slide,
-per-substory, per-speaker-notes, per-add-image scopes).
+`beril-presentation-maker continue <draft_dir> --resume-from <stage>`.
+State lives on disk in the v0.3.1+ 4-zone layout under
+`talks/draft_N/`. Each invocation creates a new numbered draft
+directory. Old drafts are pruned via
+`beril-presentation-maker prune <project_id>`.
 
-## Install (planned)
+## Install
 
 ```bash
-pipx install git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git
+# Install the package (pins v0.3.4.4; latest production-ready)
+pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4
+
+# Deploy the skill into BERIL
 cd <BERIL_ROOT>
 beril-presentation-maker install-skill .
-beril-presentation-maker configure   # sanity-check claude + CBORG key + optional sibling skills
+
+# Verify dependencies
+beril-presentation-maker configure
 ```
 
-## Usage (planned)
+For full operator runbook (prerequisites, troubleshooting, hub
+deployment), see [HUB_INSTALL.md](HUB_INSTALL.md).
+
+## Usage
 
 ```
+# Inside Claude Code on the hub:
 /beril-presentation-maker [<project_id>]
                           [--mode talk-30|talk-15|talk-45|lightning-5|poster-h|poster-v]
-                          [--throughline auto|interactive|auto-from-paper]
-                          [--depth quick|standard|deep]
-                          [--ai-diagrams off|opt-in]
-                          [--ai-diagram-budget USD]
-                          [--no-adversarial] [--no-stream]
-                          [--max-rewrites N]
+                          [--tier STRONG|THIN|EXPLORATORY]
+                          [--audience peer]
+                          [--auto-advance]
+                          [--no-adversarial]
+                          [--no-images] [--auto-approve-images]
+                          [--max-image-cost-usd <n>]
+                          [--image-allow-exploratory]
+                          [--image-style <style>]
+                          [--max-revise-cost-usd <n>] [--max-revisions <n>]
+                          [--skip-assembly]
+                          [--model <model_id>] [--no-stream]
 
-beril-presentation-maker continue <draft_dir>
-beril-presentation-maker revise   <draft_dir> --slide N|--substory ID|--speaker-notes-only N|--add-image N "<instruction>"
-beril-presentation-maker assemble <draft_dir> [--format pptx|pdf]
+# From the shell (operators / scripts):
+beril-presentation-maker draft <project_id> [...]
+beril-presentation-maker continue <draft_dir> --resume-from <stage> [...]
+beril-presentation-maker assemble <draft_dir>
+beril-presentation-maker prune <project_id> [--keep N] [--apply | --archive <path>]
 ```
 
-`--mode talk-30` (default) produces a 30-minute peer-audience talk.
-Other modes: `talk-15`, `talk-45`, `lightning-5`, `poster-h` (48×36 in
-horizontal), `poster-v` (36×48 in vertical). Audience axis is
-peer-only in v1; lay/program-officer/executive are post-MVP. See
-SPEC §5.
+For full reference (mode matrix, output artifacts catalog,
+cost-control flag table, manual-edit workflow), see
+[SKILL.md](src/beril_presentation_maker/skill/SKILL.md).
 
-`<project_id>` auto-detects from cwd if you're inside `projects/<id>/`.
+`<project_id>` auto-resolves on the hub via the 4-signal tree:
+explicit arg → git branch (`projects/<id>` convention) → cwd →
+ask user. Mirrors the adversarial v0.7.0.1 pattern.
 
 ## What it produces
 
 ```
-projects/<project_id>/
-├── README.md, RESEARCH_PLAN.md, REPORT.md, REVIEW.md, ADVERSARIAL_REVIEW_*.md
-├── talks/
-│   ├── draft_1/
-│   │   ├── state.json                  ← stop / resume state, hashes, choices
-│   │   ├── slides.pptx                  ← assembled deck (regen each pass)
-│   │   ├── slides.pdf                   ← only after `assemble --format pdf`
-│   │   ├── 00_throughline.md            ← chosen meta-arc + evidence map
-│   │   ├── 01_outline.md                ← human-reviewable slide-by-slide spec
-│   │   ├── 02_substories.md             ← substory list with punchlines
-│   │   ├── slide_spec.json              ← machine-readable, drives python-pptx
-│   │   ├── speaker_notes.md             ← 100–150 wd/slide, evidence-anchored
-│   │   ├── notes_provenance.md          ← speaker-note claims ↔ source
-│   │   ├── qa_prep.md                   ← 10 anticipated questions + answers
-│   │   ├── cross_tenant_signal.md       ← discovered tenant/DB/project signal
-│   │   ├── citation_pool.json           ← reused from paper-writer if present
-│   │   ├── references.md, citation_map.md
-│   │   ├── reframing_log.md             ← deviations from REPORT.md (auditable)
-│   │   ├── throughline_candidates.md    ← rejected alternatives
-│   │   ├── image_provenance.json        ← AI-gen prompts + costs + approvals
-│   │   ├── figures/                     ← curated subset of project figures
-│   │   ├── diagrams/                    ← procedural diagrams (Tier 2)
-│   │   ├── ai_images/                   ← AI-generated images (Tier 3, if any)
-│   │   ├── reviews/                     ← if beril-adversarial run
-│   │   └── audit/                       ← per-call streaming logs, costs
-│   ├── draft_2/                         ← next invocation creates new dir
-│   └── poster_h_1/                      ← parallel structure for posters
+projects/<project_id>/talks/draft_N/
+├── deliverable/                ← what you open / present
+│   ├── draft.pptx
+│   └── draft.pdf (optional)
+├── narrative/                  ← human-readable story (user-editable)
+│   ├── 00_throughline.md
+│   ├── 02_substories.md
+│   └── references.md, bibliography.bib, citation_map.md
+├── working/                    ← intermediate pipeline state
+│   ├── slide_spec.json         ← machine-readable, drives python-pptx
+│   ├── 03_slides/              ← per-substory compose fragments
+│   ├── 04_speaker_notes/       ← per-substory speaker notes
+│   ├── 05_image_decisions.json ← v0.3.3 image-gen decisions
+│   ├── 05_image_requests/      ← v0.3.3 per-slide request JSONs
+│   ├── 05_images/              ← v0.3.3 generated PNGs + manifest.json
+│   ├── citation_pool.json      ← verified literature pool
+│   ├── curated_figures.md      ← mode-bounded figure shortlist
+│   └── next_actions.md         ← surfaced findings (citation_reality, etc.)
+└── audit/                      ← provenance + debug history
+    ├── state.json
+    ├── cost-log.jsonl
+    ├── stage-metadata.json     ← v0.3.4.2 consolidated per-stage metadata
+    ├── stage-logs/
+    ├── snapshots/              ← immutable spec snapshots
+    ├── manual-edits/           ← preserved user edits to draft.pptx
+    ├── runs/                   ← v0.3.4.2 per-invocation summaries
+    │   └── run-N/summary.json
+    ├── adversarial_review.{json,md}    ← v3 schema (v0.3.3.1+)
+    ├── quantitative_grounding.{json,md}
+    ├── image_provenance.json   ← v0.3.3 image-gen append-log
+    └── revise_loop_metadata.json
 ```
 
 Each invocation creates a new numbered draft directory. Decks are
-versioned, not edited in place. `revise` modifies in-place within a
-draft.
+versioned, not edited in place. v0.3.1+ 4-zone layout is stable
+through v0.3.x; v0.3.0-shape drafts are non-migratable (clean break).
 
 ## How it fits into the BERIL workflow
-
-`/berdl_start` opens an analysis session. The user iterates on
-RESEARCH_PLAN.md and notebooks within that session, calling BERIL
-skills (`/berdl-query`, `/berdl-discover`, `/berdl-minio`,
-`/literature-review`, etc.) as needed. `/synthesize` then produces
-REPORT.md.
 
 ```
   /berdl_start → (iterate within session) → /synthesize → REPORT.md
@@ -147,61 +197,66 @@ REPORT.md.
   /beril-adversarial               harsh project review
        │
        ▼
-  /beril-paper-writer              draft manuscript (optional but recommended)
+  /beril-paper-writer              draft manuscript (optional)
        │
        ▼
   /beril-presentation-maker        draft slide deck or poster
        │                                              ┌──────────────────┐
        ▼                                              │  reuse from      │
   user picks throughline;                             │  paper if present│
-  approves substory clustering                ◄───────┤  (throughline +  │
-       │                                              │   citation pool +│
-       ▼                                              │   figures)       │
-  drafting (slides + speaker notes + Q&A prep         └──────────────────┘
-       │  + cross-tenant + diagrams + opt-in AI images)
+  approves substory clustering                ◄───────┤  (citation pool, │
+       │                                              │   throughline)   │
+       ▼                                              └──────────────────┘
+  drafting (slides + speaker notes + Q&A
+       │  + cross-tenant + AI illustrations)
        ▼
-  /beril-adversarial --type paper  harsh deck review
+  /beril-adversarial --type presentation   harsh deck review (v3)
        │
        ▼
-  beril-presentation-maker continue (rewrite pass)  (×1 — hard cap)
+  revise loop (in-orchestrator, cost-capped)
        │
        ▼
-  beril-presentation-maker assemble    → slides.pptx [ + slides.pdf ]
+  beril-presentation-maker assemble    → deliverable/draft.pptx
        │
        ▼
-  (optional) beril-presentation-maker revise <draft> --slide N "..."
-       │     (targeted per-slide / per-substory edits, no restart)
-       ▼
-  beril-presentation-maker assemble    → re-rendered .pptx
+  (operator) beril-presentation-maker prune <project_id>  cleanup
 ```
 
 ## Status caveats
 
-- v1 reuses existing project figures only for quantitative content —
-  no figure regeneration. Conceptual illustrations are generated
-  procedurally (python-pptx native shapes) or via opt-in AI image
-  generation (CBORG-Gemini) with per-image approval and a "AI-
-  generated illustration" disclosure footer. See SPEC §8.
-- v1 has no journal-specific or vendor templates (no Nature deck, no
-  Cell talk, no conference poster grids beyond KBase's two). KBase
-  brand only. Vendor templates are post-MVP.
-- v1 audience is scientific peer only. Lay / program-officer /
-  executive axes are post-MVP. See SPEC §1.3.
-- v1 declines to compress critical analyses out of a tight talk
-  silently. When mode capacity is exceeded, the substory-approval
-  gate halts with three options (pick / escalate-mode / merge). See
-  SPEC §4.2.1.
-- AI-disclosure footnote is auto-emitted on the references slide.
-  Speaker name, affiliation, venue, date are placeholders the user
-  must fill before delivery.
+- v0.3.4.x reuses existing project figures verbatim for quantitative
+  content — no figure regeneration. Conceptual illustrations are
+  generated via opt-in CBORG-Gemini AI image-gen with per-image
+  approval and a "AI-generated illustration" disclosure footer.
+- v0.3.4.x has no journal-specific or vendor templates. KBase brand
+  only. Vendor templates are post-MVP.
+- v0.3.4.x audience is scientific peer only. Lay / program-officer /
+  executive registers are post-MVP.
+- AI-disclosure footnote is auto-emitted on slides with AI-generated
+  images. Speaker name, affiliation, venue, date are placeholders the
+  user must fill before delivery.
+- `citation_reality` adversarial findings (v3 schema) are
+  surfaced in `working/next_actions.md` rather than auto-revised —
+  citations need human verification before shipping.
+- Manual edits to `deliverable/draft.pptx` are preserved (archived
+  to `audit/manual-edits/`) but not absorbed back into
+  `slide_spec.json`. Edit upstream (`narrative/`) and re-run, or
+  copy the deck out for separate polishing.
 
 ## See also
 
-- [SPEC.md](SPEC.md) — community-facing design rationale (the load-bearing doc)
+- [SKILL.md](src/beril_presentation_maker/skill/SKILL.md) — agent-facing
+  skill instructions (slash commands, workflow, output artifacts)
+- [HUB_INSTALL.md](HUB_INSTALL.md) — operator install runbook
+- [CONTRACT.md](CONTRACT.md) — cross-skill interop pinning (schemas,
+  CLI surface, versioning policy)
+- [SPEC.md](SPEC.md) — community-facing design rationale
 - [LAYOUT.md](LAYOUT.md) — internal architecture, CLI, package shape
-- [DECISIONS.md](DECISIONS.md) — running log of design decisions with dates
-- [reference/](reference/) — supporting research: best-practice extract,
-  KBase brand extract, prior-art scan, master-template source notes
+- [DECISIONS.md](DECISIONS.md) — running log of design decisions
+- [RELEASE_NOTES.md](RELEASE_NOTES.md) — per-version changelog
+- [reference/](reference/) — supporting research: best-practice
+  extract, KBase brand extract, prior-art scan, master-template
+  source notes
 
 ## License
 

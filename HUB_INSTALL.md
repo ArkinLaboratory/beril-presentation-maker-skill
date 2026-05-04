@@ -57,13 +57,13 @@ Alternative URL forms:
 - **Specific version (recommended for production):**
 
   ```bash
-  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4
+  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4
   ```
 
 Verify the install:
 
 ```bash
-beril-presentation-maker --version    # should print 0.3.4 or later
+beril-presentation-maker --version    # should print 0.3.4.4 or later
 ```
 
 ### Step 2 — Deploy the skill into BERIL_ROOT
@@ -122,7 +122,8 @@ If any check fails, fix it and re-run. Common issues:
   with `CBORG_API_KEY not set`.
 - **adversarial CLI < v0.7.0.1:** upgrade or pass `--no-adversarial`
   on every run. v0.6.x produces v2 schema; presentation-maker
-  consumes v3 in v0.3.4 (v2 still readable for forensic compat).
+  consumes v3 (since v0.3.3.1; v2 audit files still readable for
+  forensic compat).
 
 ## First-run validation
 
@@ -191,7 +192,7 @@ exists and has the `user-invocable: true` frontmatter line.
 Re-run pipx install with the new version tag:
 
 ```bash
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.x.y
+pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4   # or any later v0.3.x.y tag
 beril-presentation-maker install-skill "$BERIL_ROOT"   # refresh skill files
 beril-presentation-maker --version                      # confirm
 ```

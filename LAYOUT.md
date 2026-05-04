@@ -1,8 +1,14 @@
 # beril-presentation-maker-skill — package layout + CLI structure
 
 **Date:** 2026-04-25 (initial); 2026-04-26 (this draft)
-**Status:** v0.1 specification. No drafting code yet. Implementation
-pending sign-off on this layout.
+**Status:** v0.1 design specification, captured pre-implementation.
+The skill has since shipped through v0.3.4.4. The package shape +
+CLI structure described here are the load-bearing intent; for the
+current production-state CLI surface see [CONTRACT.md](CONTRACT.md)
+§4 (the canonical reference) and [README.md](README.md). Drift
+between this document and shipped code is expected for the v0.3.x
+trajectory; a v0.4 docs cycle will fold the actual production
+state back into this file.
 
 This document specifies the shape of `ArkinLaboratory/beril-presentation-
 maker-skill`. The skill mirrors `beril-paper-writer-skill`'s pipx-
