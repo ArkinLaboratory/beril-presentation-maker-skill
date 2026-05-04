@@ -117,105 +117,177 @@ def _adversarial_cli_has_review_subcommand() -> bool:
     )
 
 
+def _resolve_beril_root() -> Path | None:
+    """Find a BERIL_ROOT for the live test. Resolution order:
+
+      1. $BERIL_ROOT env var (explicit operator override)
+      2. <workspace_root>/spike/beril-extended (the local BERIL fork
+         where atlas + adversarial + presentation-maker have all run
+         their install-skill commands during dev)
+      3. None — caller skips the test
+    """
+    env_root = os.environ.get("BERIL_ROOT")
+    if env_root and Path(env_root).is_dir():
+        return Path(env_root)
+    # Walk up from this test file to find the workspace root, then
+    # check spike/beril-extended.
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "spike" / "beril-extended"
+        if candidate.is_dir() and (candidate / ".claude" / "skills").is_dir():
+            return candidate
+        # Stop if we've walked past the workspace
+        if parent.name == "research-coscientist-dev":
+            break
+    return None
+
+
+def _resolve_real_draft(beril_root: Path) -> Path | None:
+    """Find a real draft for the live test. Adversarial v0.5.2+
+    detects v0.3.1 layout and requires the complete fragment suite
+    (qa_anticipated.json, cross_tenant.json, S1_slides.json, etc.) —
+    reproducing that in synthetic fixture would mean reimplementing
+    the orchestrator. Use a real draft instead.
+
+    Resolution order:
+      1. $TEST_DRAFT_DIR env var (explicit operator override)
+      2. <BERIL_ROOT>/projects/<any>/talks/draft_<latest> if it has
+         the full fragment suite
+      3. None — caller skips
+    """
+    explicit = os.environ.get("TEST_DRAFT_DIR")
+    if explicit and Path(explicit).is_dir():
+        return Path(explicit)
+    # Auto-discover: walk projects, find latest draft with full fragments
+    projects_dir = beril_root / "projects"
+    if not projects_dir.is_dir():
+        return None
+    for project_dir in sorted(projects_dir.iterdir()):
+        talks_dir = project_dir / "talks"
+        if not talks_dir.is_dir():
+            continue
+        # Prefer most recent draft_N
+        drafts = sorted(
+            (d for d in talks_dir.iterdir() if d.name.startswith("draft_")),
+            key=lambda p: int(p.name.split("_", 1)[1])
+            if p.name.split("_", 1)[1].isdigit() else -1,
+            reverse=True,
+        )
+        for draft in drafts:
+            slides_dir = draft / "working" / "03_slides"
+            if not slides_dir.is_dir():
+                continue
+            # Heuristic: require at least one S<N>_slides.json fragment AND
+            # qa_anticipated.json (the producer's required inputs).
+            has_substory = any(slides_dir.glob("S*_slides.json"))
+            has_qa = (slides_dir / "qa_anticipated.json").is_file()
+            if has_substory and has_qa:
+                return draft
+    return None
+
+
 @pytest.mark.integration
 def test_live_adversarial_review_emits_v3_schema(tmp_path):
-    """Live integration: stand up a minimal draft directory with a
-    valid slide_spec.json + REPORT.md, invoke the real
-    `beril-adversarial review --type presentation`, and assert (a)
-    exits 0, (b) output file exists, (c) JSON parses, (d)
-    schema_version is v3.
+    """Live integration: invoke real `beril-adversarial review --type
+    presentation` against a real draft, assert (a) exits 0, (b) output
+    file exists, (c) JSON parses, (d) schema_version is v3.
 
-    This runs only when `pytest -m integration` is explicitly
-    requested. Costs ~$0.50/run on live LLM (Sonnet review of a
-    minimal deck).
+    Runs only when `pytest -m integration` is explicitly requested.
+    Costs ~$0.50/run on live LLM (Sonnet review).
+
+    Requires:
+    - beril-adversarial CLI installed via pipx
+    - BERIL_ROOT resolvable ($BERIL_ROOT or spike/beril-extended/)
+    - A real draft on disk (set $TEST_DRAFT_DIR or have any project
+      with a complete v0.3.1+ draft under <BERIL_ROOT>/projects/)
+    - CBORG_API_KEY in env (or in BERIL_ROOT/.env)
+
+    Pointing at a real draft (vs. synthetic fixture) avoids
+    reimplementing the orchestrator's fragment suite — the producer
+    requires every per-substory + qa_anticipated + cross_tenant
+    fragment once it detects v0.3.1+ layout.
     """
     if not _adversarial_cli_is_installed():
         pytest.skip("beril-adversarial CLI not installed")
     if not _adversarial_cli_has_review_subcommand():
         pytest.skip("beril-adversarial < v0.6.0 (no `review` subcommand)")
+    beril_root = _resolve_beril_root()
+    if beril_root is None:
+        pytest.skip(
+            "BERIL_ROOT not resolvable; set $BERIL_ROOT or ensure "
+            "spike/beril-extended/.claude/skills/ exists"
+        )
+    real_draft = _resolve_real_draft(beril_root)
+    if real_draft is None:
+        pytest.skip(
+            "No complete v0.3.1+ draft found under "
+            f"{beril_root}/projects/. Set $TEST_DRAFT_DIR to a real "
+            "draft path, OR run a full presentation-maker pipeline "
+            "first to populate one."
+        )
 
-    # Build a minimal v0.3.1+ draft layout with the bare-minimum
-    # files the adversarial reviewer needs to read.
-    draft_dir = tmp_path / "projects" / "synthetic" / "talks" / "draft_1"
-    project_dir = tmp_path / "projects" / "synthetic"
-    deliverable = draft_dir / "deliverable"
-    narrative = draft_dir / "narrative"
-    working = draft_dir / "working"
-    audit = draft_dir / "audit"
-    for d in (deliverable, narrative, working, audit):
-        d.mkdir(parents=True)
+    # Snapshot the real draft's existing audit/adversarial_review.{md,json}
+    # if present, so the test doesn't clobber prior reviews. Restore
+    # at end whether the test passes or fails.
+    audit_dir = real_draft / "audit"
+    review_json_path = audit_dir / "adversarial_review.json"
+    review_md_path = audit_dir / "adversarial_review.md"
+    backup_json = tmp_path / "adversarial_review.json.bak"
+    backup_md = tmp_path / "adversarial_review.md.bak"
+    had_prior_json = review_json_path.is_file()
+    had_prior_md = review_md_path.is_file()
+    if had_prior_json:
+        backup_json.write_bytes(review_json_path.read_bytes())
+    if had_prior_md:
+        backup_md.write_bytes(review_md_path.read_bytes())
 
-    (project_dir / "REPORT.md").write_text(
-        "# Synthetic Project\n\nMinimal report for adversarial smoke test.\n",
-        encoding="utf-8",
-    )
-    (project_dir / "RESEARCH_PLAN.md").write_text(
-        "# Research Plan\n\nMinimal plan.\n",
-        encoding="utf-8",
-    )
-    (narrative / "00_throughline.md").write_text(
-        "<!-- chosen: TL1 -->\n<!-- punchline: Synthetic test claim. -->\n"
-        "## TL1: Synthetic test\n**Tier:** STRONG\n",
-        encoding="utf-8",
-    )
-    (narrative / "02_substories.md").write_text(
-        "### S1 — synthetic substory\n**Punchline:** synthetic.\n",
-        encoding="utf-8",
-    )
-    # Minimal valid slide_spec.json
-    (working / "slide_spec.json").write_text(
-        json.dumps({
-            "schema_version": "1.0",
-            "project_id": "synthetic",
-            "mode": "talk-30",
-            "audience": "peer",
-            "tier": "STRONG",
-            "throughline": {"id": "TL1", "punchline": "Synthetic.",
-                            "tier_evidence": "STRONG"},
-            "substories": [{"id": "S1", "punchline": "synthetic",
-                            "slide_ids": [1]}],
-            "slides": [
-                {"id": 1, "position": 0, "substory_id": "S1",
-                 "layout": "section_divider",
-                 "content": {"punchline": "Synthetic substory.",
-                             "substory_number": 1}},
-            ],
-        }, indent=2),
-        encoding="utf-8",
-    )
+    try:
+        # Invoke the producer. Pass --beril-root explicitly so the
+        # adversarial CLI can locate its installed .claude/skills/ —
+        # otherwise it walks the script location (in pipx venv) and fails.
+        env = os.environ.copy()
+        result = subprocess.run(
+            ["beril-adversarial", "review",
+             "--type", "presentation",
+             "--beril-root", str(beril_root),
+             str(real_draft)],
+            capture_output=True, text=True, timeout=600, env=env,
+        )
 
-    # Invoke the producer.
-    env = os.environ.copy()
-    result = subprocess.run(
-        ["beril-adversarial", "review",
-         "--type", "presentation", str(draft_dir)],
-        capture_output=True, text=True, timeout=600, env=env,
-    )
+        # (a) exits 0
+        assert result.returncode == 0, (
+            f"beril-adversarial review exited {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
 
-    # (a) exits 0
-    assert result.returncode == 0, (
-        f"beril-adversarial review exited {result.returncode}\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
+        # (b) output file exists
+        assert review_json_path.is_file(), (
+            f"expected output {review_json_path} not produced; "
+            f"audit/ contains: {list(audit_dir.iterdir())}"
+        )
 
-    # (b) output file exists
-    review_json = audit / "adversarial_review.json"
-    assert review_json.is_file(), (
-        f"expected output {review_json} not produced; "
-        f"audit/ contains: {list(audit.iterdir())}"
-    )
+        # (c) JSON parses
+        review = json.loads(review_json_path.read_text(encoding="utf-8"))
+        assert isinstance(review, dict), "review JSON is not a dict"
+        assert "findings" in review, "review missing findings array"
 
-    # (c) JSON parses
-    review = json.loads(review_json.read_text(encoding="utf-8"))
-    assert isinstance(review, dict), "review JSON is not a dict"
-    assert "findings" in review, "review missing findings array"
-
-    # (d) schema_version is v3 (post-v0.7.0)
-    schema_version = review.get("schema_version", "")
-    assert schema_version == "adversarial-review-presentation.v3", (
-        f"expected schema_version 'adversarial-review-presentation.v3', "
-        f"got {schema_version!r}. If v2: producer is on a pre-v0.7.0 "
-        f"release; reinstall via "
-        f"`pipx install --force git+https://github.com/ArkinLaboratory"
-        f"/beril-adversarial-skill.git@v0.7.0.1`."
-    )
+        # (d) schema_version is v3 (post-v0.7.0)
+        schema_version = review.get("schema_version", "")
+        assert schema_version == "adversarial-review-presentation.v3", (
+            f"expected schema_version "
+            f"'adversarial-review-presentation.v3', got "
+            f"{schema_version!r}. If v2: producer is on a pre-v0.7.0 "
+            f"release; reinstall via "
+            f"`pipx install --force git+https://github.com/ArkinLaboratory"
+            f"/beril-adversarial-skill.git@v0.7.0.1`."
+        )
+    finally:
+        # Restore prior review files (or remove the new ones).
+        if had_prior_json:
+            review_json_path.write_bytes(backup_json.read_bytes())
+        elif review_json_path.is_file():
+            review_json_path.unlink()
+        if had_prior_md:
+            review_md_path.write_bytes(backup_md.read_bytes())
+        elif review_md_path.is_file():
+            review_md_path.unlink()
