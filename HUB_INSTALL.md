@@ -287,6 +287,48 @@ is no migration tool. Either:
   and across pipx upgrades (within the same v0.3.x major). State
   is on-disk under `<draft_dir>/audit/state.json`.
 
+## Drafts pile up — pruning old runs
+
+Each invocation of `draft` creates a new `talks/draft_N/`
+directory (~10-50MB with images + speaker notes + audit history).
+On a hub with many users iterating, drafts accumulate. v0.3.4.1
+shipped the `prune` subcommand to clean them up:
+
+```bash
+# Dry-run: see what would be pruned, keeping the 3 newest drafts.
+beril-presentation-maker prune <project_id>
+
+# Actually delete, keeping the 5 newest:
+beril-presentation-maker prune <project_id> --keep 5 --apply
+
+# Archive instead of delete:
+beril-presentation-maker prune <project_id> \
+    --archive ~/talk-archives/ --apply
+```
+
+To pin a specific draft (e.g., a published talk version), drop a
+`.kept` marker file inside the draft directory:
+
+```bash
+touch projects/<project_id>/talks/draft_3/.kept
+```
+
+`.kept` drafts are NEVER pruned, regardless of `--keep`. This is
+how operators can preserve known-good drafts across hub-wide
+prune sweeps.
+
+The prune subcommand never touches:
+
+- Project source files (`REPORT.md`, `RESEARCH_PLAN.md`, notebooks,
+  figures).
+- Anything outside `projects/<id>/talks/`.
+- Drafts pinned with `.kept`.
+- Orphan entries (non-`draft_N` files/dirs under `talks/`) unless
+  `--also-orphans` is passed.
+
+It's dry-run by default — operators can confirm what's in scope
+before any deletion happens.
+
 ## When to use each subcommand
 
 | Subcommand | Use case |
@@ -297,6 +339,7 @@ is no migration tool. Either:
 | `beril-presentation-maker draft <project_id>` | Fresh draft from scratch |
 | `beril-presentation-maker continue <draft_dir> --resume-from <stage>` | Resume / re-roll specific stages |
 | `beril-presentation-maker assemble <draft_dir>` | Re-assemble .pptx from existing slide_spec.json (no LLM) |
+| `beril-presentation-maker prune <project_id>` | Clean up old drafts under projects/<id>/talks/ (dry-run by default) |
 
 End users on the hub will mostly use the slash commands
 (`/beril-presentation-maker`, `/beril-presentation-maker-continue`)

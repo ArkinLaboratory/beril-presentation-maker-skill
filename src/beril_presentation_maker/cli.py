@@ -5,9 +5,10 @@ Dispatches to command modules under beril_presentation_maker.commands/.
 Subcommands:
   install-skill   Copy shipped skill/ tree into BERIL/.claude/skills/beril-presentation-maker/.
   configure       Verify claude is on PATH; report optional dep status.
-  draft           Start a fresh presentation draft (full 11-stage pipeline).
+  draft           Start a fresh presentation draft (full 14-stage pipeline).
   continue        Resume a draft from a named stage (--resume-from).
   assemble        Render slide_spec.json to .pptx (and optionally .pdf).
+  prune           Prune old drafts under projects/<id>/talks/ (v0.3.4.1).
 
 The drafting workflow runs via the shipped shell script
 tools/presentation_maker.sh, invoked by the `draft` and `continue`
@@ -33,6 +34,7 @@ from beril_presentation_maker.commands import (
     continue_run,
     draft,
     install_skill,
+    prune,
 )
 
 
@@ -58,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft.add_parser(subparsers)
     continue_run.add_parser(subparsers)
     assemble.add_parser(subparsers)
+    prune.add_parser(subparsers)
 
     return p
 

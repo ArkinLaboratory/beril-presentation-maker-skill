@@ -1,21 +1,17 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.4 — hub-readiness docs (Tier A). SKILL.md fully
-# rewritten against v0.3.3.2 reality: status line current,
-# two-surfaces table (slash vs CLI subcommand), 6-mode matrix as
-# single source of truth, numbered Steps 1-5 workflow including
-# image_gen + adversarial loop, 14-stage pipeline catalog,
-# 4-signal project resolution tree adapted from adversarial v0.7.0.1.
-# Both slash command files (commands/beril-presentation-maker.md,
-# beril-presentation-maker-continue.md) updated with the 4-signal
-# tree + v0.3.x flag awareness + correct deliverable/working/audit
-# zone paths. New HUB_INSTALL.md operator runbook covering pipx
-# install + install-skill + configure + first-run validation +
-# upgrade + uninstall + troubleshooting. Docs-only release; no
-# code changes. 663 unit tests + 1 marker-gated live integration
-# test all pass. Builds on v0.3.3.2's image-gen efficiency point
-# release.
+# Status: v0.3.4.1 — prune/clean CLI subcommand. New `beril-
+# presentation-maker prune <project_id>` subcommand for cleaning up
+# old drafts under projects/<id>/talks/. Dry-run by default; --apply
+# to delete, --archive <path> to move. Keeps the latest --keep
+# drafts (default 3); .kept marker file pins specific drafts (e.g.,
+# a published talk) regardless of --keep. Detects orphan entries
+# (non-draft_N) and reports without touching unless --also-orphans
+# is passed. Never modifies project source files. 690 unit tests +
+# 1 marker-gated live integration test all pass. Hub-readiness
+# operational improvement per Adam's audit ask 2026-05-04. Builds
+# on v0.3.4's hub-readiness docs.
 ####################################################################
 
 [build-system]
@@ -28,7 +24,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.4"
+version = "0.3.4.1"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,0 +1,77 @@
+v0.3.4.1: prune/clean CLI subcommand for old drafts
+
+Hub-readiness operational improvement per Adam's audit ask 2026-05-04:
+"We need a way to clean up versions." Drafts under
+projects/<id>/talks/draft_N/ accumulate (~10-50MB each) over a
+project's lifetime; on a hub with many users iterating, prune
+becomes operationally necessary.
+
+Changes
+
+1. New `beril-presentation-maker prune <project_id>` subcommand
+   (commands/prune.py, 290 LOC).
+
+   Behavior:
+   - Dry-run by default. Prints what would be deleted (or archived)
+     plus total size, takes no action.
+   - `--apply` actually deletes via shutil.rmtree.
+   - `--archive <path>` moves to PATH/<project_id>/draft_N/
+     instead of deleting (implies --apply). On collision in the
+     archive dir, appends a timestamp suffix rather than
+     overwriting.
+   - `--keep N` keeps the latest N drafts (default 3). Latest =
+     highest numeric draft_<N>. Rejects --keep < 0.
+   - `.kept` marker file inside a draft directory PINS that draft
+     regardless of --keep. Use `touch draft_3/.kept` to preserve
+     specific drafts (e.g., a published talk version).
+   - `--also-orphans` extends pruning to non-draft_<N> entries
+     under talks/. Default: report orphans but don't touch.
+   - `--beril-root <path>` overrides BERIL_ROOT auto-detection
+     (walks up from cwd looking for `projects/`).
+
+   Never modifies project source files (REPORT.md, RESEARCH_PLAN.md,
+   notebooks, figures), never touches narrative/working/audit
+   sidecar trees outside of pruned drafts.
+
+2. CLI registration: subcommand wired into cli.py. test_smoke.py's
+   subcommand-registration test extended to expect 6 subcommands
+   (was 5).
+
+3. 26 new tests (tests/unit/test_prune.py) covering:
+   - _enumerate_drafts: full enum, orphan detection, .kept marker
+     detection, missing-dir handling, non-pattern dirs ignored.
+   - plan_prune: latest-N keep, .kept marker pinning, keep=0
+     prunes everything, keep > count keeps everything,
+     .kept doesn't count against the keep quota.
+   - _format_bytes: B/KiB/MiB/GiB.
+   - CLI run(): dry-run, apply, archive, kept-marker pinning,
+     orphan report-only, --also-orphans, no-drafts case,
+     no-talks-dir case, missing-project, --keep negative,
+     archive-collision timestamp.
+   - _resolve_project_dir with explicit --beril-root and
+     project-as-path-arg.
+   - End-to-end via cli.main([...]) dispatch.
+
+4. HUB_INSTALL.md extended:
+   - "When to use each subcommand" table: prune row added.
+   - New "Drafts pile up — pruning old runs" section with usage
+     examples (dry-run, apply, archive, .kept marker workflow)
+     and a note on what prune does NOT touch.
+
+Backwards compatibility
+
+- Pure addition: no existing behavior changes.
+- Existing draft directories unchanged (the .kept marker is
+  optional; absence means "subject to standard --keep window").
+
+Tests: 663 → 690 passed (27 new: 26 prune + 1 cli-registration
+parametrize), 1 marker-gated live integration test still skipped
+in sandbox.
+
+Refs
+
+- predecessor tag: v0.3.4
+- task #67 closes
+- next: task #50 multi-project smoke + KBERDL hub install. With
+  v0.3.4.1's prune, hub operators can manage draft accumulation
+  during the smoke runs.
