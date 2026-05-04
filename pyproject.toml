@@ -1,17 +1,16 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.3.1 — adversarial v0.7.0.1 schema migration. Renames
-# narrative_weakness → central_objection in revise_loop dispatch
-# (v3 hard-rejects the dead class name; v2 audit files still
-# accepted for forensic compat). Adds citation_reality routing as
-# surface-only (per adversarial team: human verification needed,
-# don't auto-revise). New consumer-side smoke at
-# tests/integration/test_adversarial_interop.py — 3 unit-level shape
-# checks always run; 1 marker-gated live integration test runs only
-# with `pytest -m integration`. Mitigates the recurring cross-skill
-# contract drift pattern (4 strikes May 2026). Builds on v0.3.3's
-# image-gen orchestrator stage.
+# Status: v0.3.3.2 — image-gen efficiency point release. Two fixes
+# from the v0.3.3 ship-validation smoke: (#63) stage_image_gen reuses
+# cached <slide>_request.json from prior runs when the slide_id
+# verifier passes and any --image-style override matches — saves
+# ~$0.14 per slide on retries; (#62) image_client worst-case preflight
+# recalibrated from $0.404 to $0.05 using v0.3.0's 13-trial calibration
+# data ($0.014 mean, σ small). Pre-recalibration was rejecting
+# legitimate $0.10 caps mid-pipeline AFTER ai_image_prompt LLM had
+# already burned $0.14. Builds on v0.3.3.1's adversarial v0.7.0.1
+# schema migration.
 ####################################################################
 
 [build-system]
@@ -24,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.3.1"
+version = "0.3.3.2"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

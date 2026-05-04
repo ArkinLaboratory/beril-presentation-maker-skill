@@ -97,6 +97,25 @@ CHANNEL_A = "A"   # LLM-proposed (global flag opt-in)
 CHANNEL_B = "B"   # user-requested (interactive override; bypasses Channel A)
 
 
+# Worst-case cost preflight bound. v0.3.3.2 (#62) recalibrated against
+# v0.3.0's 13-trial calibration data:
+#   - 13 successful trials, total spend $0.177
+#   - mean $0.014 / image, σ small
+#   - max observed ~$0.018
+# Pre-recalibration value was 32K-output × $12/M = $0.404 — 30× over the
+# calibrated mean, which (a) was rejecting legitimate $0.10 caps mid-
+# pipeline AFTER the API call had spent real money on the upstream
+# ai_image_prompt LLM (~$0.14 wasted on each false-positive reject),
+# and (b) led users to default --max-image-cost-usd 0.50 just to
+# satisfy the preflight even when their actual budget was $0.10.
+#
+# New bound: $0.05 — ~3.7× calibrated mean, generous headroom against
+# rate-card drift, but tight enough that --max-image-cost-usd 0.10
+# clears (~7 images per cap rather than ~12 falsely rejected ones).
+# Re-run image_gen_calibration.py if the model id or rate card changes.
+_WORST_CASE_COST_USD = 0.05
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -223,15 +242,17 @@ class ImageClient:
         """
         model = model or self.model
 
-        # Cost pre-flight (worst-case at this model's max output tokens).
-        # Gemini-pro-image tops at ~32K output tokens per image. Estimate
-        # ~10K input tokens (prompt + system).
-        worst_cost = self.estimate_cost_usd(model, input_tokens=10_000,
-                                            output_tokens=32_000)
+        # Cost pre-flight (worst-case bound). v0.3.3.2 (#62): recalibrated
+        # constant ($0.05) replaces the 32K-output token-rate estimate
+        # ($0.404) that was 30× the calibrated mean. See _WORST_CASE_COST_USD
+        # docstring for rationale and re-calibration trigger.
+        worst_cost = _WORST_CASE_COST_USD
         if budget_remaining_usd is not None and worst_cost > budget_remaining_usd:
             raise BudgetExceeded(
                 f"image-gen worst-case ${worst_cost:.3f} > "
-                f"remaining budget ${budget_remaining_usd:.3f}"
+                f"remaining budget ${budget_remaining_usd:.3f} "
+                f"(calibrated mean ~$0.014/image; raise "
+                f"--max-image-cost-usd or check budget)"
             )
 
         start = time.time()

@@ -100,12 +100,59 @@ def test_estimate_cost_unknown_model_returns_zero(ic):
 # ---------------------------------------------------------------------------
 
 def test_generate_raises_budget_exceeded(ic):
-    """Worst-case for gemini-pro-image: ~10K input + 32K output ≈ $0.40+.
-    With $0.10 budget, BudgetExceeded should fire."""
+    """v0.3.3.2 (#62): worst-case is now $0.05 (was $0.404). With
+    $0.01 budget, BudgetExceeded fires (0.05 > 0.01)."""
     client = ic.ImageClient.cborg(api_key="test")
     with pytest.raises(ic.BudgetExceeded) as exc:
         client.generate(prompt="x", budget_remaining_usd=0.01)
-    assert "worst-case" in str(exc.value).lower()
+    msg = str(exc.value).lower()
+    assert "worst-case" in msg
+    # Hint should mention the calibrated mean so users know what to expect.
+    assert "0.014" in msg
+
+
+def test_worst_case_cost_recalibrated_against_v0_3_0_data(ic):
+    """v0.3.3.2 (#62): the preflight constant is pinned to a value
+    in [$0.03, $0.10] — generous headroom over the calibrated mean
+    ($0.014/image, σ small) but tight enough to not false-positive
+    --max-image-cost-usd 0.10. Catches accidental loosening (back
+    toward $0.40) and accidental tightening (below the calibrated
+    max ~$0.018 + headroom)."""
+    assert 0.03 <= ic._WORST_CASE_COST_USD <= 0.10, (
+        f"_WORST_CASE_COST_USD={ic._WORST_CASE_COST_USD} drifted out "
+        f"of the calibrated band [0.03, 0.10]. If actual costs have "
+        f"changed, re-run image_gen_calibration.py and update both "
+        f"the constant and this test."
+    )
+
+
+def test_generate_clears_preflight_at_max_image_cost_default(ic):
+    """The orchestrator default --max-image-cost-usd is 0.50. Preflight
+    must clear at that level (and any reasonable user override above
+    the worst-case bound)."""
+    import requests
+    sess = MagicMock()
+    sess.post.side_effect = requests.RequestException("preflight passed")
+    client = ic.ImageClient.cborg(api_key="test", request_session=sess)
+    # 0.50 (orchestrator default) and 0.10 (sane lower bound) both clear
+    for budget in (0.50, 0.10):
+        with pytest.raises(ic.ImageClientError) as exc:
+            client.generate(prompt="x", budget_remaining_usd=budget)
+        assert not isinstance(exc.value, ic.BudgetExceeded), (
+            f"BudgetExceeded falsely fired at budget=${budget}"
+        )
+
+
+def test_generate_preflight_borderline_at_worst_case(ic):
+    """Budget exactly equal to worst-case: NOT exceeded (uses >, not ≥).
+    Pins the comparison-strictness in case anyone refactors to ≥."""
+    import requests
+    sess = MagicMock()
+    sess.post.side_effect = requests.RequestException("preflight passed")
+    client = ic.ImageClient.cborg(api_key="test", request_session=sess)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=ic._WORST_CASE_COST_USD)
+    assert not isinstance(exc.value, ic.BudgetExceeded)
 
 
 def test_generate_within_budget_passes_preflight(ic):

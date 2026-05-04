@@ -234,6 +234,47 @@ def prompt_approval(
 # Post-write slide_id_target verification
 # --------------------------------------------------------------------------
 
+def can_reuse_cached_request(
+    request_path: Path | str,
+    expected_slide_id_target: str,
+    *,
+    expected_style: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Decide whether a cached <slide_id>_request.json from a prior run
+    can be reused without re-invoking ai_image_prompt.v1.
+
+    v0.3.3.2 (#63): on the v0.3.3 ship-validation smoke, two failed
+    attempts re-authored the same request at ~$0.14/each before the
+    third succeeded — total burn ~$0.28 in cached LLM work. Reuse
+    when the cached request:
+    - exists and is valid JSON
+    - has the expected slide_id_target (slide_id_target verifier passes)
+    - matches the user's --image-style override if any was specified
+
+    Returns (reusable: bool, reason: str). On the False branch, the
+    reason explains why the cache was rejected so the orchestrator
+    can log it and proceed with a fresh LLM authoring.
+    """
+    request_path = Path(request_path)
+    if not request_path.is_file():
+        return False, "no cached request on disk"
+    errors = verify_request_slide_id(request_path, expected_slide_id_target)
+    if errors:
+        return False, f"verifier rejected cached request: {errors[0]}"
+    if expected_style is not None and expected_style:
+        try:
+            data = json.loads(request_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            return False, f"cached JSON unreadable: {e}"
+        cached_style = data.get("style", "")
+        if cached_style != expected_style:
+            return False, (
+                f"--image-style {expected_style!r} differs from cached "
+                f"style {cached_style!r}; re-authoring to apply override"
+            )
+    return True, "cached request is reusable"
+
+
 def verify_request_slide_id(
     request_path: Path | str,
     expected_slide_id_target: str,
@@ -292,6 +333,26 @@ def verify_request_slide_id(
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
+
+def _cmd_check_reuse(args) -> int:
+    """v0.3.3.2: bash dispatch for cached-request reuse decision.
+
+    Exit codes:
+      0 → cached request is reusable; orchestrator skips ai_image_prompt LLM
+      1 → cached request not reusable (no cache, expired, style override);
+           orchestrator authors fresh request
+
+    Always prints the reason to stderr so the orchestrator can log it.
+    """
+    style = args.expected_style if args.expected_style else None
+    reusable, reason = can_reuse_cached_request(
+        args.request_path,
+        args.expected_slide_id,
+        expected_style=style,
+    )
+    print(reason, file=sys.stderr)
+    return 0 if reusable else 1
+
 
 def _cmd_verify(args) -> int:
     errors = verify_request_slide_id(args.request_path, args.expected_slide_id)
@@ -390,6 +451,22 @@ def main(argv=None) -> int:
     p_verify.add_argument("expected_slide_id",
                           help="Expected slide_id_target value")
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_reuse = sub.add_parser(
+        "check-reuse",
+        help=("Decide if a cached request.json can be reused (exit 0) "
+              "or must be re-authored (exit 1). v0.3.3.2 (#63)."),
+    )
+    p_reuse.add_argument("request_path",
+                         help="Path to candidate <slide>_request.json")
+    p_reuse.add_argument("expected_slide_id",
+                         help="Expected slide_id_target value")
+    p_reuse.add_argument(
+        "--expected-style", default="",
+        help=("If set (matches --image-style), require the cached "
+              "request to use this style. Empty = accept any style."),
+    )
+    p_reuse.set_defaults(func=_cmd_check_reuse)
 
     p_prompt = sub.add_parser(
         "prompt",

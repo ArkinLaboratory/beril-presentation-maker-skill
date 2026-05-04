@@ -1226,13 +1226,22 @@ stage_image_gen() {
       continue
     fi
 
-    # 3d. Author the image request via ai_image_prompt.v1.md.
+    # 3d. Author the image request via ai_image_prompt.v1.md, OR reuse
+    # a cached request from a prior run if one exists and is valid.
+    # v0.3.3.2 (#63): cache-reuse saves ~$0.14/slide on every retry.
+    # The check-reuse subcommand exits 0 when reusable, 1 when not;
+    # always prints the reason to stderr.
     local request_path="$IMAGE_REQUESTS_DIR/${slide_id}_request.json"
-    local style_directive=""
-    if [[ -n "$IMAGE_STYLE" ]]; then
-      style_directive="STYLE_HINT=$IMAGE_STYLE"$'\n'
-    fi
-    local user_prompt="OUT_PATH=$request_path
+    if "$PYTHON_BIN" "$TOOLS_DIR/image_gen_approval.py" check-reuse \
+        "$request_path" "$slide_id" \
+        --expected-style "$IMAGE_STYLE" 2>/dev/null; then
+      echo "    reusing cached request: $request_path" >&2
+    else
+      local style_directive=""
+      if [[ -n "$IMAGE_STYLE" ]]; then
+        style_directive="STYLE_HINT=$IMAGE_STYLE"$'\n'
+      fi
+      local user_prompt="OUT_PATH=$request_path
 CHANNEL=A
 SLIDE_ID_TARGET=$slide_id
 STUB_PATH=$stub_path
@@ -1249,15 +1258,16 @@ for context; emit a model-ready image-request.v1 JSON to OUT_PATH.
 slide_id_target MUST exactly equal $slide_id; the orchestrator verifies
 this on write."
 
-    if ! invoke_claude_with_retry "$PROMPTS_DIR/ai_image_prompt.v1.md" \
-        "$user_prompt" "$request_path" "ai_image_prompt-$slide_id"; then
-      echo "    ai_image_prompt failed; recording rejection" >&2
-      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
-        --draft-dir "$OUTDIR" --slide-id "$slide_id" \
-        --reason "ai_image_prompt invocation failed (LLM error)" \
-        >/dev/null
-      n_rejected=$((n_rejected + 1))
-      continue
+      if ! invoke_claude_with_retry "$PROMPTS_DIR/ai_image_prompt.v1.md" \
+          "$user_prompt" "$request_path" "ai_image_prompt-$slide_id"; then
+        echo "    ai_image_prompt failed; recording rejection" >&2
+        "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-rejected \
+          --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+          --reason "ai_image_prompt invocation failed (LLM error)" \
+          >/dev/null
+        n_rejected=$((n_rejected + 1))
+        continue
+      fi
     fi
 
     # 3e. Trust-but-verify: confirm slide_id_target matches what we

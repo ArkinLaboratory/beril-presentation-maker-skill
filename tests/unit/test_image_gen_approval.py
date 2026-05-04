@@ -346,3 +346,122 @@ def test_cli_verify_mismatch(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "error" in captured.err
     assert "mismatch" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# v0.3.3.2 #63 — cache-reuse decision
+# ---------------------------------------------------------------------------
+
+def test_can_reuse_cached_request_no_file(tmp_path):
+    reusable, reason = iga.can_reuse_cached_request(
+        tmp_path / "no.json", "S2-pos4")
+    assert not reusable
+    assert "no cached request" in reason
+
+
+def test_can_reuse_cached_request_valid_no_style_check(tmp_path):
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict()))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4")
+    assert reusable
+    assert "reusable" in reason
+
+
+def test_can_reuse_cached_request_slide_id_mismatch(tmp_path):
+    """Cached request for one slide_id, asked about another."""
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict(slide_id_target="S2-pos4")))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S99-pos99")
+    assert not reusable
+    assert "verifier rejected" in reason
+
+
+def test_can_reuse_cached_request_style_match(tmp_path):
+    """--image-style override matches cached style → reusable."""
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(
+        _request_dict(style="scientific_illustration")))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4",
+        expected_style="scientific_illustration")
+    assert reusable
+
+
+def test_can_reuse_cached_request_style_mismatch(tmp_path):
+    """--image-style differs from cached style → must re-author."""
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(
+        _request_dict(style="scientific_illustration")))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4",
+        expected_style="metaphor")
+    assert not reusable
+    assert "style" in reason
+    assert "differs" in reason
+
+
+def test_can_reuse_cached_request_empty_expected_style_skips_check(tmp_path):
+    """Empty expected_style (no --image-style override) → don't check
+    cached style; reuse if everything else valid."""
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict(style="watercolor")))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4", expected_style="")
+    assert reusable
+
+
+def test_can_reuse_cached_request_malformed_json(tmp_path):
+    target = tmp_path / "req.json"
+    target.write_text("{not valid json")
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4")
+    assert not reusable
+    # Verifier path catches it first
+    assert "verifier rejected" in reason or "JSON" in reason
+
+
+def test_can_reuse_cached_request_wrong_schema(tmp_path):
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(
+        _request_dict(schema_version="image-request.v0")))
+    reusable, reason = iga.can_reuse_cached_request(
+        target, "S2-pos4")
+    assert not reusable
+
+
+def test_cli_check_reuse_exit_zero_when_reusable(tmp_path, capsys):
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict()))
+    rc = iga.main(["check-reuse", str(target), "S2-pos4"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "reusable" in captured.err
+
+
+def test_cli_check_reuse_exit_one_when_not_reusable(tmp_path, capsys):
+    rc = iga.main(["check-reuse", str(tmp_path / "no.json"), "S2-pos4"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "no cached" in captured.err
+
+
+def test_cli_check_reuse_with_style_override_match(tmp_path):
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict(style="metaphor")))
+    rc = iga.main([
+        "check-reuse", str(target), "S2-pos4",
+        "--expected-style", "metaphor",
+    ])
+    assert rc == 0
+
+
+def test_cli_check_reuse_with_style_override_mismatch(tmp_path):
+    target = tmp_path / "req.json"
+    target.write_text(json.dumps(_request_dict(style="metaphor")))
+    rc = iga.main([
+        "check-reuse", str(target), "S2-pos4",
+        "--expected-style", "infographic",
+    ])
+    assert rc == 1
