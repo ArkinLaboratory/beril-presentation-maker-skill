@@ -246,12 +246,17 @@ Apply:
    substory, HALT — that's a substory_design.v1 concern, not a
    slide_revise concern.
 
-### Other classes (throughline, narrative_weakness)
+### Other classes (throughline, central_objection, citation_reality)
 
 The reviewer flagged these but pointed `fix_target` at substory_design
-or slide_compose — not at this prompt. If you receive one of these
-findings, HALT with `[ERROR: revise_slide.v1 not the right target for
-class={class}. Orchestrator dispatch error.]`.
+or slide_compose — not at this prompt, OR (for citation_reality) the
+fix is human-verification rather than auto-revision. If you receive
+one of these findings, HALT with `[ERROR: revise_slide.v1 not the
+right target for class={class}. Orchestrator dispatch error.]`.
+
+(`central_objection` is the v3 class name; the v2 audit-file name
+`narrative_weakness` is also accepted by the orchestrator's dispatch
+table and routes here for the same HALT response.)
 
 ## Discipline pass
 

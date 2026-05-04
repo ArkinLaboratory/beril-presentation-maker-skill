@@ -82,8 +82,30 @@ def test_finding_throughline_is_surface_only(rl):
 
 
 def test_finding_narrative_weakness_is_surface_only(rl):
+    """v2 backwards-compat: narrative_weakness still surfaces as info."""
     f = rl.Finding(raw={"id": "F007", "class": "narrative_weakness",
                         "severity": "info"})
+    assert f.is_surface_only
+
+
+def test_finding_central_objection_is_surface_only(rl):
+    """v3: central_objection (renamed from narrative_weakness) surfaces
+    as info — same role, different name. Both must route to surface-only
+    so the dispatch table works against v2 and v3 audit files alike."""
+    f = rl.Finding(raw={"id": "F007", "class": "central_objection",
+                        "severity": "info"})
+    assert f.is_surface_only
+
+
+def test_finding_citation_reality_is_surface_only(rl):
+    """v3 new class: citation_reality fires on questionable citations.
+    Per adversarial team guidance: surface for human verification rather
+    than auto-revise. citation_id is required by the producer's validator
+    (D2); we don't enforce here, just route to surface-only."""
+    f = rl.Finding(raw={"id": "F010", "class": "citation_reality",
+                        "severity": "P1",
+                        "citation_id": "scott2010ribosome",
+                        "slide_id": 14})
     assert f.is_surface_only
 
 
@@ -377,8 +399,118 @@ def test_next_actions_renders_failed_findings(rl, dry_run_fixture):
     # Surface-only findings (F003, F004) appear in the markdown
     assert "F003" in md
     assert "F004" in md
-    # The narrative_weakness section
-    assert "biggest narrative weakness" in md.lower()
+    # v0.3.3.1: header text reflects v3 framing (central objection),
+    # but a v2 fixture's narrative_weakness finding still routes here.
+    # Backwards-compat: both class names match DECK_WIDE_OBJECTION_CLASSES.
+    assert "central objection" in md.lower()
+
+
+# ---------------------------------------------------------------------------
+# v0.3.3.1 — adversarial v0.7.0.1 schema migration
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dry_run_fixture_v3(tmp_path, sample_spec):
+    """v0.3.3.1: parallel fixture using adversarial v3 schema. Mirrors
+    dry_run_fixture but uses central_objection (v3 rename) instead of
+    narrative_weakness (v2), and adds a citation_reality finding."""
+    project_dir = tmp_path / "project"
+    talks_dir = project_dir / "talks" / "draft_1"
+    working_dir = talks_dir / "working"
+    narrative_dir = talks_dir / "narrative"
+    audit_dir = talks_dir / "audit"
+    snapshots_dir = audit_dir / "snapshots"
+    for d in (working_dir, narrative_dir, audit_dir, snapshots_dir,
+              talks_dir / "deliverable"):
+        d.mkdir(parents=True)
+
+    (working_dir / "slide_spec.json").write_text(
+        json.dumps(sample_spec), encoding="utf-8")
+    (project_dir / "REPORT.md").write_text("# Report\n\nNothing.\n",
+                                           encoding="utf-8")
+    (narrative_dir / "00_throughline.md").write_text("# TL\n", encoding="utf-8")
+    (narrative_dir / "02_substories.md").write_text("# substories\n", encoding="utf-8")
+    (working_dir / "citation_pool.json").write_text("{}", encoding="utf-8")
+    (working_dir / "curated_figures.md").write_text("# figures\n", encoding="utf-8")
+
+    review = {
+        "schema_version": "adversarial-review-presentation.v3",
+        "draft_dir": str(talks_dir),
+        "tier": "STRONG",
+        "summary": {"total_findings": 4,
+                    "by_severity": {"P0": 1, "P1": 2, "P2": 0, "info": 1}},
+        "findings": [
+            {"id": "F001", "class": "register_drift", "severity": "P0",
+             "slide_id": 2, "issue": "overclaims",
+             "fix_target": "slide_compose.v1.md"},
+            # v3 NEW class: surface for human verification
+            {"id": "F002", "class": "citation_reality", "severity": "P1",
+             "slide_id": 4, "issue": "Scott et al. 2010 not in citation_pool",
+             "citation_id": "scott2010ribosome"},
+            {"id": "F003", "class": "qa_softball", "severity": "P1",
+             "slide_id": 3, "issue": "doesn't land"},
+            # v3 RENAMED class (was narrative_weakness in v2)
+            {"id": "F004", "class": "central_objection", "severity": "info",
+             "issue": "the deck conflates correlation with causation"},
+        ],
+    }
+    (audit_dir / "adversarial_review.json").write_text(
+        json.dumps(review), encoding="utf-8")
+    return talks_dir, project_dir
+
+
+def test_v3_schema_central_objection_routes_surface_only(rl, dry_run_fixture_v3):
+    """v3 central_objection (renamed from narrative_weakness) still
+    surfaces — same role, different class name."""
+    talks_dir, _ = dry_run_fixture_v3
+    meta = rl.run_revise_loop(talks_dir, severity_floor="P0", dry_run=True)
+    assert "F004" in meta["findings_skipped"]
+    md = (talks_dir / "working" / "next_actions.md").read_text(encoding="utf-8")
+    assert "central objection" in md.lower()
+    assert "correlation with causation" in md
+
+
+def test_v3_schema_citation_reality_routes_surface_only(rl, dry_run_fixture_v3):
+    """v3 NEW class citation_reality surfaces in next_actions with its
+    own dedicated section + citation_id annotation. Per adversarial
+    team: don't auto-revise."""
+    talks_dir, _ = dry_run_fixture_v3
+    meta = rl.run_revise_loop(talks_dir, severity_floor="P1", dry_run=True)
+    # F002 is citation_reality at P1 → surface-only even at floor=P1
+    assert "F002" in meta["findings_skipped"]
+    md = (talks_dir / "working" / "next_actions.md").read_text(encoding="utf-8")
+    assert "Citation verification needed" in md
+    assert "scott2010ribosome" in md
+    # Other surface-only findings still appear
+    assert "central objection" in md.lower()
+
+
+def test_v3_schema_dispatch_unchanged_for_existing_classes(rl, dry_run_fixture_v3):
+    """register_drift + qa_softball + missing_slide dispatches don't
+    change between v2 and v3 schemas — only narrative_weakness rename
+    and citation_reality addition affect surface-only routing."""
+    talks_dir, _ = dry_run_fixture_v3
+    meta = rl.run_revise_loop(talks_dir, severity_floor="P1", dry_run=True)
+    assert "F001" in meta["findings_revised"]   # register_drift P0
+    assert "F003" in meta["findings_revised"]   # qa_softball P1
+
+
+def test_v2_audit_files_still_readable_post_migration(rl, dry_run_fixture):
+    """Adversarial v2 acceptance is still on per the producer; consumer-
+    side dispatch must accept v2 audit files for forensic compat. The
+    existing dry_run_fixture uses v2 schema with narrative_weakness;
+    test_dry_run_processes_p0_findings et al cover this implicitly,
+    but pin it explicitly here so the migration's 'transition release'
+    semantics don't get accidentally tightened."""
+    talks_dir, _ = dry_run_fixture
+    meta = rl.run_revise_loop(talks_dir, severity_floor="P0", dry_run=True)
+    # F004 (narrative_weakness, v2 schema) routes to surface-only
+    assert "F004" in meta["findings_skipped"]
+    md = (talks_dir / "working" / "next_actions.md").read_text(encoding="utf-8")
+    # v3-framed header still applies because both class names map to the
+    # same DECK_WIDE_OBJECTION_CLASSES tuple.
+    assert "central objection" in md.lower()
 
 
 # ---------------------------------------------------------------------------

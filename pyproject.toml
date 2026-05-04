@@ -1,16 +1,17 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.3 — image-gen orchestrator stage SHIPPED. Channel A
-# (LLM-initiated) concept_illustration → AI image pipeline is live:
-# deterministic Python decision layer + ai_image_prompt.v1 LLM call
-# per slide + per-slide approval gate + image_client.py generation
-# + manifest binding through merge. Architecture in
-# V0_3_3_ARCHITECTURE.md. Backwards-compat: --no-images skips the
-# stage; pre-v0.3.3 drafts merge with no manifest binding. Channel B
-# (user-initiated) deferred to v0.4.x. Builds on v0.3.1's 4-zone
-# layout (deliverable/narrative/working/audit) and v0.3.2's
-# data_table layout.
+# Status: v0.3.3.1 — adversarial v0.7.0.1 schema migration. Renames
+# narrative_weakness → central_objection in revise_loop dispatch
+# (v3 hard-rejects the dead class name; v2 audit files still
+# accepted for forensic compat). Adds citation_reality routing as
+# surface-only (per adversarial team: human verification needed,
+# don't auto-revise). New consumer-side smoke at
+# tests/integration/test_adversarial_interop.py — 3 unit-level shape
+# checks always run; 1 marker-gated live integration test runs only
+# with `pytest -m integration`. Mitigates the recurring cross-skill
+# contract drift pattern (4 strikes May 2026). Builds on v0.3.3's
+# image-gen orchestrator stage.
 ####################################################################
 
 [build-system]
@@ -23,7 +24,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.3"
+version = "0.3.3.1"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

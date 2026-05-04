@@ -1,0 +1,100 @@
+v0.3.3.1: adversarial v0.7.0.1 schema migration
+
+Closes the consumer-side migration for adversarial-review-presentation.v3
+schema (shipped in beril-adversarial v0.7.0; v0.7.0.1 is byte-identical
+except SKILL.md / README.md / version, no producer-side changes).
+
+Changes
+
+1. Class enum dispatch: narrative_weakness → central_objection in
+   revise_loop.SURFACE_ONLY_CLASSES. Both names accepted for one
+   transition release per adversarial team's "Optionally accept BOTH"
+   guidance — v3 hard-rejects the dead class name, but v2 audit files
+   in audit/ from prior runs still produce narrative_weakness, and
+   forensic compatibility matters.
+
+2. New class routing: citation_reality added to SURFACE_ONLY_CLASSES.
+   Per adversarial team: surface to user for human verification rather
+   than auto-revise (citations need human verification, not LLM
+   second-pass). Required field is citation_id (validator D2 enforces
+   on producer side; we don't re-enforce on consumer). next_actions.md
+   gets a new "Citation verification needed" section listing each
+   flagged citation with its citation_id annotation.
+
+3. revise_slide.v1.md prompt: updated "Other classes" header at L249
+   to name central_objection + citation_reality (was just throughline
+   + narrative_weakness). HALT response unchanged.
+
+4. New consumer-side smoke test at tests/integration/test_adversarial_interop.py:
+   - 3 unit-level shape checks (always run, no LLM cost): assert the
+     orchestrator invokes `beril-adversarial review --type presentation
+     "$OUTDIR"`, uses `--help`-based subcommand probe, handles the
+     not-installed case gracefully.
+   - 1 marker-gated live integration test (runs only with
+     `pytest -m integration`): subprocess-invokes a real
+     `beril-adversarial review --type presentation` against a synthetic
+     minimal draft, asserts (a) exit 0, (b) output exists, (c) JSON
+     parses, (d) schema_version is "adversarial-review-presentation.v3".
+     Skipped by default; ~$0.50/run on live LLM.
+
+   Catches the recurring cross-skill contract drift pattern (4 strikes
+   May 2026 — see feedback_cross_skill_contract_drift.md memory). The
+   producer cannot enforce that consumers call its CLI correctly; this
+   test asserts our orchestrator's invocation shape stays current.
+
+5. test_revise_loop.py: added 4 new tests covering the v3 schema
+   (central_objection routing, citation_reality routing,
+   dispatch-unchanged-for-existing-classes, v2-audit-files-still-readable).
+   Existing test_finding_narrative_weakness_is_surface_only kept for
+   backwards-compat coverage. 30 → 34 tests in this file.
+
+   Plus updated test_next_actions_renders_failed_findings to assert
+   the v3-framed "central objection" header (replaces "biggest
+   narrative weakness" header text).
+
+Backwards compatibility
+
+- v2 audit files (`schema_version: "adversarial-review-presentation.v2"`
+  with `narrative_weakness` findings) remain readable. Both class names
+  route to surface-only via the same DECK_WIDE_OBJECTION_CLASSES tuple.
+  The user-visible header reflects v3 framing ("central objection"); v2
+  findings appear under it without renaming the class field.
+
+- --output flag pass-through: orchestrator doesn't pass --output to
+  beril-adversarial review (canonical paths preserved). v0.7.0+ honors
+  --output where v0.6.x silently ignored it; we keep the canonical
+  behavior. No regression.
+
+Adversarial team coordination
+
+Tag the adversarial team when v0.3.3.1 deploys so they can plan v2
+acceptance removal for a future release. Per their event-driven
+deprecation policy: "v2 acceptance will be removed in the release
+AFTER both of your teams confirm v3 adoption in production."
+
+Operator install (after deploy)
+
+  pipx install --force git+https://github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.1
+  beril-adversarial install-skill <BERIL_ROOT>
+  beril-adversarial --version    # should print 0.7.0.1
+
+  pipx install --force -e .  # presentation-maker @ v0.3.3.1
+  beril-presentation-maker --version  # should print 0.3.3.1
+
+Then validate consumer-side via the shape tests:
+
+  pytest tests/integration/test_adversarial_interop.py -v
+
+(All 3 unit-level checks must pass. The live integration test will
+skip unless you also pass `-m integration`.)
+
+Tests: 638 → 648 passed, 1 skipped (the marker-gated live integration);
+no regressions.
+
+Refs
+
+- predecessor tag: v0.3.3
+- adversarial v0.7.0.1: byte-identical to v0.7.0 except SKILL.md docs
+- producer CONTRACT: spike/beril-adversarial-skill-draft/CONTRACT.md
+- memory: feedback_cross_skill_contract_drift.md (4-strike pattern)
+- task #60 (this) closes; task #50 (multi-project smoke + hub) next

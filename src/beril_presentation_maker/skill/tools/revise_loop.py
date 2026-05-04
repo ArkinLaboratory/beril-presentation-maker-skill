@@ -89,11 +89,28 @@ REVISE_CLASSES = (
 )
 ADD_CLASSES = ("missing_slide",)
 # These classes don't have a per-slide fix; surface in next_actions only.
+#
+# v0.3.3.1: extended for adversarial v0.7.0.1 (adversarial-review-presentation.v3):
+#   - `central_objection` is v3's rename of `narrative_weakness` (same role:
+#     deck-wide killshot synthesis, info severity, one per review). Both names
+#     accepted for one transition release; v2 audit files still produce
+#     narrative_weakness.
+#   - `citation_reality` is new in v3 (parity with paper schema since v0.6.0).
+#     Per adversarial team: surface to user for review rather than auto-revise
+#     (citations need human verification). Required field is `citation_id`.
 SURFACE_ONLY_CLASSES = (
-    "throughline",         # spine-level; substory_design.v1 territory
-    "narrative_weakness",  # info-level; speaker awareness, not slide fix
+    "throughline",            # spine-level; substory_design.v1 territory
+    "central_objection",      # v3 rename of narrative_weakness; deck-wide killshot
+    "narrative_weakness",     # v2 backwards-compat; same role as central_objection
+    "citation_reality",       # v3: surface citation issues for human verification
     "unbacked_quantitative",  # check_quantitative_grounding handles this
 )
+
+# v0.3.3.1: classes that name the deck-wide synthesis ("the killshot a peer
+# reviewer would land"). Both v2 (narrative_weakness) and v3 (central_objection)
+# names accepted. Used to populate the "central objection" section of
+# next_actions.md.
+DECK_WIDE_OBJECTION_CLASSES = ("central_objection", "narrative_weakness")
 
 
 # ---------------------------------------------------------------------------
@@ -731,13 +748,39 @@ def _render_next_actions(review: dict[str, Any],
             lines.append(f"- **{f.get('id')}** ({cls}, slide {slide_id}): {issue}")
         lines.append("")
 
-    # Section 4: deck's biggest narrative weakness
-    nw = [f for f in findings if f.get("class") == "narrative_weakness"]
-    if nw:
-        lines.append("## The deck's biggest narrative weakness")
+    # Section 4: deck-wide central objection (v3) / narrative weakness (v2).
+    # The killshot a peer reviewer would land — surfaced as a strategic note
+    # for the speaker rather than a fix-ticket. Header reflects v3 framing
+    # (central objection); both class names matched for backwards compat.
+    objection = [f for f in findings
+                 if f.get("class") in DECK_WIDE_OBJECTION_CLASSES]
+    if objection:
+        lines.append("## The deck's central objection")
         lines.append("")
-        for f in nw:
+        for f in objection:
             lines.append(f.get("issue", ""))
+        lines.append("")
+
+    # Section 5: citation reality (v3). Surfaced separately from the central
+    # objection because the action is verification, not strategic awareness.
+    # Per adversarial team guidance: don't auto-revise; require human review.
+    citation_findings = [f for f in findings
+                         if f.get("class") == "citation_reality"]
+    if citation_findings:
+        lines.append("## Citation verification needed")
+        lines.append("")
+        lines.append(
+            "These citations were flagged by the adversarial reviewer "
+            "as questionable (fabricated, drifting, or unverifiable). "
+            "Resolve each before shipping — auto-revision is unsafe for "
+            "citation surfaces.")
+        lines.append("")
+        for f in citation_findings:
+            cid = f.get("citation_id", "<missing citation_id>")
+            slide_id = f.get("slide_id", "n/a")
+            issue = f.get("issue", "")
+            lines.append(f"- **{f.get('id')}** (slide {slide_id}, "
+                         f"citation_id `{cid}`): {issue}")
         lines.append("")
 
     return "\n".join(lines) + "\n"
