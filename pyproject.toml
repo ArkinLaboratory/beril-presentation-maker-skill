@@ -1,17 +1,17 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.4.4 — docs cleanup pre-hub-install. Final
-# pre-deployment cleanup: README rewritten from stale v0.1-spec-
-# only state to v0.3.4.3 reality (14-stage pipeline, 16-layout
-# vocab, 4-zone layout, image-gen, adversarial loop, prune,
-# audit/runs). RELEASE_NOTES rolled up the v0.3.3 → v0.3.4.3
-# trajectory (7 missing entries added). HUB_INSTALL pinned to
-# v0.3.4.4 install URL. SKILL.md status line updated to v0.3.4.4
-# + reference CONTRACT.md. Docs-only release. v1.0 prerequisite
-# stack now: v0.3.4 docs + v0.3.4.1 prune + v0.3.4.2 audit hygiene
-# + v0.3.4.3 contract + v0.3.4.4 cleanup. Hub install runbook in
-# HUB_INSTALL.md is the next-action surface.
+# Status: v0.3.4.5 — configure-command bug fixes from first hub
+# install dry-run. Two fixes: (1) configure now looks for
+# `beril-adversarial` (not the never-existed `beril-adversarial-cli`)
+# + probes for v0.6.0+ `review` subcommand and reports version,
+# (2) configure now actually checks CBORG_API_KEY (shell env →
+# BERIL_ROOT/.env fallback; never echoes the value per
+# feedback_secret_file_handling.md). Both surfaced when Adam ran
+# the first hub install configure 2026-05-04 — adversarial showed
+# as [absent] despite being installed; CBORG_API_KEY check was
+# absent entirely despite HUB_INSTALL.md claiming it was reported.
+# 12 new unit tests covering the resolver + binary-name pin.
 ####################################################################
 
 [build-system]
@@ -24,7 +24,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.4.4"
+version = "0.3.4.5"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

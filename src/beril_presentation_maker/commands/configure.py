@@ -165,9 +165,43 @@ def run(args: argparse.Namespace) -> int:
     _info("=== Soft requirements ===")
 
     # ---- 6. beril-adversarial CLI (soft; v0.3+ review-rewrite loop) ----
-    adv_path = shutil.which("beril-adversarial-cli")
+    # v0.3.4.5: was checking "beril-adversarial-cli" — that binary
+    # never existed. Adversarial's CLI binary is `beril-adversarial`
+    # (subcommands: install-skill, configure, review). Fix matches
+    # feedback_verify_cli_before_recommending.md.
+    adv_path = shutil.which("beril-adversarial")
     if adv_path:
-        _info(f"  [OK]      beril-adversarial   — {adv_path}")
+        adv_version = _safe_version(
+            ["beril-adversarial", "--version"], default="(version unknown)"
+        )
+        # Probe for v0.6.0+ `review` subcommand
+        has_review = False
+        try:
+            help_out = subprocess.run(
+                ["beril-adversarial", "--help"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            help_text = (help_out.stdout or "") + (help_out.stderr or "")
+            has_review = any(
+                line.lstrip().startswith("review")
+                for line in help_text.splitlines()
+            )
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            pass
+        marker = "v0.6.0+" if has_review else "pre-v0.6.0 (no `review` subcommand)"
+        _info(
+            f"  [OK]      beril-adversarial   — {adv_path}  {adv_version}  ({marker})"
+        )
+        if not has_review:
+            _info(
+                "            v0.3.3.1+ presentation-maker requires v0.6.0+ "
+                "(for `review` subcommand). Upgrade:"
+            )
+            _info(
+                "            pipx install --force git+https://github.com/"
+                "ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.1"
+            )
+            soft_warnings.append("beril-adversarial < v0.6.0 (no `review` subcommand)")
     else:
         _info(
             "  [absent]  beril-adversarial   — not on PATH; v0.3+ review-rewrite "
@@ -175,7 +209,7 @@ def run(args: argparse.Namespace) -> int:
         )
         _info(
             "            To install: pipx install --force "
-            "git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git"
+            "git+https://github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.1"
         )
 
     # ---- 7. requests (optional CBORG image-gen client) ----
@@ -231,6 +265,29 @@ def run(args: argparse.Namespace) -> int:
         _err("            Orchestrator may fail at random points. Container or")
         _err("            sandbox is unusually stripped down.")
         soft_warnings.append(f"POSIX utilities missing: {missing_utils}")
+
+    # ---- 12. CBORG_API_KEY — required for image_gen stage ----
+    # v0.3.4.5: matches HUB_INSTALL.md L97-100's documented behavior.
+    # The orchestrator auto-loads from BERIL_ROOT/.env at startup;
+    # configure reports the resolution status without echoing the
+    # value (per memory feedback_secret_file_handling.md).
+    cborg_status = _resolve_cborg_api_key_status(beril_root)
+    if cborg_status["found"]:
+        _info(
+            f"  [OK]      CBORG_API_KEY       — set in {cborg_status['source']}"
+            f"  (image_gen stage will work)"
+        )
+    else:
+        _info(
+            "  [absent]  CBORG_API_KEY       — not set in shell env, "
+            "not in BERIL_ROOT/.env. image_gen stage will skip with "
+            "`CBORG_API_KEY not set`. Pass --no-images to bypass."
+        )
+        if beril_root is not None:
+            _info(
+                f"            To configure: "
+                f"echo 'CBORG_API_KEY=<your_key>' >> {beril_root}/.env"
+            )
 
     _info("")
     _info("=== Informational ===")
@@ -307,6 +364,45 @@ def _resolve_orchestrator_python() -> Path | None:
     if sys_p:
         return Path(sys_p)
     return None
+
+
+def _resolve_cborg_api_key_status(
+    beril_root: Path | None,
+) -> dict[str, object]:
+    """Report where (if anywhere) CBORG_API_KEY can be loaded from.
+
+    Mirrors the orchestrator's resolution order
+    (presentation_maker.sh §"resolve CBORG_API_KEY"):
+      1. Shell env $CBORG_API_KEY
+      2. BERIL_ROOT/.env line `CBORG_API_KEY=...`
+      3. None — image_gen will skip
+
+    Returns {"found": bool, "source": str}. NEVER echoes the value
+    itself (per feedback_secret_file_handling.md).
+    """
+    env_value = os.environ.get("CBORG_API_KEY")
+    if env_value:
+        return {"found": True, "source": "shell env $CBORG_API_KEY"}
+    if beril_root is not None:
+        env_file = beril_root / ".env"
+        if env_file.is_file():
+            try:
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    if stripped.startswith("CBORG_API_KEY="):
+                        # Don't capture the value; just confirm the line
+                        # has a non-empty RHS.
+                        rhs = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                        if rhs:
+                            return {
+                                "found": True,
+                                "source": str(env_file),
+                            }
+            except OSError:
+                pass
+    return {"found": False, "source": ""}
 
 
 def _check_module_in(python_path: Path, module: str) -> str | None:
