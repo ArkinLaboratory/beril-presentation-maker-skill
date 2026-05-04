@@ -1,19 +1,19 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.4.2 — audit hygiene closer. New tools/finalize_run.py
-# helper consolidates scattered per-stage .metadata.json sidecars
-# into a single audit/stage-metadata.json (stage-metadata.v1 schema)
-# AND populates the previously-empty audit/runs/run-N/ tree with
-# per-orchestrator-invocation summaries (run-summary.v1 schema:
-# started_at, finished_at, exit_code, stages_run, total_cost_usd,
-# token totals, models_used). Bash orchestrator hooks via trap EXIT
-# so finalize fires even on partial runs / Ctrl-C / failure. 36 new
-# unit tests covering stage-label derivation across 13 known
-# patterns, recursive metadata collection, idempotent overwrites,
-# sequential run-N allocation, and CLI dispatch. 726 unit tests +
-# 1 marker-gated live integration test all pass. Builds on
-# v0.3.4.1's prune subcommand.
+# Status: v0.3.4.3 — CONTRACT.md cross-skill interop pinning.
+# Single canonical document at repo root pinning every schema
+# presentation-maker emits (slide_spec.v1, image-manifest.v1,
+# image-decisions.v1, image-request.v1, image_provenance,
+# stage-metadata.v1, run-summary.v1, 4-zone draft layout) and every
+# schema it consumes (adversarial-review-presentation.v3 incl class
+# dispatch policy, citation_pool reuse-from-paper, project inputs).
+# Mirrors adversarial v0.6.0+ CONTRACT.md pattern. Includes CLI
+# surface guarantees, versioning policy, known interop quirks,
+# cross-skill smoke test catalog. Docs-only release; no code
+# changes. Closes the audit's "no CONTRACT.md" gap. v1.0
+# prerequisite stack now complete: v0.3.4 docs + v0.3.4.1 prune
+# + v0.3.4.2 audit hygiene + v0.3.4.3 contract.
 ####################################################################
 
 [build-system]
@@ -26,7 +26,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.4.2"
+version = "0.3.4.3"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

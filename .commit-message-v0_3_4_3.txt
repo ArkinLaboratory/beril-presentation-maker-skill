@@ -1,0 +1,101 @@
+v0.3.4.3: CONTRACT.md cross-skill interop pinning
+
+Closes the v0.3.4 hub-readiness audit's "no CONTRACT.md" gap.
+Single canonical document at repo root pinning the cross-skill
+interop surface — every schema presentation-maker emits that other
+skills might read, every schema we read from sibling skills
+(adversarial, paper-writer), the CLI guarantees, the versioning
+policy.
+
+Docs-only release. Zero code changes. Tests still 726/726 passing.
+
+Sections (8 + appendix)
+
+1. **Purpose & scope** — what this contract pins, what it doesn't,
+   when it changes (in the same commit as the producer-side change
+   it documents, per feedback_cross_skill_contract_drift.md).
+
+2. **Producer surface** (8 schemas):
+   - slide_spec.v1 — pointer to slide_spec.py LAYOUTS + 16-layout
+     vocab + image-bearing layouts (data_figure, concept_illustration)
+     + mutation lifecycle.
+   - image-manifest.v1 — slide_id format, consumer expectations,
+     validator behavior.
+   - image-decisions.v1 — closed-set partition rules over LAYOUTS.
+   - image-request.v1 — ai_image_prompt.v1 schema, 7-style enum
+     pinned to slide_spec.CONCEPT_STYLES (drift caught by regression
+     test), Channel A/B, approval_required invariant, cache reuse
+     semantics.
+   - image_provenance — append-only, quant_content_score=null in v1.
+   - stage-metadata.v1 + run-summary.v1 (NEW v0.3.4.2) — full schema
+     + bash trap-EXIT hook semantics.
+   - 4-zone draft layout — top-level invariant, manual-edit hash
+     guard contract, v0.3.0 non-migratability.
+
+3. **Consumer surface** (3 sources):
+   - adversarial-review-presentation.v3 — class enum table with
+     dispatch (REVISE / ADD / SURFACE_ONLY); v3 NEW classes
+     (central_objection rename, citation_reality); v2 backwards-
+     compat policy; required fields per finding; smoke test
+     reference.
+   - citation_pool reuse-from-paper — 9-field schema shared with
+     paper-writer; coordinator note for schema changes.
+   - Project inputs — REPORT.md / RESEARCH_PLAN.md / figures /
+     notebooks / references.md / papers/draft_*/ optional.
+
+4. **CLI surface** (4 subsections):
+   - 6 subcommands stable.
+   - Flag pass-through invariant — bash → Python wrappers MUST stay
+     in sync; pre-v0.3.3.2 incident memorialized.
+   - --resume-from valid stages list (14 entries; bash + Python
+     synced).
+   - Exit code semantics 0/1/2/3.
+
+5. **Versioning policy** — schema-version stability within v0.3.x,
+   minor vs. major bump expectations, worked-example walking the
+   adversarial v2 → v3 migration as the reference template for
+   future schema renames.
+
+6. **Known interop quirks** — slash-vs-CLI conflation warning
+   (mirrors adversarial's v0.7.0 hub-test fix), manifest wipe
+   semantics for re-roll, --image-style cache override behavior,
+   v0.3.0-shape draft hard-fail.
+
+7. **Cross-skill smoke tests** — catalog of consumer-side
+   integration tests in this repo. Currently:
+   tests/integration/test_adversarial_interop.py (3 unit-level shape
+   checks + 1 marker-gated live test). Pattern documented for future
+   producer-skill smokes.
+
+8. **Document maintenance** — when to update; potential regression
+   test for schema-version drift; reference-doc map (SKILL.md,
+   HUB_INSTALL.md, SPEC.md, LAYOUT.md, DECISIONS.md, RELEASE_NOTES,
+   V0_3_3_ARCHITECTURE.md, V0_3_1_PUNCH_LIST.md).
+
+**Appendix:** contract-version table — every schema/path/version
+indexed for fast reference (9 rows).
+
+Why this matters
+
+The recurring cross-skill drift pattern (4 strikes documented in
+feedback_cross_skill_contract_drift.md) is a producer-pretending-
+nothing-changed-mattered failure mode. CONTRACT.md is the
+producer-side canonical pin: when adding a layout to slide_spec,
+or renaming a class in v3, or adding a stage to --resume-from, the
+contract update is the producer's commit-time obligation.
+
+It's also load-bearing for v1.0 candidacy. Without CONTRACT.md, a
+hub user encountering an interop failure has no document to read
+that explains "what does presentation-maker actually promise other
+skills." With CONTRACT.md, the answer is a single grep away.
+
+Refs
+
+- predecessor tag: v0.3.4.2
+- audit-driven: 2026-05-04 hub-readiness audit "no CONTRACT.md gap"
+- task #69 closes
+- v1.0 prerequisite stack: NOW COMPLETE
+  v0.3.4 docs + v0.3.4.1 prune + v0.3.4.2 audit hygiene
+  + v0.3.4.3 CONTRACT.
+- next: task #50 multi-project smoke + KBERDL hub install (the
+  v1.0 gate)
