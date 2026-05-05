@@ -12,6 +12,13 @@ deployment. Sister skill to `/beril-adversarial` (harsh review),
 `/beril-atlas` (corpus metrics), and `/beril-paper-writer` (manuscript
 drafter). The fourth in the BERIL drop-in skill quartet.
 
+> **For participants and BERIL users running any of the four skills end-to-end**,
+> see [`docs/cross-skill/PARTICIPANT-RUNBOOK.md`](docs/cross-skill/PARTICIPANT-RUNBOOK.md).
+> The runbook is a durable cross-skill walkthrough hosted here for event-timing
+> reasons; it covers all four skills, BERIL workflow integration, cohort cheat-
+> sheets, troubleshooting, and cost expectations. The README below is
+> presentation-maker–specific.
+
 ## Status
 
 **v0.3.4.4 — production-ready, hub-deployable.** Builds on:
