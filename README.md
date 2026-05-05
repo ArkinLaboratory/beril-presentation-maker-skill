@@ -19,6 +19,20 @@ drafter). The fourth in the BERIL drop-in skill quartet.
 > sheets, troubleshooting, and cost expectations. The README below is
 > presentation-maker–specific.
 
+## Documentation map
+
+| Doc | Audience | What's in it |
+|---|---|---|
+| **[TUTORIAL.md](TUTORIAL.md)** | Researcher using `/beril-presentation-maker` on the BERIL hub | Skill-specific: output tree, reading `slide_spec.json`, the 16 layouts, image-gen approval flow, iteration patterns (revise vs re-run), hand-editing the `.pptx`, deferred cosmetic-issues hand-fix list, presentation-maker-specific troubleshooting. **Defers cross-skill install/configure to PARTICIPANT-RUNBOOK below.** |
+| **[HUB_INSTALL.md](HUB_INSTALL.md)** | Operator deploying on JupyterHub | pipx install + install-skill + configure runbook, first-run validation, slash command verification, upgrading, uninstalling, hub-specific troubleshooting. |
+| **[CONTRACT.md](CONTRACT.md)** | Integrator consuming this skill's output, or another skill (e.g., adversarial) being consumed by it | Cross-skill interop pinning: slide_spec.json schema as the consumer surface for the assemble step, adversarial reviewer schema dependency (v3), per-draft layout contract (deliverable / narrative / working / audit), backwards-compatibility fallback patterns. **Read this first if you're integrating.** |
+| **[RELEASE_NOTES.md](RELEASE_NOTES.md)** | Anyone tracking changes | Version-by-version history. |
+| **[SPEC.md](SPEC.md)** | Maintainer / contributor | Design intent: 14-stage pipeline, prompt versioning, slide_spec contract origin, image-gen calibration verdicts. |
+| **[LAYOUT.md](LAYOUT.md)** | Maintainer | Directory and file organization, runtime contracts (file paths, exit codes, state-file shapes). |
+| **[DECISIONS.md](DECISIONS.md)** | Schema designer / consumer wanting design rationale | Why the slide_spec / layout vocabulary / draft-zone partition look the way they do. |
+| Cross-skill: **[`docs/cross-skill/PARTICIPANT-RUNBOOK.md`](docs/cross-skill/PARTICIPANT-RUNBOOK.md)** | Researcher using ANY of the 4 BERIL plug-in skills (paper-writer / presentation-maker / adversarial / atlas) | Hub workflow integration (`/berdl_start` → install → configure → run any skill), cohort cheat-sheets, recovery, cost. Hosted here for event timing; will relocate post-event. |
+| Historical: [V0_2_0_PUNCH_LIST.md](V0_2_0_PUNCH_LIST.md), [V0_3_1_PUNCH_LIST.md](V0_3_1_PUNCH_LIST.md), [V0_3_3_ARCHITECTURE.md](V0_3_3_ARCHITECTURE.md) | Archaeology — design rationale for older releases | Each carries historical context for the version it was written for. |
+
 ## Status
 
 **v0.3.4.4 — production-ready, hub-deployable.** Builds on:
