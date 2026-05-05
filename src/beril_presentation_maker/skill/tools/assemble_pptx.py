@@ -469,7 +469,8 @@ def _add_textbox(slide, text: str,
                  color_rgb: tuple[int, int, int] | None = None,
                  align_center: bool = False,
                  word_wrap: bool = False,
-                 auto_size: bool = False):
+                 auto_size: bool = False,
+                 shrink_to_fit: bool = False):
     """Add a freeform text box at the given position.
 
     word_wrap=True enables long-text line wrapping inside the box (default
@@ -481,6 +482,14 @@ def _add_textbox(slide, text: str,
     auto_size=True enables python-pptx's MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
     so the textbox grows to fit its content. Combined with word_wrap=True
     this gives a "fit to content" textbox. Default False (fixed size).
+
+    shrink_to_fit=True enables python-pptx's MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    so the FONT shrinks to keep text inside a fixed-size box. Use this
+    for caption boxes where overflow into adjacent bands (e.g., the
+    KBase brand strip at y=5.00) is unacceptable. Mutually exclusive
+    with auto_size; passing both honors shrink_to_fit (v0.3.5: belt-
+    and-suspenders for data_figure captions; the slide_spec validator
+    is the primary cap at 280 chars).
     """
     tb = slide.shapes.add_textbox(
         Inches(left_in), Inches(top_in),
@@ -490,7 +499,10 @@ def _add_textbox(slide, text: str,
     tf.text = text
     if word_wrap:
         tf.word_wrap = True
-    if auto_size:
+    if shrink_to_fit:
+        from pptx.enum.text import MSO_AUTO_SIZE
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    elif auto_size:
         from pptx.enum.text import MSO_AUTO_SIZE
         tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
     p = tf.paragraphs[0]
@@ -871,9 +883,16 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
     #
     # auto_size=False is critical: it prevents the caption box from
     # growing downward and overlapping the data_source band when the
-    # caption is long. Captions that exceed the budget are visually
-    # clipped at the box edge — better than overlap, and the prompt
-    # should cap caption length at the source.
+    # caption is long.
+    #
+    # shrink_to_fit=True (v0.3.5): MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    # shrinks the FONT (not the box) so any caption that would otherwise
+    # spill below y=4.83 instead renders at a smaller point size and
+    # stays inside the 0.65-in band. This is belt-and-suspenders against
+    # the slide_spec validator's 280-char cap (DATA_FIGURE_CAPTION_MAX_CHARS):
+    # if the validator is bypassed, an old draft is re-assembled, or
+    # specific word lengths cause weird wrapping at edge cases, the
+    # render side still keeps text out of the brand strip at y=5.00.
     #
     # History:
     # 2026-04-28 (v0.2.1 fix #2, draft_9 walk): word_wrap=True introduced.
@@ -881,9 +900,16 @@ def _fill_data_figure(slide, content, draft_dir, warnings):
     #   H to 0.65, shrink figure region. Live failure: revise-loop produced
     #   ~410-char caption; auto_size grew caption box past data_source's
     #   y=4.82 anchor, producing visual overlap.
+    # 2026-05-05 (v0.3.5, gene_function_ecological_agora draft_1 slides
+    #   21+23): even with auto_size=False the 410-char caption still
+    #   spilled past the 0.65-in box bottom into the data_source / brand
+    #   strip (text overflow renders outside box bounds when no auto_size
+    #   is set). Layered fix: prompt cap + validator hard-fail + render
+    #   shrink_to_fit. See slide_compose.v1.md / revise_slide.v1.md /
+    #   slide_spec.DATA_FIGURE_CAPTION_MAX_CHARS.
     _add_textbox(slide, content["caption"], 0.50, 4.18, 9.00, 0.65,
                  font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
-                 word_wrap=True)
+                 word_wrap=True, shrink_to_fit=True)
     if content.get("data_source"):
         _add_textbox(slide, content["data_source"],
                      0.50, 4.83, 9.00, 0.15,

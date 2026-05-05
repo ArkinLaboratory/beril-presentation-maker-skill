@@ -503,6 +503,75 @@ def test_relative_figure_path_accepted(ss):
     assert not any("curated/" in i.message for i in issues)
 
 
+def test_data_figure_caption_at_cap_passes(ss):
+    """v0.3.5: caption length cap pinned at DATA_FIGURE_CAPTION_MAX_CHARS.
+    A caption exactly at the cap should pass. Also pins the constant
+    name so prompt-vs-tool drift produces a test-suite failure if the
+    cap is renamed without updating slide_compose.v1.md / revise_slide.v1.md."""
+    cap = ss.DATA_FIGURE_CAPTION_MAX_CHARS
+    assert cap == 280, "cap is the contract; bumping changes prompt + tests together"
+    slide = ss.example_slide("data_figure")
+    slide["content"]["caption"] = "x" * cap
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert not any("data_figure caption is" in i.message for i in issues), \
+        f"caption at cap should pass; got: {[i.format() for i in issues]}"
+
+
+def test_data_figure_caption_over_cap_rejected(ss):
+    """v0.3.5: regression on the live failure mode — revise-loop produced
+    a 410-char caption on gene_function_ecological_agora draft_1 slides
+    21+23 → text spilled into the y=5.00 brand strip. The validator must
+    hard-fail (assemble.py rejects → revise loop must re-emit shorter)."""
+    cap = ss.DATA_FIGURE_CAPTION_MAX_CHARS
+    slide = ss.example_slide("data_figure")
+    slide["content"]["caption"] = "x" * (cap + 1)
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    matches = [i for i in issues if "data_figure caption is" in i.message]
+    assert matches, f"expected caption-cap rejection; got: {[i.format() for i in issues]}"
+    msg = matches[0].message
+    assert str(cap + 1) in msg and str(cap) in msg, \
+        f"error message should report actual length and cap: {msg!r}"
+    assert "y=5.00" in msg or "brand strip" in msg, \
+        f"error should hint at the failure mode for the LLM revise loop: {msg!r}"
+
+
+def test_data_figure_caption_410_char_live_failure_rejected(ss):
+    """v0.3.5: pin the exact magnitude of the live failure (~410 chars)
+    so a future cap loosening / removal trips this test instead of
+    silently re-shipping the brand-strip overflow."""
+    slide = ss.example_slide("data_figure")
+    # Approximate the gene_function_ecological_agora draft_1 slide-21
+    # caption: long-form sentence with citation + interpretation hedge.
+    slide["content"]["caption"] = (
+        "Top-N comparison shows that the high-confidence cluster (n=12) "
+        "achieves higher discrimination than the broader candidate pool "
+        "(n=347) under the same evidence-tier threshold, with a clear "
+        "separation at score >= 0.85 (REPORT.md §4.2; Smith et al. 2024 "
+        "for the underlying ranking method); pattern holds across both "
+        "STRONG and THIN evidence tiers but weakens for EXPLORATORY."
+    )
+    assert len(slide["content"]["caption"]) > 280, \
+        "fixture should reproduce a >280 char caption"
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    assert any("data_figure caption is" in i.message for i in issues), \
+        f"410-char regression caption must hard-fail; got: {[i.format() for i in issues]}"
+
+
 def test_methods_summary_bullets_min_5(ss):
     slide = ss.example_slide("methods_summary")
     slide["content"]["bullets"] = ["a", "b"]   # too few

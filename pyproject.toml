@@ -1,17 +1,31 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.4.6 — draft CLI auto-detects BERIL_ROOT via
-# discovery walk-up. Hub-install ergonomic bug surfaced 2026-05-04:
-# `BERIL_ROOT=...` (no export) doesn't propagate to Python
-# subprocess; bash orchestrator hard-failed with "must set
-# --beril-root or $BERIL_ROOT". Fix: draft.py calls
-# discovery.find_beril_root() when --beril-root not passed and
-# forwards the resolved path to the subprocess explicitly. Same
-# walk-up logic the configure command already uses; matches
-# paper-writer + adversarial precedent. 5 new unit tests pinning
-# auto-detection / explicit-override / env-var / discovery-failure
-# / explicit-pass-through.
+# Status: v0.3.5 — data_figure caption overflow fix (3-layer
+# defense). First post-hub-install live deck on
+# gene_function_ecological_agora draft_1 surfaced slides 21+23 with
+# ~410-char captions spilling past the 0.65-in caption box at y=4.18
+# into the y=5.00 KBase brand strip. Root cause: the v0.3.2.8 fix
+# ("auto_size=False is critical") was a no-op — python-pptx defaults
+# textboxes to MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT (`<a:spAutoFit/>` in
+# OOXML), so unset still meant the box GREW into the data_source
+# band. Three-layer fix:
+#   1. Prompts: slide_compose.v1.md + revise_slide.v1.md explicitly
+#      cap data_figure captions at 280 chars (with the live failure
+#      cited as motivation).
+#   2. Validator: slide_spec.DATA_FIGURE_CAPTION_MAX_CHARS=280;
+#      hard-fails captions > cap so assemble.py rejects the spec
+#      and the revise loop must re-emit shorter.
+#   3. Render: assemble_pptx._fill_data_figure now passes
+#      shrink_to_fit=True (MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE), so the
+#      FONT shrinks to keep text inside the box if anything slips
+#      through the validator. _add_textbox extended with the new
+#      shrink_to_fit kwarg (mutually exclusive with auto_size).
+# 6 new unit tests: 3 validator (at-cap pass / over-cap reject /
+# 410-char regression fixture) + 3 render (caption box has
+# TEXT_TO_FIT_SHAPE / unit shrink_to_fit kwarg / shrink_to_fit wins
+# over auto_size). 743 → 746 passed. 1 marker-gated live integration
+# test still skipped in sandbox.
 ####################################################################
 
 [build-system]
@@ -24,7 +38,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.4.6"
+version = "0.3.5"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

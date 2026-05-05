@@ -186,6 +186,30 @@ Apply:
 4. The speaker_notes_seed should call out the limitation explicitly so
    the speaker can preempt audience questions.
 
+### `data_figure` caption-length cap
+
+When the slide's `layout` is `data_figure` and your revision touches
+the `caption` field, **the caption MUST be ≤ 250 characters**, hard
+ceiling 280. The render budget is ~3 wrapped lines at 12pt; longer
+captions overflow into the brand strip at the slide bottom (live
+failure 2026-05-04 on gene_function_ecological_agora draft_1, slides
+21+23 — captions ran ~410 chars and bled over the U.S. Department of
+Energy / KBase logos).
+
+If the original `issue` requires adding caveats / quantitative detail
+that pushes the caption past 280 chars:
+
+1. Move parenthetical citations to the `data_source` field (which
+   has its own dedicated band).
+2. Drop redundant "as shown by" / "n=X" phrasing if the figure itself
+   already shows the cohort.
+3. If still over budget, surface the trim in `revision_log` with the
+   reason ("caption length cap; trimmed citation list to data_source
+   field").
+
+Captions over 280 chars will trigger the validator's
+`data_figure.caption.length` advisory at warn severity.
+
 ### `claim_evidence` (load-bearing or unbacked)
 
 Title states a claim; bullets should evidence it; numbers should

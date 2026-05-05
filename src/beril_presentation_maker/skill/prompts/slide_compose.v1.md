@@ -533,8 +533,17 @@ memory; the schema field names matter.
 - **Optional:** `data_source` (e.g. "Morgan Price 2022 gold standard")
 - **Authoring rule:** the figure IS the evidence; the title states
   what the figure shows ("Recovery rate by method, n=142 loci").
-  Caption ≤2 sentences; describes axes / units / cohort. Pick from
-  `curated_figures.md` only.
+  Caption ≤2 sentences AND ≤250 characters; describes axes / units /
+  cohort. Pick from `curated_figures.md` only.
+- **Hard caption length limit:** 280 characters. The render budget
+  for the caption is ~3 wrapped lines at 12pt; longer captions
+  overflow into the U.S. Department of Energy / KBase brand strip
+  at the slide bottom (live failure 2026-05-04 on
+  gene_function_ecological_agora draft_1, slides 21+23 — captions
+  ran ~410 chars and bled over the logo strip). The validator will
+  flag captions over 280 chars at advisory severity. Trim to ≤250
+  chars BEFORE writing — strip parenthetical citations (move to
+  `data_source`), drop redundant phrasing, prefer short clauses.
 
 ### `data_table`
 

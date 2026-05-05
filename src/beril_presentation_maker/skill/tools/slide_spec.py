@@ -397,6 +397,23 @@ def _check_two_column_compare(content: dict, path: str) -> list[ValidatorIssue]:
     return iss
 
 
+# v0.3.5: data_figure caption cap. Pins the slide_compose.v1.md /
+# revise_slide.v1.md prompt's 280-char hard limit. Captions exceeding
+# this hard-fail in validate_slide_spec → assemble.py rejects the spec
+# and the revise-loop must re-run with shorter caption.
+#
+# Live failure 2026-05-04 (gene_function_ecological_agora draft_1
+# slides 21+23): revise-loop produced ~410-char captions; with
+# FIGURE_REGIONS["data_figure"] H 2.85 ending at y=4.15 and the
+# data_source band at y=4.83 → caption text wrapped past the data_source
+# anchor and into the y=5.00 logo strip. Per memory
+# feedback_prompt_tool_contract_drift.md, prompt-only caps drift; pin
+# in code. The render-side MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE in
+# assemble_pptx._fill_data_figure is the third layer (belt-and-
+# suspenders) for any case the validator misses or is bypassed.
+DATA_FIGURE_CAPTION_MAX_CHARS = 280
+
+
 def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
     iss: list[ValidatorIssue] = []
     _check_required_str(content, "title", path, iss)
@@ -404,6 +421,18 @@ def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
     _check_required_str(content, "caption", path, iss)
     _check_optional_str(content, "data_source", path, iss)
     _check_figure_path(content, "figure", path, iss)
+    # Caption length cap (v0.3.5): see DATA_FIGURE_CAPTION_MAX_CHARS
+    # docstring above for the live-failure motivation.
+    cap = content.get("caption")
+    if isinstance(cap, str) and len(cap) > DATA_FIGURE_CAPTION_MAX_CHARS:
+        iss.append(ValidatorIssue(
+            f"{path}.caption",
+            f"data_figure caption is {len(cap)} chars; max "
+            f"{DATA_FIGURE_CAPTION_MAX_CHARS} (overflow risks running into "
+            f"the brand strip at y=5.00). Move citations to data_source, "
+            f"drop redundant phrasing, or split insight across multiple "
+            f"slides. See slide_compose.v1.md / revise_slide.v1.md."
+        ))
     return iss
 
 

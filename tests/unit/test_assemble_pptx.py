@@ -274,6 +274,128 @@ def test_absolute_figure_path_works(ss, asm, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# v0.3.5: data_figure caption shrink-to-fit (belt-and-suspenders for the
+# slide_spec validator's 280-char cap; protects the y=5.00 brand strip
+# against any caption that slips through).
+# ---------------------------------------------------------------------------
+
+@requires_master
+def test_data_figure_caption_textbox_shrink_to_fit(ss, asm, tmp_path):
+    """v0.3.5 regression: the data_figure caption textbox MUST have
+    auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE so the FONT shrinks to
+    keep text inside the 0.65-in box at y=4.18..4.83. Without this,
+    long captions (e.g., the 410-char gene_function_ecological_agora
+    draft_1 slide-21 case) overflow visually into the y=5.00 brand
+    strip even though the box is fixed-size and word_wrap is on
+    (python-pptx renders text outside box bounds when no auto_size is
+    set). The slide_spec validator's 280-char cap is the primary
+    defense; this is the third layer for bypassed/old/edge-case specs."""
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    fig = _make_tiny_png(tmp_path / "fig.png")
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [ss.example_slide("data_figure", slide_id=1, substory_id=None)],
+    }
+    spec["slides"][0]["content"]["figure"] = str(fig.resolve())
+    spec["slides"][0]["content"]["caption"] = (
+        "Caption that lives well inside the 280-char cap; this test only "
+        "pins the auto_size setting on the textbox, not the cap itself."
+    )
+
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    prs = Presentation(out)
+    assert len(prs.slides) == 1
+    rendered = prs.slides[0]
+
+    # Find the freeform textbox at y≈4.18in (the caption — distinguishes
+    # it from the title placeholder at the top, the data_source band at
+    # y≈4.83, and the figure picture).
+    from pptx.util import Emu
+    target_top_emu = Emu.from_inches(4.18) if hasattr(Emu, "from_inches") else int(4.18 * 914400)
+    captions = []
+    for shape in rendered.shapes:
+        if not shape.has_text_frame:
+            continue
+        # Filter for shapes positioned in the caption band.
+        if shape.top is None:
+            continue
+        # 4.18 in ≈ 3,824,352 EMU. Allow ±0.05 in (45,720 EMU) tolerance.
+        if abs(int(shape.top) - target_top_emu) <= 45_720:
+            captions.append(shape)
+
+    assert captions, (
+        "expected at least one freeform textbox at y≈4.18in (caption band); "
+        f"got top values: {[shape.top for shape in rendered.shapes if shape.has_text_frame]}"
+    )
+    # The caption box specifically — text contains 'Caption that lives'.
+    cap_box = next((s for s in captions if "Caption that lives" in s.text_frame.text), None)
+    assert cap_box is not None, "caption box not found by text content"
+    assert cap_box.text_frame.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE, (
+        f"data_figure caption must use TEXT_TO_FIT_SHAPE so font shrinks to "
+        f"keep text out of the brand strip at y=5.00; got {cap_box.text_frame.auto_size!r}"
+    )
+
+
+def test_add_textbox_shrink_to_fit_unit(asm, tmp_path):
+    """Unit-level: _add_textbox(shrink_to_fit=True) sets the right
+    MSO_AUTO_SIZE on the resulting text frame. Avoids needing the
+    master template (handler-level), so the contract gets a non-skipped
+    test even in environments without the .pptx fixture."""
+    from pptx import Presentation
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    prs = Presentation()
+    blank = prs.slide_layouts[6]  # blank
+    slide = prs.slides.add_slide(blank)
+
+    asm._add_textbox(slide, "x", 1.0, 1.0, 4.0, 0.5,
+                     word_wrap=True, shrink_to_fit=True)
+    asm._add_textbox(slide, "y", 1.0, 2.0, 4.0, 0.5,
+                     word_wrap=True, auto_size=True)
+    asm._add_textbox(slide, "z", 1.0, 3.0, 4.0, 0.5)
+
+    # Slides have textbox shapes in insertion order; pull text frames.
+    tfs = [s.text_frame for s in slide.shapes if s.has_text_frame
+           and s.text_frame.text in ("x", "y", "z")]
+    by_text = {tf.text: tf for tf in tfs}
+    assert by_text["x"].auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    assert by_text["y"].auto_size == MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    # Default for python-pptx-created textboxes IS SHAPE_TO_FIT_TEXT
+    # (the library inserts <a:spAutoFit/> by default). Pinning this
+    # surfaces the surprising default — without an explicit
+    # shrink_to_fit=True call, the caption box would silently grow
+    # instead of shrinking the font, exactly the v0.3.2.8 / v0.3.5
+    # failure mode. If python-pptx changes this default, this test
+    # fails loudly and forces a re-evaluation of the caption render.
+    assert by_text["z"].auto_size == MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+
+
+def test_add_textbox_shrink_to_fit_wins_over_auto_size(asm, tmp_path):
+    """If both auto_size and shrink_to_fit are passed, shrink_to_fit
+    takes precedence — that's the documented contract in the docstring."""
+    from pptx import Presentation
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    asm._add_textbox(slide, "both", 1.0, 1.0, 4.0, 0.5,
+                     word_wrap=True, auto_size=True, shrink_to_fit=True)
+    tf = next(s.text_frame for s in slide.shapes
+              if s.has_text_frame and s.text_frame.text == "both")
+    assert tf.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+
+
+# ---------------------------------------------------------------------------
 # Per-layout placeholder filling
 # ---------------------------------------------------------------------------
 
