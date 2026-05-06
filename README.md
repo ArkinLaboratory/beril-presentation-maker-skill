@@ -122,15 +122,13 @@ directory. Old drafts are pruned via
 ## Install
 
 ```bash
-# Install the package (pins v0.3.4.4; latest production-ready)
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4
-
-# Deploy the skill into BERIL
+# Run from BERIL_ROOT. Steps in order: install package → verify CLI loads →
+# configure dependencies → deploy skill files into BERIL.
 cd <BERIL_ROOT>
-beril-presentation-maker install-skill .
-
-# Verify dependencies
-beril-presentation-maker configure
+pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4 \
+  && beril-presentation-maker --version \
+  && beril-presentation-maker configure \
+  && beril-presentation-maker install-skill .
 ```
 
 For full operator runbook (prerequisites, troubleshooting, hub

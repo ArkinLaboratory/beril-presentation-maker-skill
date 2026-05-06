@@ -1667,6 +1667,19 @@ stage_merge_and_assemble() {
   "$PYTHON_BIN" "$TOOLS_DIR/check_quantitative_grounding.py" \
     "$OUTDIR" --severity-floor low 2>&1 | sed 's/^/    /' >&2 || true
 
+  # v0.3.8 (2026-05-06): mechanical post-checker for process-detail bleed.
+  # Flags internal-artifact references (notebook IDs, file paths,
+  # REPORT.md sections, analysis-layer codes) on slides — patterns that
+  # consistently slip past the slide_compose / revise_slide prompts and
+  # leave the deck unreadable to peer audiences. Advisory only (rc=0
+  # by design); writes audit/no_artifact_refs.{md,json} for the user
+  # to consult during the hand-edit pass. Surfaced by 2026-05-06
+  # ibd_phage_targeting talk-45 review (~11 of 37 slides flagged by
+  # memoryless reviewer).
+  echo "  running process-detail-bleed check..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/check_no_artifact_refs.py" \
+    "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
+
   echo "" >&2
   echo "==================================================================" >&2
   echo "ASSEMBLE COMPLETE" >&2

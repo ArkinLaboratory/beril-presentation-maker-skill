@@ -1,50 +1,63 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.7 — image_gen_decision LLM-judgment layer (closes the
-# long-standing "deferred to v0.3.4 LLM-judgment layer" placeholder
-# that was returning emit=false for 6 layouts and silently producing
-# zero AI illustrations on figure-rich projects).
+# Status: v0.3.8 — process-detail-bleed post-checker. Mechanical
+# scan over slide_spec content + speaker_notes for internal-artifact
+# references (notebook IDs, file paths, REPORT.md sections,
+# analysis-layer codes) that consistently leak into shipped decks
+# despite slide_compose / revise_slide prompts.
 #
-# Diagnosis from 2026-05-06 review of ibd_phage_targeting talk-45:
-# 0 AI illustrations in a 37-slide deck. Root cause was image_gen_
-# decision.py's `_DEFERRED_LLM_DECISION` frozenset deferring 6
-# layouts (claim_evidence, big_idea, big_number, workflow_diagram,
-# two_column_compare, implications) to "v0.3.4 LLM-judgment" — a
-# layer that was never implemented. v0.3.3 stub returned emit=false
-# unconditionally; on a real STRONG-tier talk-45 with 7 substories,
-# 15 of 33 candidate slides hit this branch.
+# Surfaced by 2026-05-06 ibd_phage_targeting talk-45 review:
+# memoryless peer-scientist flagged ~11 of 37 slides leaking
+# patterns like "REPORT.md §Pillar 2 opener #6;
+# NB04h_hmp2_external_replication.ipynb", "L13", "data/nb05.tsv".
+# Reads as internal jargon to fresh audiences.
 #
-# v0.3.7 changes:
-#   - image_gen_decision.py: NEW `llm_judge()` function — synchronous
-#     `claude -p` call per deferred slide. Returns (emit, reason).
-#     Defensive fallbacks for claude-not-on-PATH / timeout / non-zero
-#     exit / unparseable response. Cost: ~$0.005-0.01/slide ($0.10-
-#     0.20/draft for 15 deferred slides).
-#   - decide() / decide_fragment() / emit_decisions() take new
-#     `judge_fn: Optional[Callable]` parameter. None preserves
-#     pre-v0.3.7 conservative behavior; passing llm_judge enables
-#     the layer. Tests use stubs to avoid live LLM calls.
-#   - CLI _cmd_emit_decisions: auto-enables llm_judge when claude is
-#     on PATH; new --no-llm-judge flag for explicit opt-out;
-#     --judge-model defaults to claude-sonnet-4-6.
-#   - presentation_maker.sh comment block updated to reflect the new
-#     stage cost; no flag-surface change at orchestrator level.
-#   - 25 new unit tests covering: judge_fn yes/no/exception paths;
-#     non-deferred layouts don't invoke judge_fn; all 6 deferred
-#     layouts do; llm_judge subprocess error paths; response parser
-#     edge cases; envelope llm_judgment_used flag; --no-llm-judge
-#     CLI behavior.
+# v0.3.8 changes:
+#   - NEW tools/check_no_artifact_refs.py — mechanical regex scan
+#     mirroring check_quantitative_grounding.py architecture. Six
+#     ArtifactPattern categories (notebook-id, notebook-file,
+#     data-tsv-path, report-md-section, pillar-section, analysis-
+#     layer-code). Per-slide grouped output with location labels
+#     ('bullets[2]', 'caption', 'speaker_notes'). Whitelists TL\d /
+#     S\d as legitimate project structure. Writes
+#     audit/no_artifact_refs.{md,json}. Advisory by default (rc=0
+#     even with hits); --strict mode for CI/orchestrator use.
+#   - presentation_maker.sh: wired into stage_merge_and_assemble
+#     immediately after the existing check_quantitative_grounding
+#     call. Same pattern (advisory; never halts the pipeline; output
+#     to stderr with sed-prefix indentation).
+#   - Tests: 74 new unit tests covering pattern hit/miss for every
+#     category, slide traversal across all field shapes (text,
+#     list, dict-bullets, speaker_notes), report aggregation,
+#     markdown rendering, CLI exit codes (advisory vs strict),
+#     error paths (missing draft_dir / slide_spec / malformed JSON),
+#     and a regression test against the actual ibd_phage_targeting
+#     slide_spec.json (asserts ≥10 slides flagged + 4 specific
+#     pattern categories fire).
 #
-# Smoke verified on real ibd_phage_targeting slide_spec.json: 0 →
-# 11 emit=true with a stub discriminating judge (out of 37 slides:
-# 2 big_idea, 2 big_number, 7 claim_evidence-without-figure). The
-# breakdown matches what a peer scientist would expect. Live hub run
-# pending v0.3.7 push.
+# Smoke verified on real ibd_phage_targeting slide_spec.json:
+# 30 of 37 slides flagged with 496 total hits; pattern distribution
+# (266 analysis-layer-code, 158 notebook-id, 37 report-md-section,
+# 21 pillar-section, 13 notebook-file, 1 data-tsv-path) matches
+# the deck's actual artifact-reference density. The 30-slide flag
+# count is higher than the reviewer's manual ~11 because the
+# reviewer was selective; the post-checker is exhaustive (correct
+# for an audit log).
 #
-# 762 → 787 unit tests passed. No regression in --resume-from /
-# --pick TLN paths. v0.3.6 features (halt-and-handoff at throughline
-# gate, --pick TLN continue path) unchanged.
+# What this is NOT (v0.3.8 scope):
+#   - NOT prompt-rule edits to slide_compose.v1.md or
+#     revise_slide.v1.md. Those are taste-level prompt engineering
+#     deferred to v0.3.9 / v0.4.x to bound pre-event ship risk.
+#   - NOT a citation_pool validator (any citation entry whose only
+#     source is a filename). Same risk argument; deferred to v0.4.x.
+#   - NOT a behavioral change. The check is advisory; existing
+#     pipelines see one extra audit/ file and a one-line stderr
+#     summary. No regressions in prior tests.
+#
+# 787 → 861 unit tests passed. v0.3.7 features (image_gen_decision
+# LLM-judgment layer, --pick TLN halt-and-handoff, strict-mode bash
+# patch) unchanged.
 ####################################################################
 
 [build-system]
@@ -57,7 +70,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.7"
+version = "0.3.8"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"
