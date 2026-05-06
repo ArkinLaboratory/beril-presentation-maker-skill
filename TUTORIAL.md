@@ -8,9 +8,15 @@ A skill-specific guide for reading, iterating on, and hand-editing presentation 
 
 **Audience:** Researchers using `/beril-presentation-maker` in Claude Code on the BERIL hub who have already run a draft and want to make the most of it (read the output, iterate cheaply, hand-edit the `.pptx`, troubleshoot).
 
-**Time:** 5 minutes to read; 45-60 minutes for a typical draft run; 5-15 minutes per revise-loop iteration.
+**Time:** 5 minutes to read; **60-120 minutes for a typical draft run on the hub** (talk-45 STRONG can run 90-150 min); 5-15 minutes per revise-loop iteration.
 
-**Cost:** $5-20 per draft (talk-30, STRONG, with image-gen + adversarial); $2-5 without image-gen and adversarial. Per-image cost ~$0.014 (CBORG-Gemini). Per-revise-loop iteration $0.50-2.
+**Cost:** $5-20 per draft (talk-30, STRONG, with image-gen + adversarial); $2-5 without image-gen and adversarial; talk-45 STRONG runs typically $10-25. Per-image cost ~$0.014 (CBORG-Gemini). Per-revise-loop iteration $0.50-2.
+
+**v0.3.6 known limitations** (planned for v0.4.x — set expectations now):
+
+- **The first draft is not presentation-ready; expect to hand-edit.** Slide bullets and captions tend to leak internal artifact references (notebook names, REPORT.md section refs, file paths) where peer-readable evidence (cohort name, sample size, primary citation) belongs. See [Known Limitations](#known-cosmetic-issues--hand-fix-list) below for the full hand-edit checklist.
+- **Concept illustrations may be sparse or absent.** The image-gen decision layer currently defers a large fraction of candidate slides to an LLM-judgment layer that hasn't shipped yet, defaulting them to "no image." A figure-rich project (lots of `figures/*.png` in the project tree) can produce a 30+ slide deck with zero AI illustrations. Workaround: hand-add 1-2 conceptual slides post-draft if your topic needs them.
+- **Wall-clock varies widely on the hub.** Expect 60-120 min for talk-30 STRONG, 90-150 min for talk-45 STRONG. Stage-1 (plan) alone can take 8-10 min on dense projects. Don't kill the run if it's "too quiet" for 10 minutes.
 
 ---
 
@@ -134,16 +140,23 @@ The `.pptx` is yours. Open it, edit freely. Preserve and ship semantics:
 - **The slide_spec.json does NOT update from your edits.** If you want the structured spec to reflect your hand-edit (e.g., you fixed a punchline by hand and want the next draft to inherit it), you'll need to update slide_spec.json manually. The hand-edit detection is one-way — `.pptx` wins, but only for that draft.
 - **Best practice for the May 7 event:** finish the pipeline first, then hand-edit only the deliverable `.pptx`. Don't try to edit slide_spec.json + re-assemble unless you know what you're doing — it's a faster cycle but easier to break.
 
-## Known cosmetic issues — hand-fix list
+## Known cosmetic + content issues — hand-fix list
 
-The following layout issues are tracked for post-event releases. If your draft hits any of them, hand-fix in PowerPoint:
+**Content-level issues** (slide writing, not layout — surface across most drafts):
+
+- **Process-detail bleed in slide content.** The writer often cites internal artifacts (notebook names like `NB04h.ipynb`, `REPORT.md §Pillar 2`, file paths like `data/nb09b.tsv`, analysis-layer abbreviations like `A16` / `H3c` / `L13`) where peer-readable evidence belongs. Find/replace these with cohort name + sample size + primary author/year before showing the deck publicly. Verbatim example: "REPORT.md §Pillar 2 opener #6; NB04h_hmp2_external_replication.ipynb" should become "Lloyd-Price 2019, HMP2 cohort, n=1,627."
+- **Titles often read as category labels, not claims.** "Five-layer pipeline" should become "Ecotype-stratified meta-analysis on 8,489 samples yields 6 CD pathobionts." Rewriting titles as claims is a high-value, low-cost hand-edit pass.
+- **Defensive caveats embedded mid-result.** Hedges like "is an upper bound" / "qualitatively robust" / "pending validation" buried in result bullets read as apologies for fragile science. Front-load these as design choices in the methods slide or limitations slide instead.
+- **Concept illustrations may be absent on figure-rich projects.** The image-gen decision layer currently defers most candidate slides to an LLM-judgment layer that hasn't shipped (v0.3.6 → v0.4.x). For talks needing conceptual visuals (mechanism cartoons, framework diagrams, cocktail-strategy schematics), hand-add 1-2 illustration slides post-draft.
+
+**Layout-level issues** (cosmetic, hand-fixable in PowerPoint):
 
 - **Title slide** — long throughline punchlines (>200 chars) may render visually cramped. Adjust font size or shorten in the title slide directly.
 - **References slide** — `refs_short` is currently capped at 8; longer bibliographies are truncated upstream. To show more references, copy from `working/citation_pool.md` and split into a second references slide manually.
 - **`qa_anticipated` slide** — long synthesis-style questions may overflow the question region. Shorten the question or split across two slides.
 - **`cross_tenant_integration` slide** — currently renders as a flat list when no `data_flow_diagram` is provided. If that's how yours looks, consider adding a hand-drawn diagram in PowerPoint to convey the integration pattern.
 
-These are tracked in the workspace task list as #74-77 and slated for v0.4. Until then, hand-edits are the workaround.
+Content issues are tracked at workspace tasks #87-#90; layout issues at #74-#77. All slated for v0.4.x. Until then, the deck is a *first draft* requiring a hand-edit pass before public presentation.
 
 ## Presentation-maker-specific troubleshooting
 

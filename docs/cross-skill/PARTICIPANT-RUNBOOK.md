@@ -338,7 +338,27 @@ Notes on the flags:
 - `--max-image-cost-usd 0.20` — caps per-image cost. Default behavior without this flag is to prompt; this flag is the way to make image-gen non-interactive.
 - `--no-adversarial` — skips the adversarial revise-loop (Part 5) entirely. Default behavior includes adversarial review when `beril-adversarial` is installed.
 
-The pipeline runs 14 stages (`plan` → `throughline` → `substory_design` → `curate_figures` → `citation_pool` → `cross_tenant` → `intro` → `slide_compose` → `qa_prep` → `speaker_notes` → `image_gen` → `merge` → `adversarial_review` → `revise_slides`). Each stage's outputs land in `talks/draft_N/working/`, and the final `.pptx` lands in `talks/draft_N/deliverable/draft.pptx`. Wall-clock is typically 45-60 min on a real STRONG-tier project; cost is typically $5-20 depending on slide count, image-gen, and revise iterations.
+The pipeline runs 14 stages (`plan` → `throughline` → `substory_design` → `curate_figures` → `citation_pool` → `cross_tenant` → `intro` → `slide_compose` → `qa_prep` → `speaker_notes` → `image_gen` → `merge` → `adversarial_review` → `revise_slides`). Each stage's outputs land in `talks/draft_N/working/`, and the final `.pptx` lands in `talks/draft_N/deliverable/draft.pptx`.
+
+**Wall-clock and cost ranges (v0.3.6, hub-realistic):**
+
+| Mode + Tier | Wall-clock | Cost |
+|---|---|---|
+| `talk-30 STRONG`, with image-gen + adversarial | 60-120 min | $5-20 |
+| `talk-30 STRONG`, no image-gen, no adversarial | 30-60 min | $2-5 |
+| `talk-45 STRONG`, with image-gen + adversarial | 90-150 min | $10-25 |
+| `lightning-5`, any tier | 20-40 min | $1-3 |
+
+Stage-1 (plan) alone takes 8-10 min on dense projects; don't kill the run if it's "too quiet" for 10 minutes after launch.
+
+**Important: the first draft is not presentation-ready.** Plan a hand-edit pass before showing the deck publicly. Known content-level issues that participants should expect to fix manually:
+
+- **Process-detail bleed.** The writer cites internal artifacts (notebook names, REPORT.md sections, file paths) where peer-readable evidence belongs. Replace with cohort + sample size + primary author/year. Tracked as v0.4.x post-event work.
+- **Titles often read as category labels, not claims.** "Pillar 3 analytic approach" should become "Iron acquisition and bile-acid dysmetabolism are the dominant CD pathobiont mechanisms." A title-rewrite pass is high-value.
+- **Concept illustrations may be sparse or absent.** A current bug (#90) defaults most candidate slides to "no AI illustration." Figure-rich projects can produce 30+ slide decks with zero AI illustrations. Hand-add 1-2 conceptual slides post-draft if your topic needs them.
+- **Defensive caveats embedded mid-result.** Hedges like "is an upper bound" / "qualitatively robust" buried in result bullets. Front-load these as design choices in methods or limitations slides instead.
+
+See the presentation-maker repo's [TUTORIAL.md](https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/TUTORIAL.md) §"Known cosmetic + content issues" for the full hand-edit checklist with verbatim examples.
 
 ### 4.4 Where outputs land
 
@@ -604,15 +624,17 @@ Pipeline halts gracefully at the next LLM call after the cap is reached. Resume 
 
 ## Appendix B: Cost expectations and caps
 
-| Skill / mode | Typical cost | Notes |
-|---|---|---|
-| `presentation-maker draft` (talk-30, STRONG, with image-gen + adversarial) | $5-20 | Image-gen and revise iterations are the swing. |
-| `presentation-maker draft` (without image-gen, without adversarial) | $2-5 | Cheapest mode. |
-| `paper-writer draft` (depth=standard, with canonical adversarial) | $5-15 | Verified against shipped v0.7.x trajectory. |
-| `paper-writer draft` (depth=standard, `--no-adversarial`, fallback reviewer) | $4-10 | Cheaper; lighter review pass. |
-| `paper-writer draft` (depth=deep, with canonical adversarial) | $10-25 | More revise iterations + broader literature checks. |
-| `adversarial review` (standalone) | $0.50-2 | Single-pass review. |
-| `atlas scan` (on a fresh corpus) | $5-10 | Cold-scan; only run once per major BERIL update. |
+| Skill / mode | Typical cost | Wall-clock | Notes |
+|---|---|---|---|
+| `presentation-maker draft` talk-30 STRONG, full pipeline | $5-20 | 60-120 min | Image-gen and revise iterations are the swing. v0.3.6: image-gen frequently produces zero illustrations on figure-rich projects (bug #90). |
+| `presentation-maker draft` talk-45 STRONG, full pipeline | $10-25 | 90-150 min | Larger deck → more LLM calls per stage. Verified on ibd_phage_targeting hub run 2026-05-06. |
+| `presentation-maker draft` no image-gen, no adversarial | $2-5 | 30-60 min | Cheapest mode. |
+| `presentation-maker draft` lightning-5 | $1-3 | 20-40 min | 5-6 slides; minimal pipeline. |
+| `paper-writer draft` depth=standard, with canonical adversarial | $5-15 | 20-35 min | Verified against shipped v0.7.x trajectory. |
+| `paper-writer draft` depth=standard, `--no-adversarial`, fallback reviewer | $4-10 | 15-25 min | Cheaper; lighter review pass. |
+| `paper-writer draft` depth=deep, with canonical adversarial | $10-25 | 30-50 min | More revise iterations + broader literature checks. |
+| `adversarial review` (standalone) | $0.50-2 | 5-10 min | Single-pass review. |
+| `atlas scan` (on a fresh corpus) | $5-10 | 30-45 min | Cold-scan; only run once per major BERIL update. |
 
 Caps you can opt into:
 
