@@ -149,6 +149,8 @@ These are tracked in the workspace task list as #74-77 and slated for v0.4. Unti
 
 For cross-skill troubleshooting (pipx install, configure, BERIL_ROOT detection, schema mismatch errors), see PARTICIPANT-RUNBOOK §Appendix A. The items below are presentation-maker-specific.
 
+**Pipeline halts at "Pick a throughline (TL1 / TL2 / TL3):" with exit code 1 in a Claude Code background task.** The throughline-pick gate uses `read -r pick </dev/tty` to prompt interactively, which fails in TTY-less contexts (Claude Code's Bash background tool, CI, headless daemons). For TTY-less use, **always pass `--auto-advance`** — the pipeline will auto-pick TL1 (the first throughline candidate, ordered by the writer's confidence) and run end-to-end without prompting. If you specifically want a non-TL1 candidate, run interactively in a real terminal, or run with `--auto-advance` first and then iterate via the revise loop. State-driven gate-resume with explicit `--pick TLN` is planned for v0.4.0 (paper-writer pattern); until then, `--auto-advance` is the right tool for hub agents and CI.
+
 **Image-gen approval prompts you don't want.** You're running interactively but each slide's image-gen approval is breaking your flow. Pass `--auto-approve-images --max-image-cost-usd 0.20` to make image-gen non-interactive while still capping cost.
 
 **Image-gen budget exceeded mid-pipeline.** The pipeline halts gracefully at the next image-gen call after the cap. Resume options: (a) raise the cap and `continue`, (b) skip remaining concept_illustration slides (they fall back to image-free `big_idea` layouts), (c) accept the partial draft (the deliverable from a partial pipeline is usable).

@@ -565,6 +565,9 @@ Two common causes:
 - You typed `BERIL_ROOT=...` without `export`. Bash sets a shell variable but does NOT export it to subprocesses; the Python CLI sees a missing env var. Fix: use `export BERIL_ROOT=~/BERIL-research-observatory`, then re-run.
 - You're not inside a BERIL checkout. The auto-detection walks up from your current directory looking for the BERIL markers (`.env`, `.claude/skills/`). Fix: `cd ~/BERIL-research-observatory` before running, or pass `--beril-root <path>` explicitly.
 
+**Pipeline halts at "Pick a throughline (TL1 / TL2 / TL3):" with exit code 1 (Claude Code background task / TTY-less context)**
+The presentation-maker pipeline currently uses an interactive prompt at stage 2 (throughline pick). In TTY-less contexts (Claude Code's Bash background tool, CI, headless daemons) the prompt's `read </dev/tty` fails. **Always pass `--auto-advance` for TTY-less runs** — auto-picks the first throughline candidate and runs end-to-end without prompting. State-driven gate-resume with explicit `--pick TLN` (the paper-writer pattern) is planned for presentation-maker v0.4.0 post-event; until then, `--auto-advance` is the right tool. Paper-writer is unaffected — its continue command already takes `--pick TLN` and does not depend on TTY for the throughline pick.
+
 **Pipeline crashes mid-stage (network blip, malformed LLM JSON, CBORG rate limit)**
 Don't re-run from scratch — you'll lose work and pay the full cost again. Instead:
 

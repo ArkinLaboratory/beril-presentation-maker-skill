@@ -1737,7 +1737,16 @@ should_run() {
   # Stage ordinals. v0.3.3: image_gen inserted at 11 (between
   # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3); merge,
   # adversarial_review, revise_slides shift by 1.
-  local order_resume order_stage
+  #
+  # v0.3.5.1 (2026-05-05): explicit "" initialization required under
+  # bash `set -u`. Without it, the `[[ -z "$order_resume" ]]` check
+  # after the loop can trip "unbound variable" on bash 5.2+ when
+  # neither case-arm matched any iteration. Live failure on KBERDL
+  # JupyterHub during ibd_phage_targeting smoke run (Claude Code
+  # agent's first `continue --resume-from throughline` invocation hit
+  # this codepath, hidden until then because most prior tests ran
+  # without --resume-from and short-circuited out at the early check).
+  local order_resume="" order_stage=""
   for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
