@@ -87,9 +87,13 @@ def test_rule_3_structural_layouts_skipped(layout: str):
     ],
 )
 def test_rule_5_deferred_layouts_skipped(layout: str):
+    """v0.3.7+: when no judge_fn is provided, deferred layouts default to
+    emit=false (preserving pre-v0.3.7 conservative behavior). The CLI
+    wires llm_judge as the default; tests that don't pass judge_fn get
+    the conservative fallback."""
     d = igd.decide(_stub(layout), tier="STRONG", mode="talk-30")
     assert d.emit is False
-    assert "v0.3.4" in d.reason
+    assert "no judge_fn" in d.reason or "needs LLM judgment" in d.reason
 
 
 def test_rule_6_exploratory_blocks_concept_illustration_by_default():
@@ -344,3 +348,336 @@ def test_cli_emit_decisions_missing_slides_dir(tmp_path: Path, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     assert "not found" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# v0.3.7+ LLM-judgment layer
+# ---------------------------------------------------------------------------
+
+class TestJudgeFnIntegration:
+    """Tests for the v0.3.7 judge_fn callback integration into decide()."""
+
+    def test_judge_fn_yes_flips_deferred_to_emit_true(self):
+        """A judge_fn returning (True, reason) should make a deferred-layout
+        slide emit=true with the LLM-judged reason."""
+        def stub_yes(slide_stub, tier, mode):
+            return (True, "concept slide benefits from cartoon")
+
+        d = igd.decide(
+            _stub("claim_evidence"),
+            tier="STRONG", mode="talk-30",
+            judge_fn=stub_yes,
+        )
+        assert d.emit is True
+        assert "LLM-judged" in d.reason
+        assert "concept slide benefits from cartoon" in d.reason
+
+    def test_judge_fn_no_keeps_deferred_at_emit_false(self):
+        def stub_no(slide_stub, tier, mode):
+            return (False, "data-heavy; illustration would compete")
+
+        d = igd.decide(
+            _stub("claim_evidence"),
+            tier="STRONG", mode="talk-30",
+            judge_fn=stub_no,
+        )
+        assert d.emit is False
+        assert "LLM-judged" in d.reason
+        assert "data-heavy" in d.reason
+
+    def test_judge_fn_exception_defaults_to_no_with_error_reason(self):
+        def stub_explode(slide_stub, tier, mode):
+            raise RuntimeError("simulated LLM failure")
+
+        d = igd.decide(
+            _stub("big_idea"),
+            tier="STRONG", mode="talk-30",
+            judge_fn=stub_explode,
+        )
+        assert d.emit is False
+        assert "LLM judgment failed" in d.reason
+        assert "RuntimeError" in d.reason
+
+    def test_judge_fn_not_called_for_non_deferred_layouts(self):
+        """judge_fn should NOT be invoked for layouts outside _DEFERRED_LLM_DECISION
+        (data_figure carries its own figure; structural layouts are pure;
+        concept_illustration is deterministic-yes when conditions are right)."""
+        called = []
+        def stub_track(slide_stub, tier, mode):
+            called.append(slide_stub.get("layout"))
+            return (True, "should not be called")
+
+        # data_figure → has-own-figure path; judge_fn must not be called
+        d_fig = igd.decide(
+            _stub("data_figure"), tier="STRONG", mode="talk-30",
+            judge_fn=stub_track,
+        )
+        assert d_fig.emit is False
+        assert d_fig.reason.startswith("data_figure carries its own figure")
+
+        # title → structural; judge_fn must not be called
+        d_title = igd.decide(
+            _stub("title"), tier="STRONG", mode="talk-30",
+            judge_fn=stub_track,
+        )
+        assert d_title.emit is False
+        assert "structural" in d_title.reason
+
+        # concept_illustration → AI-image-vehicle; judge_fn must not be called
+        d_ci = igd.decide(
+            _stub("concept_illustration", image_path="{TBD}"),
+            tier="STRONG", mode="talk-30",
+            judge_fn=stub_track,
+        )
+        assert d_ci.emit is True
+
+        assert called == [], (
+            f"judge_fn should not have been invoked for non-deferred layouts; "
+            f"called for: {called}"
+        )
+
+    def test_judge_fn_called_for_all_six_deferred_layouts(self):
+        """All six layouts in _DEFERRED_LLM_DECISION should reach the
+        judge_fn callback when one is provided."""
+        called_layouts = []
+        def stub_track(slide_stub, tier, mode):
+            called_layouts.append(slide_stub.get("layout"))
+            return (True, "ok")
+
+        for layout in [
+            "claim_evidence", "workflow_diagram", "two_column_compare",
+            "big_idea", "big_number", "implications",
+        ]:
+            igd.decide(
+                _stub(layout), tier="STRONG", mode="talk-30",
+                judge_fn=stub_track,
+            )
+        assert sorted(called_layouts) == sorted([
+            "claim_evidence", "workflow_diagram", "two_column_compare",
+            "big_idea", "big_number", "implications",
+        ])
+
+
+class TestLLMJudgeHelper:
+    """Tests for llm_judge() — the default judge_fn that wraps claude -p."""
+
+    def test_llm_judge_returns_no_when_claude_not_on_path(self, monkeypatch):
+        """If claude CLI isn't available, llm_judge returns the conservative
+        default (emit=false) without raising."""
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is False
+        assert "claude CLI not on PATH" in reason
+
+    def test_llm_judge_parses_yes_response(self, monkeypatch):
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
+        mock_run = MagicMock()
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "YES this slide presents a mechanism that benefits from a cartoon\n"
+        mock_run.return_value.stderr = ""
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is True
+        assert "mechanism that benefits" in reason
+
+    def test_llm_judge_parses_no_response(self, monkeypatch):
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
+        mock_run = MagicMock()
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "NO data-heavy slide; illustration would compete\n"
+        mock_run.return_value.stderr = ""
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is False
+        assert "data-heavy" in reason
+
+    def test_llm_judge_unparseable_response_defaults_to_no(self, monkeypatch):
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
+        mock_run = MagicMock()
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "I think maybe sure why not\n"
+        mock_run.return_value.stderr = ""
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is False
+        assert "unparseable" in reason
+
+    def test_llm_judge_subprocess_timeout_defaults_to_no(self, monkeypatch):
+        import subprocess as sp
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
+        mock_run = MagicMock(side_effect=sp.TimeoutExpired(cmd="claude", timeout=60))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is False
+        assert "timed out" in reason
+
+    def test_llm_judge_nonzero_exit_defaults_to_no(self, monkeypatch):
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
+        mock_run = MagicMock()
+        mock_run.return_value.returncode = 2
+        mock_run.return_value.stdout = ""
+        mock_run.return_value.stderr = "rate limit exceeded"
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        emit, reason = igd.llm_judge(_stub("claim_evidence"), "STRONG", "talk-30")
+        assert emit is False
+        assert "rc=2" in reason
+
+
+class TestParseJudgeResponse:
+    """Tests for _parse_judge_response — pure parser, no I/O."""
+
+    def test_yes_with_reason(self):
+        emit, reason = igd._parse_judge_response("YES this is a concept slide")
+        assert emit is True
+        assert reason == "this is a concept slide"
+
+    def test_no_with_reason(self):
+        emit, reason = igd._parse_judge_response("NO data heavy")
+        assert emit is False
+        assert reason == "data heavy"
+
+    def test_yes_with_dash_separator(self):
+        emit, reason = igd._parse_judge_response("YES — concept slide")
+        assert emit is True
+        assert reason == "concept slide"
+
+    def test_yes_with_colon_separator(self):
+        emit, reason = igd._parse_judge_response("YES: concept slide")
+        assert emit is True
+        assert reason == "concept slide"
+
+    def test_yes_no_reason_provided(self):
+        emit, reason = igd._parse_judge_response("YES")
+        assert emit is True
+        assert "no reason given" in reason
+
+    def test_no_no_reason_provided(self):
+        emit, reason = igd._parse_judge_response("NO")
+        assert emit is False
+        assert "no reason given" in reason
+
+    def test_empty_response(self):
+        emit, reason = igd._parse_judge_response("")
+        assert emit is False
+        assert "empty LLM response" in reason
+
+    def test_unparseable_response(self):
+        emit, reason = igd._parse_judge_response("Maybe? I think it would help")
+        assert emit is False
+        assert "unparseable" in reason
+        assert "Maybe?" in reason  # Surfaces head of response
+
+    def test_uses_first_line_only(self):
+        """If the LLM emits multiple lines, only the first is parsed."""
+        emit, reason = igd._parse_judge_response(
+            "YES concept slide\nFurther reasoning that should be ignored"
+        )
+        assert emit is True
+        assert reason == "concept slide"
+
+    def test_case_insensitive_yes_no(self):
+        emit, reason = igd._parse_judge_response("yes lowercase concept")
+        assert emit is True
+        emit, reason = igd._parse_judge_response("no lowercase data")
+        assert emit is False
+
+
+class TestEmitDecisionsLLMJudgmentFlag:
+    """Tests for emit_decisions() llm_judgment_used envelope flag."""
+
+    def test_envelope_flag_false_when_no_judge_fn(self, tmp_path: Path):
+        slides_dir = tmp_path / "03_slides"
+        slides_dir.mkdir()
+        (slides_dir / "S1.json").write_text(json.dumps({
+            "schema_version": "slide-fragment.v1",
+            "kind": "substory",
+            "substory_id": "S1",
+            "slides": [_stub("claim_evidence")],
+        }))
+        envelope = igd.emit_decisions(
+            slides_dir, tier="STRONG", mode="talk-30",
+        )
+        assert envelope["llm_judgment_used"] is False
+
+    def test_envelope_flag_true_when_judge_fn_passed(self, tmp_path: Path):
+        slides_dir = tmp_path / "03_slides"
+        slides_dir.mkdir()
+        (slides_dir / "S1.json").write_text(json.dumps({
+            "schema_version": "slide-fragment.v1",
+            "kind": "substory",
+            "substory_id": "S1",
+            "slides": [_stub("claim_evidence")],
+        }))
+        envelope = igd.emit_decisions(
+            slides_dir, tier="STRONG", mode="talk-30",
+            judge_fn=lambda s, t, m: (True, "stub yes"),
+        )
+        assert envelope["llm_judgment_used"] is True
+        # And the deferred slide was actually flipped to yes.
+        flipped = [d for d in envelope["decisions"] if d["emit"]]
+        assert len(flipped) == 1
+        assert "LLM-judged" in flipped[0]["reason"]
+
+
+class TestCLIWithLLMJudgeFlags:
+    """Tests for --no-llm-judge and --judge-model CLI flags."""
+
+    def test_cli_no_llm_judge_disables_judgment(self, tmp_path: Path, capsys):
+        slides_dir = tmp_path / "03_slides"
+        slides_dir.mkdir()
+        (slides_dir / "S1.json").write_text(json.dumps({
+            "schema_version": "slide-fragment.v1",
+            "kind": "substory",
+            "substory_id": "S1",
+            "slides": [_stub("claim_evidence")],
+        }))
+        out_path = tmp_path / "decisions.json"
+        rc = igd.main([
+            "emit-decisions",
+            "--slides-dir", str(slides_dir),
+            "--tier", "STRONG",
+            "--mode", "talk-30",
+            "--no-llm-judge",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        envelope = json.loads(out_path.read_text())
+        assert envelope["llm_judgment_used"] is False
+        captured = capsys.readouterr()
+        assert "--no-llm-judge set" in captured.err
+
+    def test_cli_falls_back_when_claude_not_on_path(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        slides_dir = tmp_path / "03_slides"
+        slides_dir.mkdir()
+        (slides_dir / "S1.json").write_text(json.dumps({
+            "schema_version": "slide-fragment.v1",
+            "kind": "substory",
+            "substory_id": "S1",
+            "slides": [_stub("claim_evidence")],
+        }))
+        out_path = tmp_path / "decisions.json"
+        rc = igd.main([
+            "emit-decisions",
+            "--slides-dir", str(slides_dir),
+            "--tier", "STRONG",
+            "--mode", "talk-30",
+            "--out", str(out_path),
+        ])
+        assert rc == 0
+        envelope = json.loads(out_path.read_text())
+        assert envelope["llm_judgment_used"] is False
+        captured = capsys.readouterr()
+        assert "claude CLI not on PATH" in captured.err

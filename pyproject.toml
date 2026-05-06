@@ -1,45 +1,50 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.6 — halt-and-handoff at the throughline-pick gate
-# (paper-writer pattern). Closes the architectural bug surfaced on
-# the KBERDL JupyterHub on 2026-05-05: gate_throughline_pick used
-# `read -r pick </dev/tty`, which fails 100% of the time when Claude
-# Code auto-backgrounds bash on the hub (every hub participant hit
-# this).
+# Status: v0.3.7 — image_gen_decision LLM-judgment layer (closes the
+# long-standing "deferred to v0.3.4 LLM-judgment layer" placeholder
+# that was returning emit=false for 6 layouts and silently producing
+# zero AI illustrations on figure-rich projects).
 #
-# v0.3.6 changes:
-#   - presentation_maker.sh: `gate_throughline_pick` now writes
-#     <draft_dir>/.handoff.json (phase=throughline_pick + candidates
-#     + candidates_md) and exits 0 cleanly when --auto-advance is
-#     not set. No more `read </dev/tty`. New helper
-#     `emit_throughline_handoff` extracts candidate metadata from
-#     `00_throughline_candidates.md`.
-#   - continue_run.py: new `--pick TLN` argparse flag. Mutually
-#     exclusive with `--resume-from`. When --pick is passed: read
-#     .handoff.json, validate TLN against candidates, invoke
-#     parse_throughline_candidates.py to write 00_throughline.md,
-#     remove .handoff.json (gate consumed), dispatch bash with
-#     --resume-from substory_design. Helpful errors when neither
-#     flag is passed but a handoff is waiting.
-#   - Slash command markdown (`/beril-presentation-maker`):
-#     two-stage flow — Step 4 starts draft (halts at gate); Step 5
-#     reads .handoff.json, presents candidates via AskUserQuestion,
-#     re-invokes `continue --pick TLN` to resume from
-#     substory_design. Explicit failure-mode entry for participants
-#     running pre-v0.3.6 with TTY-less Claude Code.
-#   - Tests: 16 new unit tests in test_continue_run.py covering
-#     --pick happy path, validation paths, mutual exclusion, helpful
-#     errors, legacy --resume-from no-regression. 746 → 762 passed.
+# Diagnosis from 2026-05-06 review of ibd_phage_targeting talk-45:
+# 0 AI illustrations in a 37-slide deck. Root cause was image_gen_
+# decision.py's `_DEFERRED_LLM_DECISION` frozenset deferring 6
+# layouts (claim_evidence, big_idea, big_number, workflow_diagram,
+# two_column_compare, implications) to "v0.3.4 LLM-judgment" — a
+# layer that was never implemented. v0.3.3 stub returned emit=false
+# unconditionally; on a real STRONG-tier talk-45 with 7 substories,
+# 15 of 33 candidate slides hit this branch.
 #
-# `--auto-advance` semantics unchanged (still auto-picks TL1, runs
-# end-to-end without halting). `--resume-from <stage>` legacy
-# power-user mode unchanged. Default behavior (no flag) is now
-# halt-and-handoff at the throughline gate, NOT TTY-blocking prompt.
+# v0.3.7 changes:
+#   - image_gen_decision.py: NEW `llm_judge()` function — synchronous
+#     `claude -p` call per deferred slide. Returns (emit, reason).
+#     Defensive fallbacks for claude-not-on-PATH / timeout / non-zero
+#     exit / unparseable response. Cost: ~$0.005-0.01/slide ($0.10-
+#     0.20/draft for 15 deferred slides).
+#   - decide() / decide_fragment() / emit_decisions() take new
+#     `judge_fn: Optional[Callable]` parameter. None preserves
+#     pre-v0.3.7 conservative behavior; passing llm_judge enables
+#     the layer. Tests use stubs to avoid live LLM calls.
+#   - CLI _cmd_emit_decisions: auto-enables llm_judge when claude is
+#     on PATH; new --no-llm-judge flag for explicit opt-out;
+#     --judge-model defaults to claude-sonnet-4-6.
+#   - presentation_maker.sh comment block updated to reflect the new
+#     stage cost; no flag-surface change at orchestrator level.
+#   - 25 new unit tests covering: judge_fn yes/no/exception paths;
+#     non-deferred layouts don't invoke judge_fn; all 6 deferred
+#     layouts do; llm_judge subprocess error paths; response parser
+#     edge cases; envelope llm_judgment_used flag; --no-llm-judge
+#     CLI behavior.
 #
-# Substory-overflow gate at line ~777 still has a TTY-block; rare
-# (only fires when a substory exceeds budget). Migrated together
-# with throughline gate to full state.json + Phase enum in v0.4.0.
+# Smoke verified on real ibd_phage_targeting slide_spec.json: 0 →
+# 11 emit=true with a stub discriminating judge (out of 37 slides:
+# 2 big_idea, 2 big_number, 7 claim_evidence-without-figure). The
+# breakdown matches what a peer scientist would expect. Live hub run
+# pending v0.3.7 push.
+#
+# 762 → 787 unit tests passed. No regression in --resume-from /
+# --pick TLN paths. v0.3.6 features (halt-and-handoff at throughline
+# gate, --pick TLN continue path) unchanged.
 ####################################################################
 
 [build-system]
@@ -52,7 +57,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.6"
+version = "0.3.7"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

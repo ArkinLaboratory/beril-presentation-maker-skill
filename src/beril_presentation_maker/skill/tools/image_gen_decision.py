@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 
 # slide_spec.LAYOUTS is the closed-set source of truth. Importing
 # directly from the sibling tool (no package layer between them).
@@ -63,9 +65,19 @@ _HAS_OWN_FIGURE = frozenset({
     "data_table",
 })
 
-# Layouts where a supplemental image MIGHT help but the decision is
-# deferred to v0.3.4's LLM-judgment layer. v0.3.3 says NO for all of
-# them.
+# Layouts where a supplemental image MIGHT help — judged per-slide by
+# the LLM-judgment layer (v0.3.7+) rather than deterministically. When
+# called without a `judge_fn`, decide() falls back to emit=False with
+# a reason indicating the judgment was skipped (preserving pre-v0.3.7
+# conservative behavior for non-CLI callers and tests).
+#
+# Live failure that motivated wiring this up: ibd_phage_targeting
+# talk-45 hub run 2026-05-06 — 15 of 33 candidate slides were in this
+# set, all returned emit=false, deck shipped 0 AI illustrations
+# despite mode=talk-45 with 6 substantive substories that would have
+# benefited from conceptual visuals (mechanism cartoons, framework
+# diagrams, cocktail-strategy schematics). See V0_4_0_PUNCH_LIST.md
+# task #90.
 _DEFERRED_LLM_DECISION = frozenset({
     "claim_evidence",
     "workflow_diagram",
@@ -137,6 +149,12 @@ class Decision:
     position: int = -1
 
 
+# Type alias: judge_fn callbacks take a slide_stub + tier/mode context and
+# return (emit, reason). Used to inject the LLM-judgment layer (or a stub
+# in tests) without coupling decide() to subprocess.
+JudgeFn = Callable[[dict, str, str], tuple[bool, str]]
+
+
 def decide(
     slide_stub: dict,
     *,
@@ -145,8 +163,9 @@ def decide(
     user_opt_in_exploratory: bool = False,
     substory_id: str = "",
     position: int = -1,
+    judge_fn: Optional[JudgeFn] = None,
 ) -> Decision:
-    """Apply the v0.3.3 deterministic decision rules to one slide stub.
+    """Apply the deterministic decision rules to one slide stub.
 
     Args:
       slide_stub: parsed slide dict from working/03_slides/<sid>_slides.json.
@@ -155,11 +174,17 @@ def decide(
         present — its absence means slide_compose already-resolved
         the image, e.g., from cache, and we should not re-generate).
       tier: STRONG | THIN | EXPLORATORY (slide_spec.TIERS).
-      mode: talk-30 | talk-15 | etc. (informational; no rule depends on
-        it in v0.3.3 but signature symmetry helps v0.3.4 LLM-decision).
+      mode: talk-30 | talk-15 | etc. (informational; no deterministic
+        rule depends on it but the LLM-judgment layer reads it as input).
       user_opt_in_exploratory: if True, allow concept_illustration on
         EXPLORATORY tier. Default False (rule 6).
       substory_id, position: pass-through context for the Decision record.
+      judge_fn: callable to consult for layouts in _DEFERRED_LLM_DECISION.
+        Signature: (slide_stub, tier, mode) -> (emit_bool, reason_str).
+        When None (default), deferred layouts return emit=False with a
+        "no LLM judge available" reason. Pass `llm_judge` for the live
+        Sonnet-driven judgment, or a stub for tests. v0.3.7+ wires
+        llm_judge as the CLI default when claude is on PATH.
 
     Returns:
       Decision with emit + reason populated.
@@ -198,15 +223,35 @@ def decide(
             substory_id=substory_id, position=position,
         )
 
-    # Rule 5: deferred. v0.3.3 says no; v0.3.4 will revisit with an LLM
-    # judgment layer.
+    # Rule 5: deferred to LLM judgment. v0.3.7+ consults judge_fn (typically
+    # llm_judge invoking claude -p with a per-slide judgment prompt). If no
+    # judge_fn is provided, fall back to the pre-v0.3.7 conservative behavior
+    # (emit=False with a reason indicating the judgment was skipped). Tests
+    # pass stub callbacks; the bash orchestrator passes llm_judge.
     if layout in _DEFERRED_LLM_DECISION:
+        if judge_fn is None:
+            return Decision(
+                slide_id=slide_id, layout=layout, emit=False,
+                reason=(
+                    f"{layout} supplemental-image decision needs LLM "
+                    f"judgment but no judge_fn was provided; default no"
+                ),
+                substory_id=substory_id, position=position,
+            )
+        try:
+            emit, reason = judge_fn(slide_stub, tier, mode)
+        except Exception as e:
+            # LLM judgment is advisory — never crash the decision pipeline
+            # over a failed judgment. Default to conservative no with the
+            # error surfaced in the reason for downstream visibility.
+            return Decision(
+                slide_id=slide_id, layout=layout, emit=False,
+                reason=f"LLM judgment failed ({type(e).__name__}); default no",
+                substory_id=substory_id, position=position,
+            )
         return Decision(
-            slide_id=slide_id, layout=layout, emit=False,
-            reason=(
-                f"{layout} supplemental-image decision deferred to "
-                f"v0.3.4 LLM-judgment layer"
-            ),
+            slide_id=slide_id, layout=layout, emit=bool(emit),
+            reason=f"LLM-judged: {reason}",
             substory_id=substory_id, position=position,
         )
 
@@ -266,6 +311,7 @@ def decide_fragment(
     tier: str,
     mode: str,
     user_opt_in_exploratory: bool = False,
+    judge_fn: Optional[JudgeFn] = None,
 ) -> list[Decision]:
     """Apply decide() to every slide in a slide_compose fragment.
 
@@ -280,6 +326,9 @@ def decide_fragment(
 
     `substory_id` is taken from the fragment top-level if present,
     else inferred from the kind. Position is the 0-indexed enumerate.
+
+    `judge_fn` (v0.3.7+) is forwarded to decide() for deferred-layout
+    decisions; see decide() for semantics.
     """
     substory_id = fragment.get("substory_id", "")
     if not substory_id:
@@ -297,6 +346,7 @@ def decide_fragment(
                 user_opt_in_exploratory=user_opt_in_exploratory,
                 substory_id=substory_id,
                 position=position,
+                judge_fn=judge_fn,
             )
         )
     return decisions
@@ -308,6 +358,7 @@ def emit_decisions(
     tier: str,
     mode: str,
     user_opt_in_exploratory: bool = False,
+    judge_fn: Optional[JudgeFn] = None,
 ) -> dict:
     """Walk every fragment under slides_dir; return the
     image-decisions.v1 envelope. Caller writes the JSON.
@@ -316,6 +367,10 @@ def emit_decisions(
     that contain only structural slides — those are processed normally
     via decide_fragment, so their slides will all emit=False with a
     structural-no-image reason. No filtering needed at the caller level.
+
+    `judge_fn` (v0.3.7+) is forwarded to decide_fragment(); the CLI
+    `_cmd_emit_decisions` wires `llm_judge` as the default when claude is
+    on PATH (or `None` when --no-llm-judge is passed).
     """
     decisions: list[Decision] = []
     fragment_paths = sorted(slides_dir.glob("*.json"))
@@ -344,6 +399,7 @@ def emit_decisions(
                 tier=tier,
                 mode=mode,
                 user_opt_in_exploratory=user_opt_in_exploratory,
+                judge_fn=judge_fn,
             )
         )
     return {
@@ -351,8 +407,199 @@ def emit_decisions(
         "tier": tier,
         "mode": mode,
         "user_opt_in_exploratory": user_opt_in_exploratory,
+        "llm_judgment_used": judge_fn is not None,
         "decisions": [_decision_to_dict(d) for d in decisions],
     }
+
+
+# ---------------------------------------------------------------------------
+# v0.3.7+ LLM-judgment layer
+# ---------------------------------------------------------------------------
+
+# Default model for per-slide judgment calls. Sonnet 4.6 is the cheap default;
+# overridable via the CLI / function argument. Each judgment call costs
+# ~$0.005-0.01, so 15 deferred slides per draft → ~$0.10-0.20 added cost.
+DEFAULT_JUDGE_MODEL = "claude-sonnet-4-6"
+
+# Per-call timeout (seconds). Sonnet typically returns in 2-5s for a short
+# prompt; 60s is generous and prevents a stuck call from hanging the whole
+# decision pass.
+JUDGE_TIMEOUT_SEC = 60
+
+# Bounded max length on the content summary we feed into the judgment prompt.
+# Keeps the prompt small (~300 tokens) regardless of how content-rich the
+# slide is. The model only needs the gist to decide whether an illustration
+# would add value.
+_CONTENT_SUMMARY_MAX_CHARS = 800
+
+
+def _summarize_slide_for_judgment(slide_stub: dict) -> str:
+    """Produce a compact, human-readable summary of slide content for the
+    judgment prompt. Keeps within _CONTENT_SUMMARY_MAX_CHARS so we don't
+    blow up the prompt token count on bullet-rich slides."""
+    layout = slide_stub.get("layout", "?")
+    content = slide_stub.get("content", {})
+    parts: list[str] = []
+
+    # Title is the most informative single field for most layouts.
+    title = content.get("title") or content.get("headline") or content.get("punchline") or ""
+    if title:
+        parts.append(f"Title: {title}")
+
+    # Bullets / body content (claim_evidence, methods_summary, implications, etc.)
+    bullets = content.get("bullets", [])
+    if isinstance(bullets, list) and bullets:
+        bullet_strs = []
+        for b in bullets[:4]:  # cap at first 4 bullets
+            if isinstance(b, str):
+                bullet_strs.append(b)
+            elif isinstance(b, dict):
+                bullet_strs.append(b.get("claim", "") or b.get("text", ""))
+        if bullet_strs:
+            parts.append("Bullets: " + " | ".join(bullet_strs))
+
+    # Subtitle / sub_pointer (big_idea, big_number)
+    for k in ("subtitle", "sub_pointer", "headline"):
+        v = content.get(k)
+        if v and isinstance(v, str) and v != title:
+            parts.append(f"{k}: {v}")
+
+    # two_column_compare specifics
+    if layout == "two_column_compare":
+        for col in ("left_col_title", "right_col_title"):
+            v = content.get(col)
+            if v:
+                parts.append(f"{col}: {v}")
+
+    # workflow_diagram step captions
+    if layout == "workflow_diagram":
+        steps = content.get("step_caption", [])
+        if isinstance(steps, list) and steps:
+            parts.append("Steps: " + " → ".join(s for s in steps if isinstance(s, str)))
+
+    summary = "\n".join(parts)
+    if len(summary) > _CONTENT_SUMMARY_MAX_CHARS:
+        summary = summary[:_CONTENT_SUMMARY_MAX_CHARS - 3] + "..."
+    return summary
+
+
+def _build_judge_prompt(slide_stub: dict, tier: str, mode: str) -> str:
+    """Construct the per-slide judgment prompt sent to claude -p."""
+    layout = slide_stub.get("layout", "?")
+    summary = _summarize_slide_for_judgment(slide_stub)
+    return (
+        "You are deciding whether a slide in a scientific presentation "
+        "would benefit from a generated AI illustration as a supplemental "
+        "visual aid, ON TOP OF whatever text/bullets the layout already "
+        "carries. The illustration would be a small conceptual graphic "
+        "(metaphor, mechanism cartoon, framework diagram) — not a data "
+        "figure, not a photograph, not a logo.\n\n"
+        f"SLIDE LAYOUT: {layout}\n"
+        f"PRESENTATION MODE: {mode}\n"
+        f"EVIDENCE TIER: {tier}\n"
+        f"SLIDE CONTENT:\n{summary}\n\n"
+        "DECISION CRITERIA:\n"
+        "  - YES if the slide presents a CONCEPT (mechanism, framework, "
+        "    abstraction, comparison) that a small illustration would "
+        "    help an audience grasp faster than reading bullets.\n"
+        "  - YES if it's an opening claim or section pivot that benefits "
+        "    from a memorable visual hook.\n"
+        "  - NO if the slide is data-heavy and an illustration would "
+        "    compete with the data.\n"
+        "  - NO if the slide is structural / process-oriented (workflow "
+        "    steps already captioned, methods bullets, comparisons of "
+        "    quantitative columns).\n"
+        "  - NO if the slide content is so specific that a generic AI "
+        "    illustration cannot meaningfully represent it.\n"
+        "  - When uncertain, prefer NO (illustrations cost ~$0.014 each "
+        "    and over-illustration distracts).\n\n"
+        "Respond with EXACTLY ONE LINE in this format:\n"
+        "  YES <one-clause reason>\n"
+        "or\n"
+        "  NO <one-clause reason>\n"
+        "Do not output anything else. Do not use markdown. The first word "
+        "of your response must be YES or NO (uppercase)."
+    )
+
+
+def _parse_judge_response(text: str) -> tuple[bool, str]:
+    """Parse the LLM response into (emit, reason). Permissive on framing
+    but strict on the YES/NO prefix. Falls back to (False, reason) on
+    unparseable responses (defensive default — over-illustration is
+    worse than under-illustration)."""
+    if not text:
+        return False, "empty LLM response; default no"
+    line = text.strip().splitlines()[0].strip()
+    upper = line.upper()
+    if upper.startswith("YES"):
+        reason = line[3:].strip(" :-—–").strip()
+        return True, reason or "LLM said yes (no reason given)"
+    if upper.startswith("NO"):
+        reason = line[2:].strip(" :-—–").strip()
+        return False, reason or "LLM said no (no reason given)"
+    # Unparseable — surface the head of the response in the reason for
+    # debugging, default to no.
+    truncated = line[:100] + ("..." if len(line) > 100 else "")
+    return False, f"LLM response unparseable ({truncated!r}); default no"
+
+
+def llm_judge(
+    slide_stub: dict,
+    tier: str,
+    mode: str,
+    *,
+    model: str = DEFAULT_JUDGE_MODEL,
+    timeout_sec: int = JUDGE_TIMEOUT_SEC,
+) -> tuple[bool, str]:
+    """Per-slide LLM judgment. Synchronous claude -p call.
+
+    Returns (emit, reason). Defensive: returns (False, reason) on any
+    failure mode (claude not on PATH, subprocess error, timeout,
+    unparseable response). The deferred-layout decision branch in
+    decide() also catches exceptions, but llm_judge itself prefers
+    to return a Decision-friendly tuple over raising.
+
+    Usage:
+        from image_gen_decision import llm_judge, decide
+        d = decide(slide_stub, tier="STRONG", mode="talk-30",
+                   judge_fn=llm_judge)
+
+    Cost: ~$0.005-0.01 per call (Sonnet, ~300 token prompt + ~30 token
+    response). Latency: 2-5s typical, 60s timeout.
+    """
+    if shutil.which("claude") is None:
+        return False, "claude CLI not on PATH; default no"
+
+    prompt = _build_judge_prompt(slide_stub, tier, mode)
+
+    try:
+        result = subprocess.run(
+            [
+                "claude", "-p",
+                "--model", model,
+                "--dangerously-skip-permissions",
+                prompt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"LLM call timed out after {timeout_sec}s; default no"
+    except (OSError, ValueError) as e:
+        return False, f"LLM subprocess error ({type(e).__name__}); default no"
+
+    if result.returncode != 0:
+        # Claude exited non-zero. Return defensive default with the rc
+        # surfaced for debugging.
+        stderr_head = (result.stderr or "").strip()[:120]
+        return False, (
+            f"claude -p exited rc={result.returncode}"
+            + (f" ({stderr_head!r})" if stderr_head else "")
+            + "; default no"
+        )
+
+    return _parse_judge_response(result.stdout)
 
 
 def _decision_to_dict(d: Decision) -> dict:
@@ -391,18 +638,54 @@ def _cmd_emit_decisions(args: argparse.Namespace) -> int:
         return 1
     out_path = Path(args.out).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # v0.3.7+: wire llm_judge as the default judge_fn when claude is on
+    # PATH. --no-llm-judge opts out (preserves pre-v0.3.7 conservative
+    # behavior — every deferred-layout slide gets emit=false).
+    if args.no_llm_judge:
+        judge_fn: Optional[JudgeFn] = None
+        print(
+            "image_gen_decision: --no-llm-judge set; deferred layouts "
+            "default to no AI image",
+            file=sys.stderr,
+        )
+    elif shutil.which("claude") is None:
+        judge_fn = None
+        print(
+            "image_gen_decision: claude CLI not on PATH; deferred layouts "
+            "default to no AI image (pass --no-llm-judge to suppress this "
+            "message, or install claude to enable per-slide judgment)",
+            file=sys.stderr,
+        )
+    else:
+        # Bind the judge model from the CLI flag (default: Sonnet 4.6).
+        model = args.judge_model
+        def judge_fn(slide_stub, tier, mode, _model=model):  # noqa: E306
+            return llm_judge(slide_stub, tier, mode, model=_model)
+        print(
+            f"image_gen_decision: LLM-judgment enabled for deferred layouts "
+            f"(model={model}). Pass --no-llm-judge to disable.",
+            file=sys.stderr,
+        )
+
     envelope = emit_decisions(
         slides_dir,
         tier=args.tier,
         mode=args.mode,
         user_opt_in_exploratory=bool(args.allow_exploratory),
+        judge_fn=judge_fn,
     )
     out_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
     n_yes = sum(1 for d in envelope["decisions"] if d["emit"])
     n_total = len(envelope["decisions"])
+    n_llm = sum(
+        1 for d in envelope["decisions"]
+        if d["reason"].startswith("LLM-judged: ")
+    )
     print(
         f"image_gen_decision: wrote {out_path} "
-        f"({n_yes}/{n_total} slides flagged for image-gen)",
+        f"({n_yes}/{n_total} slides flagged for image-gen; "
+        f"{n_llm} via LLM judgment)",
         file=sys.stderr,
     )
     return 0
@@ -452,6 +735,23 @@ def main(argv: Iterable[str] | None = None) -> int:
     p_emit.add_argument(
         "--allow-exploratory", action="store_true",
         help="Allow concept_illustration on EXPLORATORY tier (rule 6 inversion).",
+    )
+    p_emit.add_argument(
+        "--no-llm-judge", action="store_true",
+        help=(
+            "Disable the v0.3.7+ LLM-judgment layer. Deferred-layout "
+            "slides (claim_evidence, big_idea, big_number, "
+            "workflow_diagram, two_column_compare, implications) "
+            "default to emit=false. Use this to reproduce pre-v0.3.7 "
+            "conservative behavior or run without claude on PATH."
+        ),
+    )
+    p_emit.add_argument(
+        "--judge-model", default=DEFAULT_JUDGE_MODEL,
+        help=(
+            f"Model used for per-slide LLM judgment calls. "
+            f"Default: {DEFAULT_JUDGE_MODEL}. Per-call cost ~$0.005-0.01."
+        ),
     )
     p_emit.add_argument("--out", required=True,
                         help="Output path for image-decisions.v1 JSON.")

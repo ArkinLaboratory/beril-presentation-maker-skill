@@ -1279,7 +1279,14 @@ stage_image_gen() {
   echo "[Stage 11/14] image_gen (concept_illustration → AI image)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
-  # 1. Run the deterministic decision layer (no LLM cost).
+  # 1. Run the decision layer. v0.3.7+: this includes the LLM-judgment
+  # layer for deferred-layout slides (claim_evidence, big_idea, big_number,
+  # workflow_diagram, two_column_compare, implications). The CLI default
+  # auto-enables judgment when `claude` is on PATH and falls back to the
+  # pre-v0.3.7 conservative "no AI image" behavior otherwise. Adds
+  # ~$0.10-0.20/draft cost for ~15 deferred slides at $0.005-0.01 each.
+  # To disable judgment explicitly, pass --no-llm-judge here (or use
+  # --no-images at the orchestrator level to skip the stage entirely).
   local exploratory_flag=""
   if [[ $IMAGE_ALLOW_EXPLORATORY -eq 1 ]]; then
     exploratory_flag="--allow-exploratory"
