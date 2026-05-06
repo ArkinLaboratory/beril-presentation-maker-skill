@@ -1,0 +1,107 @@
+v0.3.5.1: bash strict-mode patch in should_run() resume logic
+
+Hub smoke run on ibd_phage_targeting (KBERDL JupyterHub, evening
+2026-05-05) surfaced two bugs in succession during a Claude Code
+agent's first end-to-end attempt at presentation drafting:
+
+  (A) gate_throughline_pick blocks on `read -r pick </dev/tty`,
+      which fails in TTY-less contexts (Claude Code background
+      Bash tool, CI, headless daemon). Architectural — the
+      synchronous-blocking-on-TTY interactivity model assumes the
+      bash orchestrator owns a controlling terminal, which is wrong
+      for hub agents and CI runs. Workaround for May 7: pass
+      `--auto-advance` to skip the prompt (auto-picks TL1). Real
+      fix (state-driven continue with explicit --pick TLN gate-
+      resume, paper-writer pattern) tracked for v0.4.0; not safe
+      to land in 36 hours pre-event.
+
+  (B) should_run() declares `local order_resume order_stage`
+      without initialization. Under bash 5.2 `set -u`, the
+      `[[ -z "$order_resume" ]]` check after the case loop trips
+      "unbound variable" if neither case-arm matched any iteration.
+      Hidden until now because most prior tests run without
+      --resume-from (which short-circuits before the loop). Hub
+      agent hit it on first `continue --resume-from throughline`
+      after working around bug A.
+
+THIS COMMIT FIXES (B) ONLY.
+
+Bug B fix
+
+  src/beril_presentation_maker/skill/tools/presentation_maker.sh
+  line 1740:
+
+    -  local order_resume order_stage
+    +  local order_resume="" order_stage=""
+
+  Initializing to empty string (rather than declaring unset)
+  satisfies `set -u` and matches the canonical bash pattern. Inline
+  comment block added documenting the live-failure root cause for
+  future readers.
+
+Bug A workaround
+
+  TUTORIAL.md §"Presentation-maker-specific troubleshooting" gets a
+  dedicated entry as the first item explaining when `--auto-advance`
+  is required (TTY-less contexts), with a forward pointer to v0.4.0
+  for the architectural fix.
+
+  docs/cross-skill/PARTICIPANT-RUNBOOK.md §Appendix A gets the same
+  entry as the first failure mode listed (since it's the most likely
+  to bite event participants running through Claude Code).
+
+  Both docs are explicit that paper-writer is unaffected — its
+  continue command already takes `--pick TLN` and does not depend
+  on TTY for the throughline pick. This is the cross-skill
+  consistency gap that should drive v0.4.0's design.
+
+What's NOT in this commit
+
+  - No state.json schema design.
+  - No bash gate refactor to write state and exit cleanly.
+  - No `continue --pick TLN` argparse extension.
+  - No tests for the strict-mode case (it's a one-line init that
+    any future `continue --resume-from <stage>` invocation re-
+    validates; the live hub run is the regression evidence).
+
+  All of the above lands in v0.4.0 post-event.
+
+Tests
+
+  Full suite passes: 746 unit tests, 1 marker-gated live integration
+  test still skipped in sandbox. No new tests; no behavior change
+  for code paths that were already working.
+
+Adam's runbook (after v0.3.5.1 push)
+
+  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.5.1
+  beril-presentation-maker --version    # 0.3.5.1
+  cd ~/BERIL-research-observatory
+  beril-presentation-maker install-skill .
+
+  # Resume the ibd_phage_targeting draft that hit bug B mid-flight:
+  cd projects/ibd_phage_targeting
+  beril-presentation-maker continue talks/draft_1 \
+      --resume-from throughline \
+      --mode talk-45 --auto-advance --auto-approve-images
+
+  # The bash patch (bug B fix) and the --auto-advance flag (bug A
+  # workaround) together let this resume through to the .pptx
+  # without further TTY blocks or strict-mode crashes.
+
+Refs
+
+  - predecessor tag: v0.3.5
+  - bug-source: 2026-05-05 hub smoke on ibd_phage_targeting
+    (Claude Code background Bash tool, KBERDL JupyterHub).
+  - workspace task #84 closes; #85 (v0.4.0 state-driven continue)
+    opens for post-event.
+  - cross-skill: paper-writer's `continue --pick TLN` pattern is the
+    model. See its commands/continue_run.py docstring for the state
+    machine (phase=throughline_pick / drafting / review / assembled /
+    init).
+  - memory feedback: this is a 6th instance of feedback_prompt_tool_
+    contract_drift / synchronous-design-vs-async-runtime mismatch.
+    Writing one up: presentation-maker's gate model assumed TTY;
+    the runtime context (hub agents, CI) doesn't have it; the
+    behavioral surface only diverges on first non-interactive use.

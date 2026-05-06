@@ -673,8 +673,26 @@ maps. Write the result to OUT_PATH."
   invoke_claude_with_retry "$PROMPTS_DIR/throughline.v1.md" "$user_prompt" "$out" "throughline"
 }
 
-# Throughline pick gate. Either prompts the user or auto-picks TL1 in
-# auto-advance mode. Writes the chosen candidate to 00_throughline.md.
+# Throughline pick gate. v0.3.6 (2026-05-05): replaced TTY-blocking
+# `read -r pick </dev/tty` with halt-and-handoff (paper-writer
+# pattern). When --auto-advance is set: auto-pick TL1 (legacy CI/
+# unattended-smoke behavior, unchanged). Otherwise: write
+# <draft_dir>/.handoff.json describing the gate state, print a clear
+# "what to do next" message to stderr, and exit 0 cleanly. The
+# `beril-presentation-maker continue <draft_dir> --pick TLN` Python
+# command (or the /beril-presentation-maker slash command's two-stage
+# flow) reads the handoff, picks, and resumes from substory_design.
+#
+# Live failure 2026-05-05 on KBERDL JupyterHub (ibd_phage_targeting,
+# Claude Code background Bash tool): the previous `read </dev/tty`
+# fails 100% in TTY-less contexts. Hub auto-backgrounds Claude Code's
+# bash invocations; every hub participant hits this gate. The
+# halt-and-handoff pattern matches paper-writer (which never had this
+# bug because it was designed asynchronously from day one).
+#
+# Full state.json + Phase enum (paper-writer's complete pattern) is
+# v0.4.0 work post-event; this v0.3.6 ships a single-purpose handoff
+# at the one gate that 100% of participants hit.
 gate_throughline_pick() {
   local candidates="$THROUGHLINE_CANDIDATES"
   local out="$THROUGHLINE_PATH"
@@ -684,26 +702,106 @@ gate_throughline_pick() {
     return 1
   fi
 
-  local pick
   if [[ $AUTO_ADVANCE -eq 1 ]]; then
-    pick="TL1"
+    local pick="TL1"
     echo "  [auto-advance] picking $pick" >&2
-  else
-    echo "" >&2
-    echo "==== Throughline candidates (open $candidates to review) ====" >&2
-    # Match all four observed header variants: `## TL1 —`, `## TL1:`,
-    # `## Candidate TL1 —`, `## Candidate TL1:` (live throughline.v1
-    # produced the last shape on 2026-04-26).
-    grep -E "^## (Candidate +)?TL[0-9]+[ :—–-]" "$candidates" >&2 || true
-    echo "" >&2
-    echo -n "Pick a throughline (TL1 / TL2 / TL3): " >&2
-    read -r pick </dev/tty
+    "$PYTHON_BIN" "$TOOLS_DIR/parse_throughline_candidates.py" \
+      --candidates "$candidates" \
+      --pick "$pick" \
+      --out "$out"
+    return $?
   fi
 
-  "$PYTHON_BIN" "$TOOLS_DIR/parse_throughline_candidates.py" \
-    --candidates "$candidates" \
-    --pick "$pick" \
-    --out "$out"
+  # Halt-and-handoff: write .handoff.json, print message, exit 0.
+  emit_throughline_handoff "$candidates" || {
+    echo "Error: failed to emit throughline handoff" >&2
+    return 1
+  }
+
+  echo "" >&2
+  echo "==================================================================" >&2
+  echo "  HALT: throughline-pick gate (v0.3.6 halt-and-handoff)" >&2
+  echo "==================================================================" >&2
+  echo "  Stages 1-2 complete. Throughline candidates written to:" >&2
+  echo "    $candidates" >&2
+  echo "" >&2
+  echo "  Pick a candidate (TL1, TL2, ...) and run:" >&2
+  echo "    beril-presentation-maker continue $OUTDIR --pick TLN" >&2
+  echo "" >&2
+  echo "  For unattended/CI runs, re-invoke with --auto-advance to" >&2
+  echo "  auto-pick TL1 and run end-to-end without halting." >&2
+  echo "==================================================================" >&2
+
+  # Exit 0: clean halt, NOT failure. Slash command reads .handoff.json
+  # to disambiguate "halted at gate" from "pipeline complete." Paper-
+  # writer uses rc=0 for both states + state.json's `phase` field.
+  exit 0
+}
+
+# v0.3.6: emit narrative/.handoff.json describing the throughline-pick
+# gate state. Slash command reads this to present candidates via
+# AskUserQuestion. continue --pick TLN validates against this file.
+#
+# Wait — actually puts handoff at draft root (<draft>/.handoff.json),
+# matching paper-writer's location. Outside the 4-zone layout
+# (deliverable/narrative/working/audit) deliberately — it's
+# coordination state, not deliverable/narrative/working/audit content.
+emit_throughline_handoff() {
+  local candidates="$1"
+  local handoff="$OUTDIR/.handoff.json"
+
+  "$PYTHON_BIN" - "$candidates" "$handoff" "$OUTDIR" <<'PYEOF'
+import json, os, re, sys
+
+candidates_path, handoff_path, draft_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(candidates_path, encoding="utf-8") as f:
+    text = f.read()
+
+# Match all four observed header variants: `## TL1 —`, `## TL1:`,
+# `## Candidate TL1 —`, `## Candidate TL1:` (live throughline.v1
+# produced the last shape on 2026-04-26; consistent with the grep
+# pattern this gate used in the pre-v0.3.6 read-from-TTY codepath).
+candidates = []
+for m in re.finditer(
+    r"^##\s+(Candidate\s+)?(TL\d+)[\s:—–-]+(.+?)$",
+    text,
+    re.MULTILINE,
+):
+    cid = m.group(2)
+    label = m.group(3).strip()
+    if len(label) > 120:
+        label = label[:117] + "..."
+    candidates.append({"id": cid, "label": label})
+
+if not candidates:
+    print(
+        f"  ERROR: no `## Candidate TLN: ...` headers found in {candidates_path}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+with open(handoff_path, "w", encoding="utf-8") as f:
+    json.dump(
+        {
+            "phase": "throughline_pick",
+            "draft_dir": draft_dir,
+            "candidates": candidates,
+            "candidates_md": candidates_path,
+            "next_command": (
+                f"beril-presentation-maker continue {draft_dir} --pick TLN"
+            ),
+        },
+        f,
+        ensure_ascii=False,
+        indent=2,
+    )
+
+print(
+    f"  wrote {len(candidates)} candidates to {handoff_path}",
+    file=sys.stderr,
+)
+PYEOF
 }
 
 stage_substory_design() {

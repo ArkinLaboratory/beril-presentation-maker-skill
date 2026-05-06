@@ -565,8 +565,11 @@ Two common causes:
 - You typed `BERIL_ROOT=...` without `export`. Bash sets a shell variable but does NOT export it to subprocesses; the Python CLI sees a missing env var. Fix: use `export BERIL_ROOT=~/BERIL-research-observatory`, then re-run.
 - You're not inside a BERIL checkout. The auto-detection walks up from your current directory looking for the BERIL markers (`.env`, `.claude/skills/`). Fix: `cd ~/BERIL-research-observatory` before running, or pass `--beril-root <path>` explicitly.
 
-**Pipeline halts at "Pick a throughline (TL1 / TL2 / TL3):" with exit code 1 (Claude Code background task / TTY-less context)**
-The presentation-maker pipeline currently uses an interactive prompt at stage 2 (throughline pick). In TTY-less contexts (Claude Code's Bash background tool, CI, headless daemons) the prompt's `read </dev/tty` fails. **Always pass `--auto-advance` for TTY-less runs** — auto-picks the first throughline candidate and runs end-to-end without prompting. State-driven gate-resume with explicit `--pick TLN` (the paper-writer pattern) is planned for presentation-maker v0.4.0 post-event; until then, `--auto-advance` is the right tool. Paper-writer is unaffected — its continue command already takes `--pick TLN` and does not depend on TTY for the throughline pick.
+**Pipeline halts cleanly with a handoff at the throughline-pick gate (v0.3.6+ behavior)**
+At the throughline-pick gate, the bash orchestrator writes `<draft_dir>/.handoff.json` (with phase=throughline_pick + candidate list + path to the full candidates markdown), prints a clear "what to do next" message, and exits 0. This is **expected behavior**, not a failure. To resume: pick a candidate (TL1, TL2, ...) and run `beril-presentation-maker continue <draft_dir> --pick TLN`. The pipeline resumes from substory_design through to the final .pptx. The Claude Code slash command (`/beril-presentation-maker`) does this two-stage flow automatically via `AskUserQuestion`. For unattended/CI runs, pass `--auto-advance` to auto-pick TL1 and run end-to-end without halting.
+
+**Pre-v0.3.6: pipeline blocks on a `read </dev/tty` prompt and never returns / errors with rc=1**
+Earlier versions used a TTY-blocking interactive prompt at the throughline gate. This fails 100% in TTY-less contexts (Claude Code's auto-backgrounded bash on the hub). Fix: upgrade to v0.3.6 or later (`pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.6`).
 
 **Pipeline crashes mid-stage (network blip, malformed LLM JSON, CBORG rate limit)**
 Don't re-run from scratch — you'll lose work and pay the full cost again. Instead:

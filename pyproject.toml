@@ -1,33 +1,45 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.5.1 — bash strict-mode patch in should_run() resume
-# logic. Hub smoke run on ibd_phage_targeting (KBERDL JupyterHub,
-# 2026-05-05 evening) surfaced TWO bugs in succession:
+# Status: v0.3.6 — halt-and-handoff at the throughline-pick gate
+# (paper-writer pattern). Closes the architectural bug surfaced on
+# the KBERDL JupyterHub on 2026-05-05: gate_throughline_pick used
+# `read -r pick </dev/tty`, which fails 100% of the time when Claude
+# Code auto-backgrounds bash on the hub (every hub participant hit
+# this).
 #
-#   (A) gate_throughline_pick blocks on `read -r pick </dev/tty`,
-#       which fails in TTY-less contexts (Claude Code background
-#       Bash tool, CI, daemon). Architectural — synchronous-blocking-
-#       on-TTY model assumes interactive terminal, which is wrong for
-#       hub agents. Workaround for Thursday: --auto-advance auto-
-#       picks TL1. Real fix (state-driven continue with --pick TLN
-#       gate-resume, paper-writer pattern) tracked for v0.4.0; not
-#       safe to land in 36 hours pre-event.
+# v0.3.6 changes:
+#   - presentation_maker.sh: `gate_throughline_pick` now writes
+#     <draft_dir>/.handoff.json (phase=throughline_pick + candidates
+#     + candidates_md) and exits 0 cleanly when --auto-advance is
+#     not set. No more `read </dev/tty`. New helper
+#     `emit_throughline_handoff` extracts candidate metadata from
+#     `00_throughline_candidates.md`.
+#   - continue_run.py: new `--pick TLN` argparse flag. Mutually
+#     exclusive with `--resume-from`. When --pick is passed: read
+#     .handoff.json, validate TLN against candidates, invoke
+#     parse_throughline_candidates.py to write 00_throughline.md,
+#     remove .handoff.json (gate consumed), dispatch bash with
+#     --resume-from substory_design. Helpful errors when neither
+#     flag is passed but a handoff is waiting.
+#   - Slash command markdown (`/beril-presentation-maker`):
+#     two-stage flow — Step 4 starts draft (halts at gate); Step 5
+#     reads .handoff.json, presents candidates via AskUserQuestion,
+#     re-invokes `continue --pick TLN` to resume from
+#     substory_design. Explicit failure-mode entry for participants
+#     running pre-v0.3.6 with TTY-less Claude Code.
+#   - Tests: 16 new unit tests in test_continue_run.py covering
+#     --pick happy path, validation paths, mutual exclusion, helpful
+#     errors, legacy --resume-from no-regression. 746 → 762 passed.
 #
-#   (B) should_run() declares `local order_resume order_stage`
-#       without initialization. Under bash 5.2 `set -u`, the
-#       `[[ -z "$order_resume" ]]` check after the case loop trips
-#       "unbound variable" if neither arm matched. Hidden until now
-#       because most prior tests run without --resume-from (which
-#       short-circuits before the loop). Hub agent hit it on first
-#       `continue --resume-from throughline`. Fix shipped in this
-#       version: `local order_resume="" order_stage=""`.
+# `--auto-advance` semantics unchanged (still auto-picks TL1, runs
+# end-to-end without halting). `--resume-from <stage>` legacy
+# power-user mode unchanged. Default behavior (no flag) is now
+# halt-and-handoff at the throughline gate, NOT TTY-blocking prompt.
 #
-# Bug A is documented in TUTORIAL.md / PARTICIPANT-RUNBOOK.md as the
-# --auto-advance workaround for May 7 participants. Bug B is fixed
-# in source. No new tests for the strict-mode case (it's a one-line
-# init that any future invocation of the resume codepath would
-# re-validate); the live hub run is the regression evidence.
+# Substory-overflow gate at line ~777 still has a TTY-block; rare
+# (only fires when a substory exceeds budget). Migrated together
+# with throughline gate to full state.json + Phase enum in v0.4.0.
 ####################################################################
 
 [build-system]
@@ -40,7 +52,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.5.1"
+version = "0.3.6"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"

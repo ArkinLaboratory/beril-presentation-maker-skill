@@ -1,0 +1,104 @@
+docs: add cross-skill PARTICIPANT-RUNBOOK + per-skill TUTORIAL + README doc-map
+
+Three coordinated docs additions per the May 5, 2026 cross-skill
+doc-consistency agreement (adversarial team initiated; thread
+synthesized agreed direction):
+
+1. Cross-skill PARTICIPANT-RUNBOOK at docs/cross-skill/.
+2. Skill-specific TUTORIAL.md at repo root.
+3. README §Documentation map section for navigation.
+
+Cross-skill participant runbook landed in this repo as a pragmatic
+event-timing host (May 7, 2026 BERIL exercise — 36 hours out from
+this commit). No cross-skill umbrella repo exists yet; presentation-
+maker is the most-actively-shipped skill and the natural temporary
+home. Per the doc's own appendix C, it will be relocated to a more
+neutral cross-skill location post-event with a redirect from this
+URL.
+
+The runbook is durable (not event-only). It walks any BERIL user
+from prereqs → pipx install → skill install into BERIL → configure
+→ BERIL workflow integration (`/berdl_start` branch convention)
+→ all four skill flows (paper-writer, presentation-maker, adversarial,
+atlas) → cohort cheat-sheets → recovery → cost guidance →
+troubleshooting. ~630 lines. Last edited 2026-05-05.
+
+Verified CLI surfaces against shipped main:
+- `beril-paper-writer draft` flags: --depth, --mode, --no-adversarial
+  (= switch to fallback inline reviewer, NOT skip review entirely),
+  --max-cost-usd, --recaption.
+- `beril-presentation-maker draft` flags: --tier, --mode,
+  --auto-advance, --auto-approve-images, --max-image-cost-usd,
+  --no-adversarial (= skip review + revise stages cleanly).
+- `beril-adversarial review <positional> --type ...`: positional shape
+  differs by --type (draft_dir for paper/presentation, project_id
+  for plan/project).
+- `beril-atlas` three-command bootstrap: scan --extract → metrics →
+  render.
+
+Cross-skill consistency gap noted: paper-writer's slash command
+(`/beril-paper-writer`) currently uses only the cwd + explicit-
+argument signals for project resolution. Adversarial v0.7.0.1+ and
+presentation-maker v0.3.4+ have the full 4-signal tree (explicit →
+git branch → cwd → ask). Runbook documents the gap honestly;
+paper-writer team has the action item.
+
+Slash command naming verified: shipped `commands/*.md` filenames are
+hyphen-form (`/beril-presentation-maker`, `/beril-paper-writer`,
+etc.), NOT colon-suffix-form. Runbook uses hyphen-form throughout.
+
+Branch convention clarified: `/berdl_start` (BERIL native) puts the
+user on a `projects/<id>` git branch automatically as part of project
+creation. Participants don't manage git themselves; the augmentation
+skills' slash commands read the branch and resolve the project.
+Documented in §2.1.
+
+TUTORIAL.md (172 lines, ~14 KB) is the presentation-maker-specific
+researcher-facing tutorial. Per the May 5 cross-skill agreement,
+TUTORIAL is scoped strictly to skill-specific content — output tree,
+slide_spec.json structure, the 16 layouts, image-gen approval flow,
+iteration patterns (revise vs re-run), hand-editing semantics with
+manual-edit detection, deferred cosmetic-issues hand-fix list, and
+presentation-maker-specific troubleshooting. Defers all cross-skill
+content (install, configure, BERIL workflow integration, recovery
+patterns) to the PARTICIPANT-RUNBOOK above. Audience: researcher
+using `/beril-presentation-maker` who has already run a draft.
+
+README §Documentation map: tabular layout per the May 5 agreement,
+listing each .md file with audience + content summary, including a
+cross-skill row pointing at the PARTICIPANT-RUNBOOK. Mirrors
+structure adversarial team shipped in their v0.7.0.4. Note:
+presentation-maker has no PLUGIN_GUIDE_SKELETON (was inventoried by
+the adversarial team's table but not actually in this repo); the
+retired-PLUGIN_GUIDE row from adversarial's template was therefore
+omitted.
+
+No package contents change (the docs/ directory is not in
+hatch.build.targets.{wheel,sdist} include lists; TUTORIAL.md and
+README.md are not shipped as package data either). No version bump.
+
+Files added:
+  docs/cross-skill/PARTICIPANT-RUNBOOK.md      (NEW, 637 lines / ~39 KB)
+  TUTORIAL.md                                  (NEW, 172 lines / ~14 KB)
+
+Files modified:
+  README.md                                    (+ cross-skill pointer block,
+                                                + §Documentation map section)
+
+Refs
+
+- predecessor tag: v0.3.5
+- May 5, 2026 cross-skill doc-consistency thread: tiered uniform
+  doc set (must / should-when-warranted / optional) + retired
+  PLUGIN_GUIDE pattern + per-skill TUTORIAL scope deferring shared
+  content to runbook.
+- workspace-side tasks #79+#80+#81+#82+#83 (not in this repo).
+- next: post-event extraction of PARTICIPANT-RUNBOOK to a cross-skill
+  home (option: ArkinLaboratory/beril-co-scientist-docs umbrella);
+  re-scope existing TUTORIALs (paper-writer + atlas) against the
+  runbook to remove duplication; convergence on RELEASE_NOTES vs
+  CHANGELOG (low priority).
+- coordination: paper-writer team to adopt 4-signal project
+  resolution tree in a future v0.8 (see runbook §2.1); paper-writer
+  team writing thin HUB_INSTALL.md for May 7; atlas team has no
+  May 7 doc work required.

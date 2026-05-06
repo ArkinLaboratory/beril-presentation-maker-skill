@@ -13,10 +13,17 @@ speaker_notes → image_gen → merge → adversarial_review →
 revise_slides) and writes the deck to
 `<draft_dir>/deliverable/draft.pptx`.
 
-Without `--auto-advance`, the orchestrator pauses inside the
-throughline stage for the user to pick from candidates. Pass
-`--auto-advance` for unattended runs (picks TL1, escalates on
-overflow).
+**v0.3.6: halt-and-handoff at the throughline-pick gate (paper-writer
+pattern).** Without `--auto-advance`, the orchestrator runs stages 1-2
+(plan + throughline candidates), writes `<draft_dir>/.handoff.json`
+describing the gate state, prints a "what to do next" message, and
+exits 0 cleanly. This works in TTY-less contexts (Claude Code's
+backgrounded bash on the hub, CI, daemons) where the prior
+`read </dev/tty` blocking model failed 100% of the time. The slash
+command (Steps 4-5 below) reads the handoff, presents candidates via
+`AskUserQuestion`, and re-invokes `continue --pick TLN` to resume from
+substory_design through to the .pptx. Pass `--auto-advance` for
+unattended runs (auto-picks TL1, no halt).
 
 For full reference docs (mode matrix, output artifacts catalog,
 cost-control flags, manual-edit workflow), see `SKILL.md`.
@@ -101,11 +108,11 @@ SKILL.md mode matrix: `talk-15` / `talk-45` / `lightning-5` /
 If the user didn't specify, ask only when ambiguous (e.g., they
 said "make a poster" — ask `poster-h` vs. `poster-v`).
 
-## Step 4 — Start the draft
+## Step 4 — Start the draft (runs to throughline-pick gate)
 
-**Run the bash command in the FOREGROUND.** Plan + throughline
-typically take 3-5 minutes on Sonnet; the full pipeline runs
-15-25 minutes for `talk-30 STRONG`. If the bash tool warns about a
+**Run the bash command in the FOREGROUND.** Stages 1-2 (plan +
+throughline candidates) typically take 3-5 minutes on Sonnet for STRONG
+tier; longer for THIN/EXPLORATORY. If the bash tool warns about a
 long-running command, wait for it.
 
 From BERIL_ROOT:
@@ -125,22 +132,91 @@ From BERIL_ROOT:
 Common flag combinations:
 
 - **First-time fresh run, attended:** no flags beyond `<project_id>`.
-  User picks throughline; image gate prompts per slide.
+  Bash halts at the throughline-pick gate (writes `.handoff.json`,
+  exits 0); proceed to Step 5 to read the handoff and ask the user.
 - **Unattended smoke run:** `--auto-advance --auto-approve-images
-  --max-image-cost-usd 0.20`. Picks TL1, bulk-approves images, caps
-  image-gen spend at $0.20.
+  --max-image-cost-usd 0.20`. Auto-picks TL1, runs end-to-end without
+  halting, bulk-approves images, caps image-gen spend at $0.20. Skip
+  Steps 5-6 entirely; the .pptx will be at `deliverable/draft.pptx`
+  when bash returns.
 - **Iterating on prompts (skip adversarial):** `--no-adversarial`.
   Saves $1-5 by skipping stages 13-14.
-- **Spec-only iteration (no .pptx):** `--skip-assembly`. Stops
-  after merge; useful when iterating on prompts where you don't
-  need the visual every time.
+- **Spec-only iteration (no .pptx):** `--skip-assembly`. Stops after
+  merge; useful when iterating on prompts where you don't need the
+  visual every time.
 - **Cost-bounded smoke:** `--max-revise-cost-usd 1.00 --max-revisions 3
   --max-image-cost-usd 0.10`. Tighter cost ceiling for budget-
   conscious testing.
 
 See SKILL.md "Cost-control flags" for the full table.
 
-## Step 5 — Surface the output
+When the bash returns, check whether it halted at the gate (exit 0
+with `.handoff.json` written) or completed (exit 0 with a .pptx in
+`deliverable/`). If `--auto-advance` was set, you should see the .pptx
+and can skip to Step 6. Otherwise, proceed to Step 5.
+
+## Step 5 — Read the throughline-pick handoff and ask the user
+
+After the bash returns from Step 4 without `--auto-advance`, the gate
+should have written `<draft_dir>/.handoff.json` describing the
+throughline-pick state. The draft_dir path was printed near the top
+of the bash output ("draft dir: ...") and is also the path under
+`projects/<project_id>/talks/draft_N/`.
+
+Read the handoff JSON in a Bash block:
+
+    cat <draft_dir>/.handoff.json
+
+The expected fields:
+
+- `phase` — should be `"throughline_pick"`
+- `candidates` — an array of `{id, label}` objects (TL1, TL2, ...)
+- `candidates_md` — absolute path to the full candidates markdown with
+  per-candidate evidence maps
+- `next_command` — the canonical command shape to invoke next
+
+If `phase` is anything other than `"throughline_pick"`, something
+upstream went wrong; tell the user and stop. If the handoff doesn't
+exist at all, the bash either completed (look for the .pptx) or
+errored (re-read the bash output for the failure mode).
+
+**Before invoking AskUserQuestion**, in a Bash block tell the user
+the absolute path to the candidates markdown so they can open it in
+a separate terminal or scrollback for the full evidence map per
+candidate. The AskUserQuestion widget truncates descriptions, and
+the evidence map is the substantive material:
+
+    echo "Open this for the full evidence map:"
+    echo "  $(cat <draft_dir>/.handoff.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["candidates_md"])')"
+
+**Then invoke AskUserQuestion** with one option per candidate:
+
+- `label`: the candidate id (e.g. `"TL1"`, `"TL2"`)
+- `description`: use the `label` field from the handoff JSON; trim to
+  one line if the LLM produced a long label
+
+Question framing:
+
+> Pick a throughline candidate. Open the candidates markdown above for
+> the full evidence map per candidate.
+
+After the user selects, **immediately re-invoke the bash** to run
+`continue --pick TLN` and resume the pipeline from substory_design.
+This is a foreground run; the remaining 12 stages take 12-20 minutes.
+
+    beril-presentation-maker continue <draft_dir> --pick TL2 \
+        [--mode <mode>] \
+        [--auto-approve-images] \
+        [--max-image-cost-usd <n>] \
+        [--no-adversarial] \
+        [--max-revise-cost-usd <n>]
+
+Forward whatever flags from Step 4 are still relevant. The `--mode`
+should match the original draft's mode; the orchestrator validates
+this. If image-gen is enabled and you're running unattended, set
+`--auto-approve-images --max-image-cost-usd <cap>`.
+
+## Step 6 — Surface the output
 
 After the bash command completes, the draft directory will be at
 `projects/<project_id>/talks/draft_N/`. The 4-zone layout means:
@@ -163,7 +239,7 @@ Tell the user:
    run `/beril-presentation-maker-continue <draft_dir>
    --resume-from merge` to assemble.
 
-## Step 6 — Guidance
+## Step 7 — Guidance
 
 Based on the run outcome:
 
@@ -186,6 +262,8 @@ Based on the run outcome:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Bash returns rc=0 after stages 1-2 with no .pptx; `<draft_dir>/.handoff.json` exists with `phase=throughline_pick` | Working as designed (v0.3.6 halt-and-handoff). The bash halted at the throughline-pick gate awaiting user input. | Proceed to Step 5 (read handoff, ask user via AskUserQuestion, run `continue --pick TLN`). For unattended runs, re-invoke `draft` with `--auto-advance` to skip the gate. |
+| Old `(Pick a throughline (TL1 / TL2 / TL3):` prompt waits forever / errors with `read: ambiguous redirect` | Pre-v0.3.6 bash with TTY-block gate, running in TTY-less context | Upgrade to v0.3.6+ (`pipx install --force git+...@v0.3.6`); the TTY block is gone in v0.3.6. |
 | `slide_spec.json failed schema validation: deprecated 'curated/' segment` | slide_compose emitted a `figures/curated/<name>.png` path | Inspect the failed fragment; either bump `slide_compose.v1.md` or fix the spec by hand and retry with `--resume-from merge` |
 | `asset not found` warnings + draft.pptx with missing pictures | figure path doesn't resolve under draft_dir or project_dir | Check `working/curated_figures.md` for canonical paths; cross-reference against the spec |
 | pipeline halt at `curate_figures` | no figures in any candidate dir | The project needs notebooks that emit savefig calls or REPORT.md with image refs |
