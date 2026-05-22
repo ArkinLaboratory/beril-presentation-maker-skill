@@ -1,6 +1,6 @@
 # beril-presentation-maker — v0.4 Architecture Memo
 
-**Status:** SIGNED OFF — M0 complete 2026-05-12. M1 unblocked.
+**Status:** SIGNED OFF — M0 complete 2026-05-12. **M1 shipped 2026-05-21.** M2 unblocked.
 **Scope:** architectural pivot from per-substory drafting to
 deck-architect-then-parallel-compose. Not a punch list; not code.
 **Relationship to existing docs:**
@@ -756,6 +756,24 @@ State schema bumps to `"version": "0.4"`. Migration script from v0.3.x
 state.json is M6 deliverable; v0.4 runs don't back-migrate v0.3.x
 state.
 
+**Cross-skill path-detection — verified no drift (M1 Tier E1, 2026-05-21).**
+M1 introduces `working/00_phase0/` (Phase-0 staging) and
+`audit/phase0.jsonl`. beril-adversarial's `--type presentation`
+reviewer was checked against this layout: `adversarial_review.sh`'s
+v0.5.2 detection block probes the exact path `working/slide_spec.json`
+and reads fixed paths (`working/03_slides/qa_anticipated.json`,
+`working/04_speaker_notes/`, `narrative/00_throughline.md`,
+`narrative/02_substories.md`) — it never zone-globs or counts
+draft-root entries. `working/00_phase0/` is a sub-subdir of the
+`working/` zone, so it is invisible to the reviewer; `audit/phase0.jsonl`
+does not collide with the reviewer's `audit/adversarial_review.{md,json}`.
+No consumer-update task is needed. The original watchpoint
+(`project_presentation_maker_v0_4_m0.md`) assumed Phase-0 artifacts at
+draft-root `00_phase0/` — a 5th top-level entry; Tier C's correction to
+`working/00_phase0/` dissolved that concern. Reviewer awareness of
+`01_deck_architecture.json` is a genuine M2+ cross-skill item, tracked
+with the architect work.
+
 ### 10.2 Handoff JSON contract preserved
 
 The v0.3.6+ `.handoff.json` shape with `phase`, `prompt_to_user`,
@@ -989,17 +1007,20 @@ presentation-maker's package layout. Smoke against `ibd_phage_targeting`
 in *both work modes* (paper-exists reuse path + no-paper origination
 path). ~1400 LOC vendored + ~340 LOC new + ~65 tests.
 
-**Tier A + Tier B status: SHIPPED 2026-05-12.** Vendor copies + adapter
-+ unit tests landed; pytest reports 66/66 new+adapted tests passing,
-928 total in presentation-maker suite. See `M1_PUNCH_LIST.md` for
-per-tier ship table + watchpoints carried into Tier C.
+**M1 — SHIPPED 2026-05-21.** All five tiers complete: Tier A + Tier B
+(vendor copies + adapter + unit tests, 2026-05-12), Tier C
+(`phase0_reuse.py` helper + `DraftPaths` extension, 2026-05-14), the B6
+model-pin, the post-Tier-C `validate_claim_inventory.py` re-vendor to
+`0.2.0-stage3-tierI` + D-052 numeric-grounding port, the Tier D Step 0
+`extract_claims.v1.md` re-vendor, Tier D (dual-mode smoke — all three
+gates pass: reuse $0 / byte-identical, originate clean on both projects
+with 0 validator repairs), and Tier E (this paperwork). Full suite 991
+passed on Adam's Mac. Per-tier ship tables in `M1_PUNCH_LIST.md`; M1
+retrospective + M2 watchpoints in auto-memory
+`project_presentation_maker_v0_4_m1.md`.
 
-**Tier C + Tier D + Tier E remain ahead:** Tier C is `phase0_reuse.py`
-helper (paper-exists reuse path decision; ~200 LOC + 12 tests). Tier D
-is dual-mode smoke against `ibd_phage_targeting` + `functional_dark_matter`
-with live `claude -p` (≤$0.10/run). Tier E is cross-skill contract drift
-filing on beril-adversarial + LAYOUT.md update + memory entry + MEMORY.md
-index pointer.
+**M2 unblocked:** `deck_architect.v1.md` prompt + `01_deck_architecture.json`
+schema + `check_architecture_drift.py`.
 
 **M1 dependency note (resolved 2026-05-12):** paper-writer M1 §B1 had
 shipped `claim_inventory.py` (per memory `project_paper_writer_v0_8_m1_a1.md`),

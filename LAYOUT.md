@@ -64,6 +64,14 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── poster_fill.py           poster template placeholder fill
 │       │   ├── validate_presentation.py P1–P10 mechanized checks
 │       │   ├── assemble_pptx.py         slide_spec.json → pptx
+│       │   ├── draft_paths.py           4-zone per-draft path resolver (v0.3.1+)
+│       │   ├── extract_methods.py       v0.4 M1: Methods-grounding AST scan
+│       │   │                            (vendored from paper-writer)
+│       │   ├── extract_claims.py        v0.4 M1: claim_inventory.tsv adapter
+│       │   │                            (claude -p extract_claims.v1.md + validator)
+│       │   ├── validate_claim_inventory.py  v0.4 M1: source_notebook validator
+│       │   │                            (vendored; 0.2.0-stage3-tierI)
+│       │   ├── phase0_reuse.py          v0.4 M1: Phase-0 reuse/originate helper
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime)
 │       ├── prompts/
@@ -80,7 +88,9 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── diagram_design.v1.md     Generate slide_spec diagram entries
 │       │   ├── ai_image_prompt.v1.md    Gen + critique prompts for Tier 3
 │       │   ├── fallback_reviewer.v1.md  Inline reviewer if beril-adversarial absent
-│       │   └── rewrite.v1.md            Apply review-driven fixes to slides
+│       │   ├── rewrite.v1.md            Apply review-driven fixes to slides
+│       │   └── extract_claims.v1.md     v0.4 M1: claim extraction (vendored from
+│       │                                paper-writer; consumed by extract_claims.py)
 │       └── references/
 │           ├── presentation-checklist.md  P-tier validators in detail
 │           ├── kbase-brand-tokens.json    colors / fonts / sizes

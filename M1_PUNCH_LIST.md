@@ -658,6 +658,52 @@ D3.b Verify: both artifacts present; audit JSONL shows `decision: originate`; co
 
 **AC:** No-paper mode works on a project where no paper-writer output exists at all; no spurious failures from missing-paper-draft checks.
 
+### Tier D status (shipped 2026-05-21)
+
+| Item | Status |
+|---|---|
+| Step 0 — re-vendor `extract_claims.v1.md` (39 → 79 lines; see Post-Tier-C) | ✅ done |
+| D1 — paper-exists reuse smoke (`ibd_phage_targeting`, $0) | ✅ pass |
+| D2 — no-paper originate smoke (`ibd_phage_targeting --force-originate`) | ✅ pass |
+| D3 — no-paper originate smoke (`functional_dark_matter`) | ✅ pass |
+
+**D1.** `phase0_reuse.py --artifact all` → `talks/draft_pilot_paper_exists/`.
+Both artifacts `decision=reuse` from `papers/draft_2/` — most-recent-wins
+correctly picked `draft_2` (the punch-list `draft_1` assumption was
+stale: paper-writer is at v1.0.0 with `draft_1`,
+`draft_1.pre-tier-s-snapshot`, `draft_2`). Both byte-identical to
+`draft_2/`'s copies; `claim_inventory.tsv` 253 rows; 4-zone layout
+created; idempotent re-run → `decision=no-op rationale=hashes_match`.
+
+**D2.** `--force-originate` → `talks/draft_pilot_no_paper/`.
+`extract_methods` deterministic ($0, 0.19 s). `extract_claims`
+`claude -p` 369 s, exit 0. Validator: **219/219 rows resolve, 0
+repaired, 0 cleared, 0 invalid** — the re-vendored prompt emitted full
+`.ipynb` filenames with zero validator intervention (the Step 0
+payoff).
+
+**D3.** `--force-originate` → `talks/draft_pilot_fdm_no_paper/`.
+`extract_methods` $0/0.22 s. `extract_claims` 225 s, exit 0. Validator:
+**188/188 resolve, 0 repaired, 0 cleared, 0 invalid.** No spurious
+failure from `functional_dark_matter`'s empty `papers/draft_1/` (only
+`.DS_Store`).
+
+**D2c cross-check — written AC superseded.** D1 reuse = 253 rows; D2
+originate = 219. The "byte-equivalent modulo a few notes rows" AC was
+unrealistic for an LLM *extract-every-numeric-claim* pass over a 300 KB
+REPORT. Substantive checks all pass: 0 empty / 0 non-`.ipynb` / 0
+invalid `source_notebook` in both; D2's 31 notebooks ⊂ D1's 32 (no
+invented notebooks); 98 % of D2's numeric tokens (382/388) also in D1.
+Variance is intrinsic — paper-writer's own two `ibd` drafts produced
+341 and 253 claims (35 % spread); D2's 219-vs-253 (13 %) sits inside
+that. Not a port bug; recorded as a documented deviation.
+
+**Cost.** Not captured — `cost_usd: null` in both originate records
+(Tier F5 gap; `extract_claims.py` does not parse stream-json).
+Durations (369 s / 225 s) are the only proxy. Per
+`feedback_cost_record_dont_gate` this is not a gate; the punch-list
+`≤$0.10/run` ceiling is un-checkable from the audit until F5 lands.
+
 ---
 
 ## Tier E — Cross-skill contract drift filing + ship paperwork
@@ -703,6 +749,46 @@ E4.a Write `project_presentation_maker_v0_4_m1.md` capturing: what shipped (the 
 E5.a Add one-line entry under Augmentation stream pointing at E4. Keep it terse (MEMORY.md is at soft-cap).
 
 **AC:** Index updated.
+
+### Tier E status (shipped 2026-05-21)
+
+| Item | Status |
+|---|---|
+| E1 — cross-skill contract-drift check on beril-adversarial | ✅ done — **verified no drift; no task filed** |
+| E2 — LAYOUT.md §1 + §5 | ✅ done |
+| E3 — V0_4_ARCHITECTURE.md §16 + front-matter M1-SHIPPED | ✅ done |
+| E4 — `project_presentation_maker_v0_4_m1.md` auto-memory entry | ✅ done |
+| E5 — MEMORY.md index pointer | ✅ done |
+
+**E1 — verified no drift; no task filed (deviation from the written
+E1).** The punch list and the M0-memo watchpoint said to *file* a
+consumer-update task on beril-adversarial because the new `00_phase0/`
+subdir would affect its `--type presentation` path detection. That
+premise no longer holds. The M0 watchpoint assumed Phase-0 artifacts at
+draft-**root** `00_phase0/` (a 5th top-level entry); Tier C moved them
+to `working/00_phase0/`, inside the `working/` zone.
+`adversarial_review.sh`'s v0.5.2 layout detection (verified by reading
+the script, lines 313-356) probes the exact path
+`working/slide_spec.json` and reads fixed paths
+(`working/03_slides/qa_anticipated.json`, `working/04_speaker_notes/`,
+`narrative/00_throughline.md`, `narrative/02_substories.md`) — it never
+zone-globs or counts draft-root entries. `working/00_phase0/` is
+invisible to it; `audit/phase0.jsonl` does not collide with the
+reviewer's `audit/adversarial_review.{md,json}`. Filing a task would be
+make-work. Verification recorded in V0_4_ARCHITECTURE.md §10.1. The
+genuine cross-skill item — reviewer awareness of
+`01_deck_architecture.json` — is M2+ scope.
+
+**E2.** LAYOUT.md §5 (output routing) already carried
+`working/00_phase0/` + `audit/phase0.jsonl` (added during Tier C). §1
+(repo tree) updated here: `tools/` gains `extract_methods.py`,
+`extract_claims.py`, `validate_claim_inventory.py`, `phase0_reuse.py`,
+`draft_paths.py`; `prompts/` gains `extract_claims.v1.md`. §6
+(state.json) untouched — phase-enum changes land at M2.
+
+**E3.** V0_4_ARCHITECTURE.md §16 M1 entry rewritten to **SHIPPED
+2026-05-21**; front-matter status gained the M1-shipped line; §10.1
+gained the E1 verification note.
 
 ---
 
