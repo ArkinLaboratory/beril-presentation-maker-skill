@@ -254,36 +254,58 @@ invocation creates `draft_{N+1}/`).
 Posters write to `talks/poster_<orientation>_N/` (e.g.,
 `talks/poster_h_1/`, `talks/poster_v_1/`).
 
+Per-draft layout is the v0.3.1+ **4-zone** discipline
+(`deliverable/` `narrative/` `working/` `audit/`) — the top level of
+`draft_N/` has exactly four entries. The canonical source of truth
+for every path is `tools/draft_paths.py` (`DraftPaths` +
+`LAYOUT_SUBDIRS`); the tree below tracks it but `draft_paths.py`
+wins on any disagreement. (This tree was refreshed 2026-05-14 from a
+stale pre-v0.3.1 flat layout that had drifted out of sync; the
+poster tree below may carry the same drift — not yet audited.)
+
 ```
 projects/<project_id>/talks/draft_N/
-├── state.json                  ← stop/resume state, hashes, choices
-├── 00_throughline.md           ← chosen meta-arc + evidence map
-├── 01_outline.md               ← human-reviewable slide-by-slide spec
-├── 02_substories.md            ← substory list with punchlines
-├── slide_spec.json             ← machine-readable, drives python-pptx
-├── speaker_notes.md            ← per-slide notes (100–150 wd default)
-├── notes_provenance.md         ← speaker-note claims ↔ source
-├── qa_prep.md                  ← 10 anticipated questions + answers
-├── cross_tenant_signal.md      ← discovered tenant/DB/project signal
-├── citation_pool.json          ← reused from paper-writer if present
-├── references.md               ← short-form, numbered, on-slide
-├── citation_map.md             ← claim → reference index
-├── reframing_log.md            ← deviations from REPORT (auditable)
-├── throughline_candidates.md   ← rejected alternatives (audit)
-├── image_provenance.json       ← AI-gen prompts + costs + approvals
-├── figures/                    ← curated subset of project figures
-│   └── (symlinks or copies)
-├── diagrams/                   ← procedural diagrams (Tier 2 PNG previews)
-├── ai_images/                  ← AI-generated images (Tier 3, if any)
-├── reviews/                    ← if beril-adversarial run
-│   └── draft_N_review_M.md
-├── audit/                      ← per-call streaming logs, costs
-│   ├── plan.stream.log
-│   ├── throughline.stream.log
-│   ├── slide_compose.stream.log
-│   └── ...
-├── slides.pptx                 ← assembled deck (regen each pass)
-└── slides.pdf                  ← only after `assemble --format pdf`
+├── deliverable/                       ← what the user opens / presents
+│   ├── draft.pptx
+│   ├── draft.pdf                      ←   only after assemble --format pdf
+│   └── speaker-notes.pdf              ←   optional
+├── narrative/                         ← human-readable story (user-editable between revisions)
+│   ├── 00_throughline.md              ←   chosen meta-arc + evidence map
+│   ├── 02_substories.md               ←   substory list with punchlines
+│   ├── references.md                  ←   short-form, numbered, on-slide
+│   ├── bibliography.bib
+│   └── citation_map.md                ←   claim → reference index
+├── working/                           ← intermediate pipeline state
+│   ├── 00_phase0/                     ←   v0.4 M1: Phase-0 reuse/originate staging
+│   │   ├── methods_provenance.md      ←     reused from papers/draft_*/ or originated
+│   │   └── claim_inventory.tsv        ←     written by phase0_reuse.py (see V0_4_ARCHITECTURE.md §4.6)
+│   ├── 00_plan.md
+│   ├── 00_throughline_candidates.md   ←   rejected alternatives (audit)
+│   ├── 03_slides/                     ←   per-substory compose fragments
+│   ├── 04_speaker_notes/              ←   per-substory speaker notes
+│   ├── 05_image_decisions.json        ←   v0.3.3 image-gen decisions
+│   ├── 05_image_requests/             ←   v0.3.3 per-slide request JSONs
+│   ├── 05_images/                     ←   v0.3.3 generated PNGs + manifest.json
+│   ├── slide_spec.json                ←   machine-readable, drives python-pptx
+│   ├── citation_pool.json             ←   reused from paper-writer if present
+│   ├── cross_tenant_signal.{md,json}  ←   discovered tenant/DB/project signal
+│   ├── curated_figures.md             ←   mode-bounded figure shortlist
+│   ├── figures_inventory.md
+│   ├── diagram_repair_report.md
+│   └── next_actions.md                ←   surfaced findings (citation_reality, etc.)
+└── audit/                             ← provenance + debug history
+    ├── state.json                     ←   stop/resume state, hashes, choices
+    ├── cost-log.jsonl
+    ├── stage-metadata.json            ←   v0.3.4.2 consolidated per-stage metadata
+    ├── phase0.jsonl                   ←   v0.4 M1: phase0_reuse + extract_claims invocation log
+    ├── stage-logs/
+    ├── snapshots/                     ←   immutable spec snapshots (+ 03_slides_pre_image_gen/)
+    ├── manual-edits/                  ←   preserved user edits to draft.pptx
+    ├── runs/run-N/summary.json        ←   v0.3.4.2 per-invocation summaries
+    ├── adversarial_review.{json,md}   ←   v3 schema (v0.3.3.1+)
+    ├── quantitative_grounding.{json,md}
+    ├── image_provenance.json          ←   v0.3.3 image-gen append-log
+    └── revise_loop_metadata.json
 ```
 
 For posters:

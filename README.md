@@ -134,6 +134,23 @@ pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-m
 For full operator runbook (prerequisites, troubleshooting, hub
 deployment), see [HUB_INSTALL.md](HUB_INSTALL.md).
 
+## Development
+
+`pipx` (above) is the *skill install* path. To work on the code and
+run the test suite, use a project-local virtualenv:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest -q          # full suite
+```
+
+Invoke the suite (and any helper) through `.venv/bin/python` **by
+explicit path** — on macOS, bare `python3` / `pytest` resolve to a
+PEP-668 system interpreter that lacks the project's deps, and `source
+.venv/bin/activate` does not reliably persist across shells. The
+`.venv/` directory is gitignored.
+
 ## Usage
 
 ```

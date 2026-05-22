@@ -806,3 +806,158 @@ caption discipline; numbers on big_number can be paraphrases of
 REPORT-level numerics.
 
 **Related:** [SPEC](SPEC.md) §6.
+
+---
+
+## D-030 — 2026-05-12 — Discrepancy_register port: NO (paper-Methods-specific)
+
+**Decision:** Do NOT port paper-writer's `discrepancy_register.py` / `audit_discrepancies.v1.md` into presentation-maker. The plan-vs-execution diff surface is load-bearing for paper Methods + Limitations but does not carry the same weight in talks (the `methods_summary` slide and Q&A prep operate at a different abstraction level).
+
+**Rationale:** Paper-writer §4.5 lifts discrepancy detection upstream specifically to prevent Methods/Results/Limitations contradictions during single-pass holistic write. Presentation-maker's architect call is structural, not prose-integrative; the rationale doesn't transfer. Skipping this port keeps M1 scope tight.
+
+**Alternatives considered:** (a) Port for Q&A-prep enrichment (anticipated questions could be calibrated against plan-vs-execution drift) — deferred to v0.5; (b) Vendor as a no-op stub for cross-skill schema parity — overdesign.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §4.0; paper-writer SPEC_v0_8 §4.5.
+
+---
+
+## D-031 — 2026-05-12 — Architect default model is Opus 4.6
+
+**Decision:** `deck_architect.v1.md` defaults to `claude-opus-4-6`. `--architect-model claude-sonnet-4-6` is the cost-sensitive opt-in. Cost: $3.00–$5.00 per architect call vs Sonnet's $1.00–$2.00.
+
+**Rationale:** The architect is the load-bearing cross-cutting planning agent; arc quality at this layer determines whether the parallel composers produce a coherent deck or locally-good slides that miss the through-arc. Paper-writer v0.8's analogous Phase 2 (D-034 Q4) chose Opus for the same kind of integrative-judgment reasons. The cost premium (~$2.70–$4.70 per draft net of today's `plan.v1` + `substory_design.v1` ≈ $0.30) is accepted; partially offset by reduced rewrite cycles when Tier 1 review fails less often.
+
+**Alternatives considered:** Sonnet default with Opus opt-in (memo v1 proposal) — rejected; the deciding factor is that the architect's job is integrative across substories, and "downgrade only when bulk-draft economics dominate" is the right default polarity.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §6.8, §11; paper-writer SPEC_v0_8 D-034 Q4.
+
+---
+
+## D-032 — 2026-05-12 — Composer-architect deviation contract: RIGID
+
+**Decision:** When per-substory `slide_compose` finds the architecture's plan doesn't fit the evidence, it halts with `phase=architecture_conflict`, logs the deviation in `audit/architecture_conflicts.jsonl`, and the orchestrator re-runs the architect with the composer's complaint as amendment input. No advisory mode; no deck-level reconcile pass; composer cannot deviate silently.
+
+**Rationale:** Clean blame attribution + simpler implementation are worth more in v0.4 pilot than the operational flexibility of advisory mode. If the architect's planning quality is high enough that conflicts are rare, the rigid contract pays no cost. If conflicts are frequent, that's a signal the architect prompt needs improvement — fix the cause, not the workaround. Advisory mode reconsidered at v0.5 only if empirical conflict rate justifies the bookkeeping.
+
+**Alternatives considered:** (a) Advisory with logged deviation + post-composition reconcile pass — operational flexibility but weak accountability and another LLM call; (b) Two-pass (composer proposes alternative before doing full compose) — high quality, double latency.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §7.2.
+
+---
+
+## D-033 — 2026-05-12 — Speaker notes fused into per-substory slide_compose worker
+
+**Decision:** One Claude call per substory worker writes both `compose-fragment.v1` JSON and `speaker_notes_seed.v1` JSON for the substory's slide range. Today's separate `slide_compose.v1` + `speaker_notes.v1` calls fuse into one per-substory worker invocation. `speaker_notes.v1.md` prompt content stays, but is invoked inline by the fused composer prompt.
+
+**Rationale:** Composer and notes-author share the same context (architecture + throughline + assigned claims/citations/figures); the LLM's context-loading cost dominates and is paid only once when fused. Halves the per-substory LLM cost without quality loss — speaker-notes seeds are written immediately after the slide compose, in the same Claude conversation, so cross-coupling between slide and notes is tighter than today's two-call pattern.
+
+**Alternatives considered:** Keep separate calls — rejected; doubles cost for no quality gain. Different model per call (e.g., Sonnet for compose + Haiku for notes) — rejected; speaker notes carry evidence anchors and are not Haiku-quality work.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §7.3; SPEC §10 speaker-notes discipline preserved.
+
+---
+
+## D-034 — 2026-05-12 — Revise-verb semantic-invariance post-check
+
+**Decision:** `tools/revise_invariance.py` runs after every `revise` invocation enforcing 5 hard invariants modeled on paper-writer SPEC_v0_8 §11.2: (1) every pre-edit `claim_id` appears in post-edit at the same slide; (2) every citation token preserved byte-identical; (3) numeric tokens monotonically preserved; (4) hedge-marker level per-claim may decrease by ≤1 but not increase or flip scoped → declarative; (5) slide layout MUST NOT change via `revise` (layout changes require re-architecting).
+
+**Rationale:** Per-slot LLM revisions silently change citation tokens, flip hedges, and introduce numeric assertions that weren't on the prior version — and the user is most likely to miss these because they're focused on whether the requested change happened. Programmatic invariance check is small surface, high catch-rate.
+
+**Alternatives considered:** Line-diff cap (paper-writer's v0.7.x pattern) — rejected; too coarse for clarity rewrites. Soft warnings instead of halt — rejected; defeats the safety property.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §13; paper-writer SPEC_v0_8 §11.2.
+
+---
+
+## D-035 — 2026-05-12 — AI Studio model-probe fallback chain
+
+**Decision:** `image_client.py` Google AI Studio provider probes `GET /v1beta/models` at startup, filters for image-capable models, picks `gemini-3-pro-image` if present, else `gemini-2.5-flash-image`, else fails with a clear message naming available models. Resolved choice cached in `state.json` per draft (`ai_image_gen.resolved_model`).
+
+**Rationale:** Adam confirmed gemini-3-pro-image is being deprecated but should be used if available. Hard-coding either name is wrong; probing accommodates Google's model lineage rollovers without code change. Caching avoids per-invocation re-probe overhead.
+
+**Alternatives considered:** Hard-code single model id — brittle. Always probe — unnecessary latency. Manual user selection via `--image-model` — possible override; not the default.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §14.2.
+
+---
+
+## D-036 — 2026-05-12 — Cut-over gate: dominate ≥5 of 7 metrics; wall-clock mandatory primary
+
+**Decision:** v0.4.0 vs v0.3.8 A/B at M6 scores on 7 metrics (wall-clock, token cost, adversarial findings, Tier-1 failure rate, arc coherence, image-budget adherence, paper-review quality). v0.4 must dominate on ≥5 of 7. Wall-clock is the mandatory primary metric — if v0.4 doesn't reduce wall-clock by ≥30% (per D-039), the gate fails regardless of the other 6 scores.
+
+**Rationale:** The parallelism investment must demonstrably pay off in wall-clock; arc-coherence and adversarial findings are softer signals that can be argued. Anchoring on wall-clock prevents the architecture-quality argument from masking failed parallelism.
+
+**Alternatives considered:** ≥6 of 7 (stricter) — rejected for v0.4.0 to leave room for one regression in a multi-axis comparison; reconsider at v0.5 if M6 results suggest the threshold was too loose. ≥4 of 7 (looser) — rejected; defeats the cut-over rigor.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §15.
+
+---
+
+## D-037 — 2026-05-12 — M6 reviewer pool: Adam-only
+
+**Decision:** v0.4.0 M6 cut-over go/no-go is Adam-only. Structured user-centered review (multi-reviewer, naive-reader pass, colleague cross-evaluation) deferred to a post-v0.4.0 launch milestone.
+
+**Rationale:** Matches paper-writer SPEC_v0_8 Q8 / D-034 precedent. M6 is a research-iteration decision, not a public-launch decision; broader review fits the launch event, not the cut-over.
+
+**Alternatives considered:** Multi-reviewer at M6 — rejected for scope creep; the panel-of-one team's bottleneck is cycle time, not reviewer coverage.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §15.
+
+---
+
+## D-038 — 2026-05-12 — State.json phase enum: hard schema bump to "0.4"
+
+**Decision:** `state.json` schema bumps from "0.3" to "0.4". New phase enum: `plan → phase0_tooling → throughline_pick → deck_architect → deck_architecture_pick → composition → review_tier1 → review_tier2 → review_tier3 → assembled` (plus halt states). v0.4 runs do not back-migrate v0.3.x state; a one-way migration script (M6 deliverable) converts v0.3.x state.json into v0.4 shape for in-flight drafts.
+
+**Rationale:** Clean break is operationally simpler than back-compat. The phase enum is structurally different enough (architect phase inserted, composition collapses into a single parallel phase, review tiers explicit) that overlay-compatibility would carry ongoing complexity for no real benefit. Paper-writer SPEC_v0_8 §13 set the precedent.
+
+**Alternatives considered:** Maintain back-compat with optional fields — rejected; the phase enum's semantics shift and back-compat would lie about what the state means.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §10; LAYOUT.md §6 (legacy schema).
+
+---
+
+## D-039 — 2026-05-12 — Wall-clock primary-metric target: ≥30% reduction (hub)
+
+**Decision:** Cut-over gate requires v0.4.0 reduce talk-45 STRONG wall-clock by ≥30% on the hub vs. v0.3.8's verified 222 min baseline. Target hub wall-clock post-pivot: ≤155 min on talk-45 STRONG.
+
+**Rationale:** The honest math (per V0_4_ARCHITECTURE §11.3): V0_4_0_PUNCH_LIST's C1-alone estimate was 60–90 min saved; v0.4 adds 5–15 min from cascade fail-fast + 10–30 min from reduced rewrite cycles. Combined estimated post-pivot hub wall-clock 100–150 min (30–55% reduction range). Setting the target at ≥30% lands at the conservative end of this range with headroom for variance.
+
+**Alternatives considered:** ≥40% (more aggressive) — rejected; not supported by the honest math without claiming savings beyond what parallelism + cascade can deliver. ≥20% — rejected; too lenient to motivate the architectural pivot.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §11.3, §15.
+
+---
+
+## D-040 — 2026-05-12 — Vendor active-path Phase-0 tools from paper-writer at M1
+
+**Decision (REVISED 2026-05-12 as D-040-rev1):** M1 vendors paper-writer's *active production path* for Phase 0, not the deferred M1 §B1 surface. Three vendor copies + one authored adapter:
+
+1. `extract_methods.py` — AST-based methods extraction (still active per paper-writer's draft_4 Stage 1 closure). ~1100 LOC byte-portable.
+2. `extract_claims.v1.md` — 40-line LLM prompt invoked via `claude -p` for claim-inventory production. Paper-writer's `phase_triage` uses this; superseded the regex+demarcation tool.
+3. `validate_claim_inventory.py` — 241-line post-validator (Stage 1 Tier C); clears LLM-fabricated `source_notebook` paths (~10% fabrication rate observed on paper-writer draft_3).
+4. `extract_claims.py` (NEW, ~340 LOC) — adapter wrapping the `claude -p` invocation + chained validator as a standalone tool (paper-writer inlines this logic in orchestrator.py; presentation-maker exposes as a CLI for the M2 orchestrator to call).
+
+DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC regex+LLM-demarcation tool). Paper-writer's STAGED_IMPROVEMENT_PLAN.md Stage 1 Tier E (closed 2026-05-11) deferred this from the active pipeline. We do not revive a deferred path; if presentation-maker hits LLM-extraction quality issues that justify the regex fallback, re-vendor from paper-writer's tree at that point.
+
+**Rationale (rev1):** D-040 v1 was authored at M0 (2026-05-12 morning) on a stale read of paper-writer's state. Paper-writer's `project_paper_writer_v0_8_m1_a1.md` memory entry (2026-05-07) correctly reported `claim_inventory.py` as M1 §B1.abcd shipped — but paper-writer themselves deferred the file from active pipeline on 2026-05-11, one day before our M0. The drift was caught during M1 vendoring when the copied file's lines 4–15 surfaced its STATUS note ("M1-deferred path; not currently called by orchestrator.py"). M0's verification process did not check (a) the file's docstring or (b) paper-writer's most recent improvement-plan doc. Memory entry `feedback_vendor_port_verify_active_path.md` captures the cross-cutting lesson; this D-040-rev1 amends the per-decision record.
+
+**Cost / LOC delta v1 → rev1:** vendored LOC drops from ~3500 to ~1400 (eliminates the 2400-LOC deferred tool); test count drops from 18 vendored (regression-net for deferred path) to ~12-15 authored (active-path coverage that paper-writer themselves lack). Adapter adds ~340 LOC of new code. Net: simpler, smaller, architecturally aligned with paper-writer's current production path.
+
+**Alternatives considered (rev1):** Option B (charge ahead with `claim_inventory.py` as originally planned) — rejected; ships ~2400 LOC of code paper-writer doesn't actively run, creates technical-debt risk if paper-writer later removes the file. Option C (vendor active path + deferred path as fallback) — rejected; overbuilding for v0.4 pilot, can be revisited if LLM extraction quality fails.
+
+**Ship verification 2026-05-12:** All vendored + authored tests passing (66/66 new+adapted across `test_extract_methods.py` + `test_validate_claim_inventory.py` + `test_extract_claims.py`). Full presentation-maker suite: 928 passed, 1 skipped, 2 pre-existing environmental errors unrelated to M1.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §4.4, §4.5, §16 M1; [M1_PUNCH_LIST.md](M1_PUNCH_LIST.md); memory `feedback_vendor_port_verify_active_path.md`; paper-writer `STAGED_IMPROVEMENT_PLAN.md` Stage 1 Tier E.
+
+---
+
+## D-041 — 2026-05-12 — Cut-over A/B must dominate in both work modes
+
+**Decision:** M6 A/B test runs in BOTH work modes — `ibd_phage_targeting` paper-exists mode + `functional_dark_matter` no-paper mode. v0.4.0 must dominate v0.3.8 on ≥5 of 7 metrics IN BOTH MODES separately for the cut-over to pass.
+
+**Rationale:** No-paper mode is the original primary workflow for presentation-maker, not a fallback. If v0.4 wins big in paper-exists mode but regresses in no-paper mode (because, say, Opus architect cost dominates when there's no citation-pool reuse to amortize it), the cut-over should fail — the no-paper workflow must not regress silently. Both modes are first-class production paths.
+
+**Alternatives considered:** Cut-over passes if v0.4 dominates in either mode — rejected; allows silent regression in the harder workflow. Cut-over evaluated in paper-exists mode only — rejected; same reason.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §4.0, §15.
