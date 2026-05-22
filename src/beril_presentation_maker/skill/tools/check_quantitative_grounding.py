@@ -45,6 +45,11 @@ Normalization:
   - "n=" prefixes: "n=142" matches "n = 142" matches "142"
   - Year filter: 4-digit numbers in the range 1900-2099 are skipped
     (citation years are not project claims)
+  - Scientific notation (D-052): "1.1 x 10^-130" matches "1.1e-130"
+  - SI suffixes (D-052, source-side): REPORT's "83K" matches a slide's
+    "83,000"
+  - Trailing zeros (D-052): "82.0" matches "82", "0.30" matches "0.3"
+  - "n=" comma support (D-052): "n=22,751" is not truncated to "n=22"
 
 Limitations (false-positive risk):
   - Paraphrased magnitudes: "17,344" vs "approximately 17k" won't match.
@@ -104,11 +109,127 @@ _NUM_SCIENTIFIC = re.compile(
 # Ratios: 4/4, 18/50
 _NUM_RATIO = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
 
-# n= prefix: n=142, n = 142, N=10
-_NUM_NEQ = re.compile(r"\b[nN]\s*=\s*(\d+(?:\.\d+)?)\b")
+# n= prefix: n=142, n = 142, N=10, n=22,751 (comma support — D-052).
+_NUM_NEQ = re.compile(r"\b[nN]\s*=\s*(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\b")
 
 # Year filter: 4-digit numbers in plausible publication-year range
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+# ---------------------------------------------------------------------------
+# D-052 — surface-form canonicalization
+# ---------------------------------------------------------------------------
+# Ported 2026-05-21 from paper-writer's check_numeric_grounding.py
+# 0.2.0-d052. Collapses scientific-notation, SI-suffix, and trailing-zero
+# variants that the verbatim / substring match forms cannot see —
+# eliminating a class of false "ungrounded number" findings.
+
+# Superscript scientific notation: "1.1 x 10^-130", "2.3 × 10^4". The
+# caret is required (a bare "5 x 1000" is not scientific notation).
+_NUM_SCI_SUPER = re.compile(
+    r"(-?\d+(?:\.\d+)?)\s*[xX×]\s*10\s*\^\s*([-+]?\d+)"
+)
+
+# Generic numeric payload (bare ints / decimals + e-form scientific) —
+# used only by build_numeric_set to index every number in REPORT.md.
+_NUMERIC_PAYLOAD_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+# SI suffix expansion. Applied SOURCE-SIDE ONLY (REPORT.md) so a notebook-
+# shorthand "83K" in the report can ground a slide's "83,000". The
+# lookahead (?=\s|$|[^\w]) guards mid-word collisions: "1.5MHz" keeps its
+# M because the next char is a word char.
+_SI_SUFFIX_MULTIPLIERS: dict[str, int] = {
+    "k": 1_000,
+    "m": 1_000_000,
+    "g": 1_000_000_000,
+    "t": 1_000_000_000_000,
+}
+_SI_SUFFIX_RE = re.compile(r"(\d+(?:\.\d+)?)([KkMmGgTt])(?=\s|$|[^\w])")
+
+
+def _canonical_form(raw: str) -> str:
+    """Canonical string form of a numeric value for set-lookup comparison.
+
+    Collapses representational variants of the same value onto one key:
+      - 82, 82.0, 8.20e1   -> "82"
+      - 0.30, 0.3          -> "0.3"
+      - 1.77e-6, 1.77e-06  -> "1.77e-6"
+      - 1.5 x 10^-43       -> "1.5e-43"
+
+    Strict on truncation: "0.3" is NOT collapsed with "0.302".
+
+    Uses Python's general (%g) format at 10 significant figures — ample
+    for paper-context numbers — then strips leading zeros from the
+    exponent so format()'s "1.77e-06" and the common "1.77e-6" collide.
+
+    Returns `raw` unchanged when it does not parse as a number.
+    """
+    try:
+        v = float(raw)
+    except (ValueError, OverflowError):
+        return raw
+    s = format(v, ".10g")
+    # Strip leading zeros in the exponent: "e-06" -> "e-6", "e+05" -> "e5".
+    s = re.sub(r"e([+-])0+(\d)", r"e\1\2", s)
+    # Drop the explicit "+" in the exponent: "1.5e+10" -> "1.5e10".
+    s = s.replace("e+", "e")
+    return s
+
+
+def _expand_si_suffixes(text: str) -> str:
+    """Expand K/M/G/T SI suffixes to integer form. SOURCE-SIDE ONLY (see
+    _SI_SUFFIX_RE). "83K" -> "83000", "1.5M" -> "1500000". Non-integer
+    products fall back to canonical float form. Pure text substitution;
+    idempotent on already-expanded text."""
+    def expand(m: re.Match) -> str:
+        try:
+            mantissa = float(m.group(1))
+        except ValueError:
+            return m.group(0)
+        value = mantissa * _SI_SUFFIX_MULTIPLIERS[m.group(2).lower()]
+        if value == int(value):
+            return str(int(value))
+        return _canonical_form(str(value))
+    return _SI_SUFFIX_RE.sub(expand, text)
+
+
+def build_numeric_set(text: str) -> frozenset[str]:
+    """Return the set of canonical numeric forms appearing in `text`.
+
+    Used as a final-fallback grounding check (see `_find_in_report`
+    form 7): collapses scientific-notation surface forms, SI suffixes,
+    and trailing-zero variants that the verbatim / substring forms
+    cannot see. Mirrors paper-writer's build_normalized_set (D-052).
+
+    SI-suffix expansion is applied here because this indexes the SOURCE
+    side (REPORT.md). Superscript scientific tokens are extracted first
+    and their spans masked so the bare-number sweep does not re-count
+    the mantissa / "10" / exponent digits as independent values.
+    """
+    expanded = _expand_si_suffixes(text)
+    cleaned = expanded.replace(",", "")
+    out: set[str] = set()
+    masked = list(cleaned)
+    for m in _NUM_SCI_SUPER.finditer(cleaned):
+        try:
+            value = float(f"{m.group(1)}e{m.group(2)}")
+        except (ValueError, OverflowError):
+            continue
+        out.add(_canonical_form(str(value)))
+        for i in range(m.start(), m.end()):
+            masked[i] = " "
+    for m in _NUMERIC_PAYLOAD_RE.finditer("".join(masked)):
+        raw = m.group(0)
+        if raw in ("", "+", "-"):
+            continue
+        out.add(_canonical_form(raw))
+        # Range-dash carve-out: "12.9-28.9" hands the regex "-28.9" with
+        # the dash consumed as a sign; add the unsigned form too so a
+        # slide's "28.9" still grounds. Tier is value-presence, not
+        # sign-correctness.
+        if raw.startswith("-") and len(raw) > 1:
+            out.add(_canonical_form(raw[1:]))
+    return frozenset(out)
 
 
 @dataclass(frozen=True)
@@ -194,8 +315,9 @@ def extract_numbers(text: str) -> list[ExtractedNumber]:
         claimed.append((m.start(), m.end()))
 
     # Pass 1: n= prefixes (most specific; "n=142" should not match as just "142")
+    # D-052: canonical strips thousands-commas ("22,751" -> "22751").
     for m in _NUM_NEQ.finditer(text):
-        _record(m, f"n={m.group(1)}", m.group(1), "n_eq")
+        _record(m, f"n={m.group(1)}", _canonical_int(m.group(1)), "n_eq")
 
     # Pass 2: ratios (4/4, 18/50)
     for m in _NUM_RATIO.finditer(text):
@@ -206,6 +328,13 @@ def extract_numbers(text: str) -> list[ExtractedNumber]:
     for m in _NUM_SCIENTIFIC.finditer(text):
         raw = f"{m.group(1)}e{m.group(2)}"
         _record(m, raw, raw.lower(), "scientific")
+
+    # Pass 3b: superscript scientific notation (1.1 x 10^-130) — D-052.
+    # Claimed before the decimal / integer passes so the mantissa, the
+    # literal "10", and the exponent are not re-extracted as bare numbers.
+    for m in _NUM_SCI_SUPER.finditer(text):
+        canonical = f"{m.group(1)}e{m.group(2)}".lower()
+        _record(m, m.group(0), canonical, "scientific")
 
     # Pass 4: comma-separated integers (57,011)
     for m in _NUM_COMMA_INT.finditer(text):
@@ -243,6 +372,9 @@ class ReportIndex:
     raw_text: str
     normalized_text: str   # commas stripped, lowercased; for fuzzy match
     text_no_approx: str    # also with approximation-prefix words stripped
+    # D-052: canonical numeric forms of every number in REPORT.md, used
+    # by `_find_in_report` form 7 as a surface-form-agnostic fallback.
+    numeric_set: frozenset[str] = field(default_factory=frozenset)
 
 
 def build_report_index(report_path: Path) -> ReportIndex:
@@ -251,7 +383,8 @@ def build_report_index(report_path: Path) -> ReportIndex:
     normalized = raw.replace(",", "").lower()
     no_approx = _strip_approx_prefix(normalized)
     return ReportIndex(raw_text=raw, normalized_text=normalized,
-                       text_no_approx=no_approx)
+                       text_no_approx=no_approx,
+                       numeric_set=build_numeric_set(raw))
 
 
 def _find_in_report(num: ExtractedNumber, idx: ReportIndex) -> dict | None:
@@ -339,6 +472,17 @@ def _find_in_report(num: ExtractedNumber, idx: ReportIndex) -> dict | None:
                                         normalized=idx.normalized_text)
         except ValueError:
             pass
+
+    # 7. Canonical-form fallback (D-052). Collapses trailing-zero,
+    #    scientific-notation surface-form, and SI-suffix variants that
+    #    the verbatim / substring forms above cannot see. Additive and
+    #    last-resort: it only converts a would-be false positive into a
+    #    grounded hit, never the reverse.
+    if num.kind in ("integer", "decimal", "percent", "scientific", "n_eq"):
+        canon = _canonical_form(num.canonical)
+        if canon and canon in idx.numeric_set:
+            return _locate_line(idx.raw_text, canon, "canonical_match",
+                                normalized=idx.normalized_text)
 
     return None
 

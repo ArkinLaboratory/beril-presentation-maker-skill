@@ -122,6 +122,7 @@ def _make_report_index(cqg, text: str):
         raw_text=text,
         normalized_text=text.replace(",", "").lower(),
         text_no_approx=text.replace(",", "").lower(),
+        numeric_set=cqg.build_numeric_set(text),
     )
     return idx
 
@@ -294,3 +295,131 @@ def test_e2e_severity_grading(cqg, fixture_dirs):
     assert sevs.get("5") == "low"
     # 54.3 (percent) → medium
     assert sevs.get("54.3") == "medium"
+
+
+# ---------------------------------------------------------------------------
+# D-052 — numeric-grounding false-positive fixes
+# ---------------------------------------------------------------------------
+# Ported 2026-05-21 from paper-writer's check_numeric_grounding.py
+# 0.2.0-d052. Four surface-form canonicalization classes that produce
+# false "ungrounded" findings when the slide and REPORT.md write the
+# same value differently:
+#   1. superscript scientific notation  (1.1 x 10^-130  vs  1.1e-130)
+#   2. K/M/G/T SI-suffix expansion, source-side  (83K  vs  83,000)
+#   3. trailing-zero canonicalization  (82.0  vs  82)
+#   4. comma support in the n= extractor  (n=22,751  not truncated to n=22)
+
+
+def test_d052_extract_superscript_scientific(cqg):
+    """`1.1 x 10^-130` extracts as ONE scientific number, not three
+    (mantissa / 10 / exponent) bare numbers."""
+    nums = cqg.extract_numbers("p-value 1.1 x 10^-130 observed")
+    sci = [n for n in nums if n.kind == "scientific"]
+    assert len(sci) == 1
+    assert sci[0].canonical == "1.1e-130"
+    # No stray bare numbers from the mantissa / "10" / exponent.
+    assert not any(n.canonical in ("10", "130", "1.1") for n in nums)
+
+
+def test_d052_extract_n_eq_with_comma(cqg):
+    """`n=22,751` extracts as ONE n_eq number (canonical 22751), not a
+    truncated n_eq 22 plus a stray integer 751."""
+    nums = cqg.extract_numbers("cohort n=22,751 patients enrolled")
+    n_eq = [n for n in nums if n.kind == "n_eq"]
+    assert len(n_eq) == 1
+    assert n_eq[0].canonical == "22751"
+    assert not any(n.canonical == "751" for n in nums)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("82.0", "82"),                     # trailing-zero collapse
+        ("82", "82"),
+        ("0.30", "0.3"),
+        ("0.3", "0.3"),
+        ("1.77e-06", "1.77e-6"),            # exponent leading-zero strip
+        ("1.5e-43", "1.5e-43"),
+        ("not-a-number", "not-a-number"),   # passthrough on parse failure
+    ],
+)
+def test_d052_canonical_form(cqg, raw, expected):
+    assert cqg._canonical_form(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected_substr",
+    [
+        ("83K reads", "83000"),
+        ("1.5M cells", "1500000"),
+        ("2G base pairs", "2000000000"),
+    ],
+)
+def test_d052_expand_si_suffixes(cqg, text, expected_substr):
+    """K/M/G/T SI suffixes expand to integer form."""
+    assert expected_substr in cqg._expand_si_suffixes(text)
+
+
+def test_d052_expand_si_suffixes_guards_word_collisions(cqg):
+    """`1.5MHz` must NOT expand — the M is mid-word (lookahead guard)."""
+    assert cqg._expand_si_suffixes("1.5MHz signal") == "1.5MHz signal"
+
+
+def test_d052_build_numeric_set_collapses_variants(cqg):
+    """build_numeric_set collapses scientific / SI / trailing-zero forms
+    to a common canonical key."""
+    s = cqg.build_numeric_set("values: 82.0, 1.1 x 10^-130, 83K, n=22,751")
+    assert "82" in s
+    assert "1.1e-130" in s
+    assert "83000" in s
+    assert "22751" in s
+
+
+def test_d052_e2e_superscript_grounds(cqg, fixture_dirs):
+    """Slide `1.1 x 10^-130`, REPORT `1.1e-130` — grounded, no false
+    positive. Pre-D-052 the slide value tokenized into 1.1 / 10 / 130
+    and the bare `10` was flagged ungrounded."""
+    project_dir, talks_dir = fixture_dirs
+    _write_report(project_dir, "The enrichment p-value was 1.1e-130 overall.")
+    _write_spec(talks_dir, [
+        {
+            "id": 1, "position": 0, "layout": "claim_evidence",
+            "content": {"title": "Significance 1.1 x 10^-130",
+                        "bullets": ["highly enriched"]},
+        },
+    ])
+    report = cqg.check_grounding(talks_dir)
+    assert report.total_ungrounded == 0
+
+
+def test_d052_e2e_si_suffix_source_side_grounds(cqg, fixture_dirs):
+    """Slide `83,000`, REPORT `83K` — SI expansion is source-side, so the
+    REPORT's `83K` grounds the slide's `83,000`."""
+    project_dir, talks_dir = fixture_dirs
+    _write_report(project_dir, "We generated 83K sequencing reads.")
+    _write_spec(talks_dir, [
+        {
+            "id": 1, "position": 0, "layout": "claim_evidence",
+            "content": {"title": "83,000 reads generated",
+                        "bullets": ["deep coverage"]},
+        },
+    ])
+    report = cqg.check_grounding(talks_dir)
+    assert report.total_ungrounded == 0
+
+
+def test_d052_e2e_trailing_zero_grounds(cqg, fixture_dirs):
+    """Slide `82.0`, REPORT `82` — trailing-zero canonicalization grounds
+    it. Form 6 (rounding tolerance) misses this case: REPORT has no
+    decimal point, so its float scan finds nothing to round."""
+    project_dir, talks_dir = fixture_dirs
+    _write_report(project_dir, "We profiled 82 organisms in total.")
+    _write_spec(talks_dir, [
+        {
+            "id": 1, "position": 0, "layout": "claim_evidence",
+            "content": {"title": "Across 82.0 organisms",
+                        "bullets": ["broad sampling"]},
+        },
+    ])
+    report = cqg.check_grounding(talks_dir)
+    assert report.total_ungrounded == 0
