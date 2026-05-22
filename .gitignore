@@ -13,6 +13,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Dev/test virtualenv (see README "Development")
+.venv/
+venv/
+
 # Editors
 .vscode/
 .idea/
@@ -40,3 +44,7 @@ talks/cost-log.jsonl
 # See reference/master-template-source-notes.md §1.
 reference/master-template-source/*.potx
 reference/master-template-source/*.pptx
+
+# Commit-message scratchpads — staging input for `git commit -F`.
+# Kept local; the message itself lives in `git log` once committed.
+.commit-message*.txt
