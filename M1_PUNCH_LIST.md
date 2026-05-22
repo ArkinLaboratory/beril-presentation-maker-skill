@@ -525,6 +525,45 @@ Re-vendored to v1.0.0 state:
 This makes Tier F4 real: `claim_inventory.tsv` rows can now carry a
 `notebook-repaired:` notes prefix. F4 updated below.
 
+### Re-vendor — `extract_claims.v1.md` 39 → 79 lines (source_notebook format rule)
+
+Caught at Tier-D prep (2026-05-21), **not** in the 2026-05-21
+paper-writer v1.0.0 sweep above — the same miss class that sweep was
+meant to close. presentation-maker's B2-vendored prompt (copied
+2026-05-12, 39 lines) predated paper-writer's draft-9 `source_notebook`
+regression fix: paper-writer added a `## source_notebook format rule
+(CRITICAL)` section (~40 lines — exact-`.ipynb`-filename discipline plus
+a worked counter-example table of the bare-stem / parenthetical /
+em-dash / slash-joined failure modes) some time after our copy was
+taken.
+
+This is the **prevention** leg of the draft-9 post-mortem. B6 (model
+pin, 2026-05-14) closed the *model* leg; the `validate_claim_inventory.py`
+re-vendor above closed the *repair* leg; the prompt — the *prevention*
+leg — was missed. Running D2/D3 against the stale prompt would have
+emitted bare-stem `source_notebook` values for the validator to
+repair-or-clear, burning LLM spend to rediscover a known,
+already-fixed-upstream bug.
+
+- **Active-path verified** per `feedback_vendor_port_verify_active_path.md`:
+  paper-writer's `validate_claim_inventory.py` docstring names
+  `extract_claims.v1.md` as the prompt `orchestrator`'s `phase_triage`
+  uses to produce `claim_inventory.tsv`; paper-writer is at v1.0.0, so
+  its on-disk prompt is the v1.0.0 active path.
+- **Byte-exact re-vendor:** `cp` from paper-writer's v1.0.0 copy; the
+  presentation-maker file is now `diff`-identical to it. Purely
+  additive — the weak "…if applicable" qualifier on the
+  source_notebook-mapping line is replaced by the strong section.
+- **No test impact:** `test_extract_claims.py` mocks the `claude -p`
+  subprocess and never asserts on prompt *content* (only that the
+  prompt file exists and `--system-prompt` is passed). 12/12 still
+  green; full-suite test count unchanged.
+- **No `extract_claims.py` `VERSION` bump:** the prompt carries no
+  internal version string, the filename stays `extract_claims.v1.md`,
+  and the re-vendor restores upstream parity rather than introducing
+  new behavior — consistent with how the validator re-vendor above was
+  handled.
+
 ### D-052 port — numeric-grounding false-positive fixes
 
 paper-writer's memo (D-052) flagged four surface-form mismatch classes
