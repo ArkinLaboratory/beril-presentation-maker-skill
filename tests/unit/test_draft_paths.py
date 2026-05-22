@@ -83,6 +83,8 @@ WORKING_ATTRS = (
     "diagram_repair", "next_actions", "slide_spec",
     # v0.3.3 image-gen working-zone artifacts
     "image_decisions_json", "image_manifest_json",
+    # v0.4 M1 Phase-0 staging
+    "phase0_dir", "methods_provenance_phase0", "claim_inventory_phase0",
 )
 AUDIT_ATTRS = (
     "state", "cost_log", "stage_metadata",
@@ -429,6 +431,7 @@ def test_shell_exports_emits_assignments_for_all_paths(tmp_path):
         "DECK_PPTX", "DECK_PDF",
         "THROUGHLINE_PATH", "SUBSTORIES_PATH", "REFERENCES_MD",
         "BIBLIOGRAPHY", "CITATION_MAP",
+        "PHASE0_DIR", "METHODS_PROVENANCE_PHASE0", "CLAIM_INVENTORY_PHASE0",
         "PLAN_PATH", "THROUGHLINE_CANDIDATES",
         "SLIDES_DIR", "SPEAKER_NOTES_DIR",
         "IMAGE_REQUESTS_DIR", "IMAGES_DIR",
@@ -461,3 +464,7 @@ def test_shell_exports_paths_match_python_paths(tmp_path):
     assert pairs["DECK_PPTX"] == str(paths.deck_pptx)
     assert pairs["SLIDE_SPEC"] == str(paths.slide_spec)
     assert pairs["LAST_RENDER_PPTX"] == str(paths.last_render_pptx)
+    # v0.4 M1 Phase-0 staging — value-match (not just presence)
+    assert pairs["PHASE0_DIR"] == str(paths.phase0_dir)
+    assert pairs["METHODS_PROVENANCE_PHASE0"] == str(paths.methods_provenance_phase0)
+    assert pairs["CLAIM_INVENTORY_PHASE0"] == str(paths.claim_inventory_phase0)

@@ -65,6 +65,7 @@ ZONES = ("deliverable", "narrative", "working", "audit")
 # implied; these are the second-level dirs that tools assume exist.
 LAYOUT_SUBDIRS = (
     # narrative/ has only flat files; no subdirs
+    "working/00_phase0",           # v0.4 M1: Phase-0 reuse/originate staging
     "working/03_slides",
     "working/04_speaker_notes",
     "working/05_image_requests",   # v0.3.3 image-gen Channel A staging
@@ -148,6 +149,31 @@ class DraftPaths:
         return self.narrative / "citation_map.md"
 
     # ---- working/ ----
+
+    @property
+    def phase0_dir(self) -> Path:
+        """v0.4 M1: Phase-0 reuse/originate staging directory.
+
+        Holds the two artifacts `phase0_reuse.py` either copies from a
+        sibling `papers/draft_*/` (reuse path) or originates via the
+        vendored tools (originate path): `methods_provenance.md` and
+        `claim_inventory.tsv`. Lives under `working/` (not at draft
+        root) to preserve the 4-zone discipline — V0_4_ARCHITECTURE.md
+        §4.6 originally drafted `talks/draft_N/00_phase0/` at draft
+        root; that conflicted with the exactly-four-zones rule, so the
+        signed-off layout (Adam, 2026-05-12) is `working/00_phase0/`.
+        """
+        return self.working / "00_phase0"
+
+    @property
+    def methods_provenance_phase0(self) -> Path:
+        """v0.4 M1: methods_provenance.md inside the Phase-0 staging dir."""
+        return self.phase0_dir / "methods_provenance.md"
+
+    @property
+    def claim_inventory_phase0(self) -> Path:
+        """v0.4 M1: claim_inventory.tsv inside the Phase-0 staging dir."""
+        return self.phase0_dir / "claim_inventory.tsv"
 
     @property
     def plan(self) -> Path:
@@ -634,6 +660,9 @@ def shell_exports(paths: DraftPaths) -> str:
         ("BIBLIOGRAPHY", paths.bibliography),
         ("CITATION_MAP", paths.citation_map),
         # working/
+        ("PHASE0_DIR", paths.phase0_dir),
+        ("METHODS_PROVENANCE_PHASE0", paths.methods_provenance_phase0),
+        ("CLAIM_INVENTORY_PHASE0", paths.claim_inventory_phase0),
         ("PLAN_PATH", paths.plan),
         ("THROUGHLINE_CANDIDATES", paths.throughline_candidates),
         ("SLIDES_DIR", paths.slides_dir),
