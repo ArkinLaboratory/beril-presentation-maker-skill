@@ -698,11 +698,13 @@ Variance is intrinsic — paper-writer's own two `ibd` drafts produced
 341 and 253 claims (35 % spread); D2's 219-vs-253 (13 %) sits inside
 that. Not a port bug; recorded as a documented deviation.
 
-**Cost.** Not captured — `cost_usd: null` in both originate records
-(Tier F5 gap; `extract_claims.py` does not parse stream-json).
-Durations (369 s / 225 s) are the only proxy. Per
-`feedback_cost_record_dont_gate` this is not a gate; the punch-list
-`≤$0.10/run` ceiling is un-checkable from the audit until F5 lands.
+**Cost.** Not captured for the D2/D3 runs — `cost_usd: null` in both
+originate records (those runs predate F5; `extract_claims.py` then ran
+`--output-format text`). Durations (369 s / 225 s) are the only proxy.
+Per `feedback_cost_record_dont_gate` this is not a gate. **F5 shipped
+2026-05-21 (see Tier F)** — `extract_claims.py` now parses the
+`claude -p --output-format json` envelope's `total_cost_usd`, so
+subsequent originate runs record real `cost_usd`.
 
 ---
 
@@ -800,7 +802,7 @@ Filed for M2:
 - F2. Architect prompt's input wiring (consumes `methods_provenance.md` + `claim_inventory.tsv` from `working/00_phase0/`) lands at M2.
 - F3. State.json v0.4 schema bump lands at M6 per D-038.
 - F4. **M2 architect must distinguish `notebook-repaired:` (good — recovered provenance) from `unresolved-notebook:` (bad — genuinely unresolvable) note prefixes in `claim_inventory.tsv`.** Paper-writer's Tier I repair pass — **vendored 2026-05-21, validator now `0.2.0-stage3-tierI` (see Post-Tier-C section above)** — rewrites `source_notebook` in place to a full real filename on repair and prefixes `notes` with `notebook-repaired: <orig> -> <full>`. Any M2 logic that keys on the `unresolved-notebook:` prefix as the "bad provenance" signal MUST NOT lump the two — a repaired row carries trustworthy provenance. Source: paper-writer team reply 2026-05-14; repair pass now live in-tree.
-- F5. **Wire real stream-json cost parsing into `extract_claims.py`.** Today `invoke_claude_extract()` runs plain `claude -p` and the diagnostic carries no `cost_usd` (Tier B simplification — the same gap paper-writer closed with `_run_claude_p_with_cost`). Consequence: `phase0_reuse.py`'s audit record carries `cost_usd: null` on the claim_inventory originate path. Fix is `--output-format stream-json` + parse the cost line into the diagnostic; then `phase0_reuse.py` can record a real number. Not M1 scope; deliberately kept out of B6 per "subtraction over addition."
+- F5. **Wire real cost parsing into `extract_claims.py` — SHIPPED 2026-05-21** (done as an M1-closeout follow-up, not original M1 scope). `invoke_claude_extract()` now passes `--output-format json` to `claude -p` and parses `total_cost_usd` from the result envelope into the diagnostic's `cost_usd` field via `_parse_cost_from_envelope` — defensive: a telemetry miss falls back to `0.0` + a `cost_note`, never fails the extraction (mirrors paper-writer's `_run_claude_p_with_cost`). `phase0_reuse.py` reads that value back from the shared `phase0.jsonl` (`read_last_extract_claims_cost`) so the claim_inventory originate decision record carries real spend instead of `cost_usd: null`. Both tools → VERSION `0.4.0-m1-tierF5`. +8 tests (4 `_parse_cost_from_envelope`, 3 `read_last_extract_claims_cost`, 1 originate-cost-readback); full suite 999 passed in sandbox. Note: the bullet above originally said "stream-json" — paper-writer's actual production path uses `--output-format json` (a single envelope), which fits `extract_claims.py`'s blocking `subprocess.run`; that is what was ported.
 
 ---
 

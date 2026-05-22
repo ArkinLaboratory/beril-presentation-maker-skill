@@ -427,9 +427,11 @@ def test_artifact_all_runs_methods_then_claims(tmp_path):
     assert {r["artifact"] for r in p0_records} == {
         "methods_provenance", "claim_inventory"
     }
-    # cost_usd contract: methods_provenance originate is deterministic (0.0);
-    # claim_inventory originate is null — extract_claims.py surfaces no real
-    # LLM cost (Tier B simplification; see module docstring + Tier F5).
+    # cost_usd contract: methods_provenance originate is deterministic (0.0).
+    # claim_inventory originate reads cost back from extract_claims' shared
+    # phase0.jsonl record (F5); the _fake_claims mock here writes no such
+    # record, so the read-back yields None. A real run carries the parsed
+    # envelope cost — see test_decide_claim_inventory_originate_records_real_cost.
     by_artifact = {r["artifact"]: r for r in p0_records}
     assert by_artifact["methods_provenance"]["cost_usd"] == 0.0
     assert by_artifact["claim_inventory"]["cost_usd"] is None
@@ -482,3 +484,74 @@ def test_main_bad_project_dir_exits_1(tmp_path):
         "--artifact", "methods_provenance",
     ])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# 18-21 — F5: extract_claims cost read-back
+# ---------------------------------------------------------------------------
+
+def test_read_last_extract_claims_cost_none_when_no_file(tmp_path):
+    """No phase0.jsonl in the audit dir → None."""
+    assert pr.read_last_extract_claims_cost(tmp_path) is None
+
+
+def test_read_last_extract_claims_cost_picks_most_recent(tmp_path):
+    """Returns cost_usd from the most-recent extract_claims llm_extract
+    record; ignores phase0_reuse records and the validator-phase record."""
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    recs = [
+        {"tool": "phase0_reuse", "artifact": "methods_provenance", "cost_usd": 0.0},
+        {"tool": "extract_claims", "phase": "llm_extract", "cost_usd": 0.0411},
+        {"tool": "extract_claims", "phase": "validator", "exit_status": 0},
+        {"tool": "extract_claims", "phase": "llm_extract", "cost_usd": 0.0733},
+    ]
+    with (audit / "phase0.jsonl").open("w", encoding="utf-8") as f:
+        for r in recs:
+            f.write(json.dumps(r) + "\n")
+    assert pr.read_last_extract_claims_cost(audit) == 0.0733
+
+
+def test_read_last_extract_claims_cost_none_when_field_missing(tmp_path):
+    """An extract_claims llm_extract record with no cost_usd → None."""
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    with (audit / "phase0.jsonl").open("w", encoding="utf-8") as f:
+        f.write(json.dumps(
+            {"tool": "extract_claims", "phase": "llm_extract"}
+        ) + "\n")
+    assert pr.read_last_extract_claims_cost(audit) is None
+
+
+def test_decide_claim_inventory_originate_records_real_cost(tmp_path):
+    """claim_inventory originate reads the cost extract_claims wrote to the
+    shared phase0.jsonl and reports it on the decision record (F5)."""
+    proj = _make_project(tmp_path)  # no papers/ → originate
+    talk = _make_talk_draft(tmp_path)
+    tp = DraftPaths.from_draft_dir(talk)
+    tp.init_layout()
+    # claim_inventory precondition: methods_provenance.md must already exist
+    tp.methods_provenance_phase0.write_text("methods\n", encoding="utf-8")
+
+    def _fake_claims(argv):
+        # write the TSV at --output
+        out = Path(argv[argv.index("--output") + 1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("claim_id\tclaim_text\nC1\tx\n", encoding="utf-8")
+        # mimic extract_claims.py appending its own llm_extract record
+        # (carrying the parsed envelope cost) to the shared phase0.jsonl
+        audit_dir = Path(argv[argv.index("--audit-dir") + 1])
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        with (audit_dir / "phase0.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "tool": "extract_claims", "phase": "llm_extract",
+                "cost_usd": 0.0617, "exit_status": 0,
+            }) + "\n")
+        return 0
+
+    with patch.object(pr.extract_claims, "main", side_effect=_fake_claims):
+        record, rc = pr.decide_and_act("claim_inventory", proj, talk)
+
+    assert rc == 0
+    assert record["decision"] == "originate"
+    assert record["cost_usd"] == 0.0617

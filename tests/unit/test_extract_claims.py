@@ -83,7 +83,11 @@ def test_invoke_claude_extract_builds_argv(tmp_path):
     proj = _make_project(tmp_path)
     out = tmp_path / "talks" / "draft_1" / "00_phase0" / "claim_inventory.tsv"
 
-    fake_proc = MagicMock(returncode=0, stdout="ok", stderr="")
+    # F5: --output-format json makes stdout a result envelope with cost.
+    envelope = json.dumps(
+        {"type": "result", "result": "ok", "total_cost_usd": 0.1234}
+    )
+    fake_proc = MagicMock(returncode=0, stdout=envelope, stderr="")
 
     captured_argv = []
     def _fake_run(cmd, **kwargs):
@@ -111,6 +115,9 @@ def test_invoke_claude_extract_builds_argv(tmp_path):
     # context-dependent model — paper-writer's draft_9 regression).
     assert "--model" in captured_argv
     assert captured_argv[captured_argv.index("--model") + 1] == "claude-sonnet-4-6"
+    # F5: --output-format json so the result envelope carries total_cost_usd.
+    assert "--output-format" in captured_argv
+    assert captured_argv[captured_argv.index("--output-format") + 1] == "json"
 
     # Diagnostic shape
     assert diag["tool"] == "extract_claims"
@@ -121,6 +128,9 @@ def test_invoke_claude_extract_builds_argv(tmp_path):
     assert "stdout_tail" in diag
     assert "stderr_tail" in diag
     assert diag["model"] == "claude-sonnet-4-6"
+    # F5: cost parsed from the envelope.
+    assert diag["cost_usd"] == 0.1234
+    assert diag["cost_note"] is None
 
 
 def test_invoke_claude_extract_model_override(tmp_path):
@@ -163,6 +173,8 @@ def test_invoke_claude_extract_records_failure(tmp_path):
     assert diag["exit_status"] == 42
     assert diag["output_present"] is False  # TSV not written
     assert "boom" in diag["stderr_tail"]
+    # F5: empty stdout (no envelope) → cost 0.0, never raises.
+    assert diag["cost_usd"] == 0.0
 
 
 def test_invoke_claude_extract_missing_prompt_raises(tmp_path):
@@ -175,6 +187,41 @@ def test_invoke_claude_extract_missing_prompt_raises(tmp_path):
             output_tsv_path=out,
             prompt_path=tmp_path / "does_not_exist.md",
         )
+
+
+# ---------------------------------------------------------------------------
+# _parse_cost_from_envelope (F5)
+# ---------------------------------------------------------------------------
+
+def test_parse_cost_from_envelope_happy():
+    """A well-formed --output-format json envelope yields the cost, no note."""
+    envelope = json.dumps(
+        {"type": "result", "result": "done", "total_cost_usd": 0.0734}
+    )
+    cost, note = ec._parse_cost_from_envelope(envelope)
+    assert cost == 0.0734
+    assert note is None
+
+
+def test_parse_cost_from_envelope_empty():
+    """Empty stdout → 0.0 + an explanatory note (never raises)."""
+    cost, note = ec._parse_cost_from_envelope("")
+    assert cost == 0.0
+    assert note and "empty" in note
+
+
+def test_parse_cost_from_envelope_unparseable():
+    """Non-JSON stdout → 0.0 + a note; a telemetry miss never fails."""
+    cost, note = ec._parse_cost_from_envelope("not json at all")
+    assert cost == 0.0
+    assert note and "not parseable" in note
+
+
+def test_parse_cost_from_envelope_missing_field():
+    """A valid envelope with no total_cost_usd → 0.0 + a note."""
+    cost, note = ec._parse_cost_from_envelope(json.dumps({"result": "ok"}))
+    assert cost == 0.0
+    assert note and "total_cost_usd" in note
 
 
 # ---------------------------------------------------------------------------

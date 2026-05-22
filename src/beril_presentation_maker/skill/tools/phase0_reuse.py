@@ -89,13 +89,15 @@ Exit codes
 
 cost_usd note
 -------------
-extract_claims.py does not surface real LLM cost (no stream-json
-parsing — a Tier B simplification; the same class of gap paper-writer
-closed with _run_claude_p_with_cost). The claim_inventory ORIGINATE
-record therefore carries ``"cost_usd": null``. reuse / no-op / and the
-methods_provenance originate path are deterministic -> ``0.0``. Wiring
-real cost parsing into extract_claims.py is M1_PUNCH_LIST.md Tier F
-backlog.
+extract_claims.py (F5, 2026-05-21) passes ``--output-format json`` to
+``claude -p`` and parses ``total_cost_usd`` from the result envelope
+into its own ``tool=extract_claims`` ``phase=llm_extract`` record in the
+shared ``phase0.jsonl``. The claim_inventory ORIGINATE decision record
+reads that value back (``read_last_extract_claims_cost``) and reports
+the real spend. It is ``null`` only when the LLM was fast-path-skipped
+(output already present) or the envelope carried no parseable cost.
+reuse / no-op / and the methods_provenance originate path are
+deterministic -> ``0.0``.
 
 Test coverage: tests/unit/test_phase0_reuse.py (vendored-tool
 invocations mocked; no live ``claude -p``).
@@ -115,7 +117,7 @@ from typing import Optional
 from beril_presentation_maker.skill.tools import extract_claims, extract_methods
 from beril_presentation_maker.skill.tools.draft_paths import DraftPaths
 
-VERSION = "0.4.0-m1-tierC"
+VERSION = "0.4.0-m1-tierF5"
 
 # Default model for the claim_inventory originate path. Threaded through
 # to extract_claims.py, which MUST pin the model (see extract_claims.py
@@ -274,6 +276,42 @@ def read_last_phase0_reuse_stamp(
         if rec.get("tool") == "phase0_reuse" and rec.get("artifact") == artifact:
             last = rec
     return last
+
+
+def read_last_extract_claims_cost(audit_dir: Path) -> Optional[float]:
+    """Return ``total_cost_usd`` from the most-recent ``extract_claims``
+    ``llm_extract`` record in ``<audit_dir>/phase0.jsonl``, or None.
+
+    extract_claims.py (F5) appends its own ``tool=extract_claims`` records
+    to the shared ``phase0.jsonl``; the ``phase=llm_extract`` record
+    carries ``cost_usd`` (the ``claude -p`` envelope's ``total_cost_usd``).
+    phase0_reuse reads it back so the claim_inventory ORIGINATE decision
+    record reflects real spend instead of a null placeholder. Returns None
+    when no such record exists (e.g. the LLM was fast-path-skipped) or its
+    cost field is missing / non-numeric.
+    """
+    audit_path = audit_dir / "phase0.jsonl"
+    if not audit_path.is_file():
+        return None
+    cost: Optional[float] = None
+    for line in audit_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            rec.get("tool") == "extract_claims"
+            and rec.get("phase") == "llm_extract"
+        ):
+            raw = rec.get("cost_usd")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                cost = float(raw)
+            else:
+                cost = None
+    return cost
 
 
 def append_audit_record(audit_dir: Path, record: dict) -> None:
@@ -477,9 +515,14 @@ def decide_and_act(
                 f"output_present={output_present} (removed)"
             ),
         ), 2
-    # extract_claims.py does not surface real cost -> null (see docstring).
+    # F5: extract_claims.py parses the claude -p envelope's total_cost_usd
+    # into its own tool=extract_claims llm_extract record in the shared
+    # phase0.jsonl. Read it back so this decision record reflects real
+    # spend. None if the LLM was fast-path-skipped or the envelope lacked
+    # a parseable cost.
+    cost = read_last_extract_claims_cost(audit_dir)
     return _record(
-        "originate", inputs_hashed=inputs_hashed, cost_usd=None,
+        "originate", inputs_hashed=inputs_hashed, cost_usd=cost,
         rationale=rationale,
     ), 0
 

@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Optional
 
 
-VERSION = "0.4.0-m1-tierB.1"  # B6: pinned model in the `claude -p` invocation
+VERSION = "0.4.0-m1-tierF5"  # F5: parse total_cost_usd from the `claude -p` envelope
 
 # Path resolution: prompt + sibling validator both live relative to this
 # module. Mirrors paper-writer's pattern at orchestrator.py:310 / :349.
@@ -97,6 +97,38 @@ def _utc_now_iso() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Cost parsing — claude -p --output-format json envelope (F5)
+# ---------------------------------------------------------------------------
+
+def _parse_cost_from_envelope(stdout: Optional[str]) -> tuple[float, Optional[str]]:
+    """Parse ``total_cost_usd`` from a ``claude -p --output-format json``
+    result envelope.
+
+    Returns ``(cost_usd, cost_note)``. On any parse failure the cost is
+    0.0 and the note explains why — a telemetry miss must never fail the
+    extraction. Mirrors paper-writer's ``_run_claude_p_with_cost``
+    defensive parsing (orchestrator.py).
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return 0.0, "empty stdout — no result envelope"
+    try:
+        envelope = json.loads(text)
+    except json.JSONDecodeError as e:
+        return 0.0, (
+            f"envelope not parseable JSON: {e.msg}; first 200 chars: "
+            f"{text[:200]!r}"
+        )
+    if not isinstance(envelope, dict):
+        return 0.0, f"envelope not a dict ({type(envelope).__name__})"
+    raw = envelope.get("total_cost_usd")
+    # bool is an int subclass — guard against a stray true/false.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 0.0, "envelope missing total_cost_usd"
+    return float(raw), None
+
+
+# ---------------------------------------------------------------------------
 # Subprocess wrapper for `claude -p`
 # ---------------------------------------------------------------------------
 
@@ -117,10 +149,16 @@ def invoke_claude_extract(
     ``claude -p`` resolves a context-dependent default model — the
     root cause of paper-writer's draft_9 regression.
 
-    Returns a diagnostic dict: ``{"exit_status", "stdout", "stderr",
-    "output_present", "duration_sec", "model"}``. Does NOT raise on
-    subprocess failure; the caller decides escalation based on the
-    diagnostic.
+    ``--output-format json`` is passed so stdout is a single result
+    envelope carrying ``total_cost_usd``; that value is parsed into the
+    diagnostic's ``cost_usd`` field (F5). A telemetry miss never fails
+    the call — ``cost_usd`` falls back to 0.0 with a ``cost_note``
+    explaining why.
+
+    Returns a diagnostic dict with ``exit_status``, ``output_present``,
+    ``duration_sec``, ``cost_usd``, ``cost_note``, ``stdout_tail``,
+    ``stderr_tail``, ``model``. Does NOT raise on subprocess failure;
+    the caller decides escalation based on the diagnostic.
     """
     if not prompt_path.is_file():
         raise FileNotFoundError(
@@ -143,6 +181,7 @@ def invoke_claude_extract(
         "--model", model,
         "--system-prompt", system_prompt,
         "--allowedTools", _ALLOWED_TOOLS,
+        "--output-format", "json",  # F5: stdout becomes a cost-bearing envelope
         "--dangerously-skip-permissions",
         user_prompt,
     ]
@@ -159,6 +198,11 @@ def invoke_claude_extract(
     )
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
 
+    # F5: --output-format json makes stdout a single result envelope
+    # carrying total_cost_usd. Parse it defensively — a telemetry miss
+    # must never fail the extraction.
+    cost_usd, cost_note = _parse_cost_from_envelope(proc.stdout)
+
     diag = {
         "tool": "extract_claims",
         "version": VERSION,
@@ -167,6 +211,8 @@ def invoke_claude_extract(
         "duration_sec": duration,
         "exit_status": proc.returncode,
         "output_present": output_tsv_path.is_file(),
+        "cost_usd": cost_usd,
+        "cost_note": cost_note,
         "stdout_tail": (proc.stdout or "")[-1000:],
         "stderr_tail": (proc.stderr or "")[-1000:],
         "claude_bin": claude_bin,
