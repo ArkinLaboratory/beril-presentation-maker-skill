@@ -340,16 +340,22 @@ Notes on the flags:
 
 The pipeline runs 14 stages (`plan` → `throughline` → `substory_design` → `curate_figures` → `citation_pool` → `cross_tenant` → `intro` → `slide_compose` → `qa_prep` → `speaker_notes` → `image_gen` → `merge` → `adversarial_review` → `revise_slides`). Each stage's outputs land in `talks/draft_N/working/`, and the final `.pptx` lands in `talks/draft_N/deliverable/draft.pptx`.
 
-**Wall-clock and cost ranges (v0.3.6, hub-realistic):**
+**Wall-clock and cost ranges (v0.3.8, hub-verified 2026-05-06):**
 
 | Mode + Tier | Wall-clock | Cost |
 |---|---|---|
-| `talk-30 STRONG`, with image-gen + adversarial | 60-120 min | $5-20 |
-| `talk-30 STRONG`, no image-gen, no adversarial | 30-60 min | $2-5 |
-| `talk-45 STRONG`, with image-gen + adversarial | 90-150 min | $10-25 |
-| `lightning-5`, any tier | 20-40 min | $1-3 |
+| `talk-30 STRONG`, full pipeline | 90-150 min | $8-15 |
+| `talk-45 STRONG`, full pipeline | **150-220 min (2.5-3.7h)** | $12-20 |
+| `talk-30 STRONG`, no image-gen, no adversarial | 60-90 min | $4-8 |
+| `lightning-5`, any tier | 25-50 min | $1-3 |
 
-Stage-1 (plan) alone takes 8-10 min on dense projects; don't kill the run if it's "too quiet" for 10 minutes after launch.
+These are end-to-end wall-clock numbers including a 5-15 min cache-warmup on the first run for a project. **Plan generously — talk-45 STRONG can take 3 hours on the hub.** Stage-1 (plan) alone takes 8-15 min on dense projects with figure-rich `REPORT.md` and `RESEARCH_PLAN.md`. Don't kill the run if it's "too quiet" for 15 minutes after launch.
+
+The bottleneck (verified from per-stage timings) is the per-substory fan-out: `slide_compose` and `speaker_notes` each run once per substory (3-5 substories typically), sequentially. Per-substory parallelization is planned for a v0.4.x release; until then expect this segment to dominate wall-clock.
+
+**Iteration is materially cheaper than fresh runs.** The pipeline caches ~1M tokens of project context; first-run pays a ~$2-3 cache-creation cost that subsequent runs skip. A revise-loop iteration is $0.50-2 / 5-15 min per pass — far cheaper than full re-runs. If your deck has structural problems (wrong throughline, missing substory), re-run; if individual slides are weak, use the revise loop.
+
+> **⚠️ Image-gen intermittently failing (2026-05-06).** Some hub runs are hitting CBORG API errors mid-image-gen (root cause under investigation; image-gen succeeded on other hub runs the same week). If a draft halts at image-gen with a CBORG error, resume with `--resume-from image_gen --no-images` to skip the stage cleanly and complete the deck without AI illustrations. The deck is still useful — just no `concept_illustration` slides get generated images. Tracked as task #92.
 
 **Important: the first draft is not presentation-ready.** Plan a hand-edit pass before showing the deck publicly. Known content-level issues that participants should expect to fix manually:
 
@@ -626,10 +632,10 @@ Pipeline halts gracefully at the next LLM call after the cap is reached. Resume 
 
 | Skill / mode | Typical cost | Wall-clock | Notes |
 |---|---|---|---|
-| `presentation-maker draft` talk-30 STRONG, full pipeline | $5-20 | 60-120 min | Image-gen and revise iterations are the swing. v0.3.6: image-gen frequently produces zero illustrations on figure-rich projects (bug #90). |
-| `presentation-maker draft` talk-45 STRONG, full pipeline | $10-25 | 90-150 min | Larger deck → more LLM calls per stage. Verified on ibd_phage_targeting hub run 2026-05-06. |
-| `presentation-maker draft` no image-gen, no adversarial | $2-5 | 30-60 min | Cheapest mode. |
-| `presentation-maker draft` lightning-5 | $1-3 | 20-40 min | 5-6 slides; minimal pipeline. |
+| `presentation-maker draft` talk-30 STRONG, full pipeline | $8-15 | 90-150 min | v0.3.7+ image-gen produces 5-12 illustrations per draft (closes the v0.3.6 zero-illustration bug). |
+| `presentation-maker draft` talk-45 STRONG, full pipeline | $12-20 | 150-220 min (2.5-3.7h) | Verified on ibd_phage_targeting hub run 2026-05-06. Per-substory fan-out is the bottleneck; parallelization tracked for v0.4.x. |
+| `presentation-maker draft` no image-gen, no adversarial | $4-8 | 60-90 min | Cheapest mode. |
+| `presentation-maker draft` lightning-5 | $1-3 | 25-50 min | 5-6 slides; minimal pipeline. |
 | `paper-writer draft` depth=standard, with canonical adversarial | $5-15 | 20-35 min | Verified against shipped v0.7.x trajectory. |
 | `paper-writer draft` depth=standard, `--no-adversarial`, fallback reviewer | $4-10 | 15-25 min | Cheaper; lighter review pass. |
 | `paper-writer draft` depth=deep, with canonical adversarial | $10-25 | 30-50 min | More revise iterations + broader literature checks. |

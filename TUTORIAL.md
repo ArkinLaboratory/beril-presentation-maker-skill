@@ -8,9 +8,24 @@ A skill-specific guide for reading, iterating on, and hand-editing presentation 
 
 **Audience:** Researchers using `/beril-presentation-maker` in Claude Code on the BERIL hub who have already run a draft and want to make the most of it (read the output, iterate cheaply, hand-edit the `.pptx`, troubleshoot).
 
-**Time:** 5 minutes to read; **60-120 minutes for a typical draft run on the hub** (talk-45 STRONG can run 90-150 min); 5-15 minutes per revise-loop iteration.
+**Time:** 5 minutes to read.
 
-**Cost:** $5-20 per draft (talk-30, STRONG, with image-gen + adversarial); $2-5 without image-gen and adversarial; talk-45 STRONG runs typically $10-25. Per-image cost ~$0.014 (CBORG-Gemini). Per-revise-loop iteration $0.50-2.
+**Wall-clock per draft on the hub** (verified 2026-05-06 against `ibd_phage_targeting` talk-45 STRONG end-to-end):
+
+| Mode + Tier | Wall-clock | Cost | Notes |
+|---|---|---|---|
+| `talk-30 STRONG`, full pipeline | 90-150 min | $8-15 | Stages 1-2 are ~30 min (plan-heavy); stages 3-10 dominate; image-gen + adversarial + revise add ~30 min. |
+| `talk-45 STRONG`, full pipeline | **150-220 min (2.5-3.7h)** | $12-20 | Larger deck → more LLM calls per stage. Per-substory fan-out (slide_compose + speaker_notes) is the bottleneck. |
+| `talk-30 STRONG`, no image-gen, no adversarial | 60-90 min | $4-8 | Cheapest mode. Skip image-gen (`--no-images`) and adversarial (`--no-adversarial`). |
+| `lightning-5`, any tier | 25-50 min | $1-3 | 5-6 slides; minimal pipeline. |
+
+Stage-1 (plan) alone takes 8-15 min on dense projects with figure-rich REPORT.md / RESEARCH_PLAN.md (it does method extraction + tier scoring + notebook classification + figure inventory in one big LLM call). **Don't kill the run if it's "too quiet" for 15 minutes after launch.**
+
+**Iteration is materially cheaper than fresh runs.** The pipeline's prompt-cache reuses ~1M tokens of project context per stage; first-run pays a ~$2-3 cache-creation cost that subsequent runs skip. A revise-loop iteration on the same draft is $0.50-2 and 5-15 min per pass — much cheaper than a full re-run.
+
+**Per-revise-loop iteration:** $0.50-2 / 5-15 minutes per pass.
+
+**Per-image cost:** ~$0.014 (CBORG-Gemini) for AI illustrations on `concept_illustration` slides. v0.3.7+ uses an LLM-judgment layer to decide which deferred-layout slides should also get supplemental illustrations; expect 5-12 generated illustrations per talk-45 STRONG draft, adding ~$0.10-0.20 in image-gen cost plus ~30-60s of latency.
 
 **v0.3.6 known limitations** (planned for v0.4.x — set expectations now):
 

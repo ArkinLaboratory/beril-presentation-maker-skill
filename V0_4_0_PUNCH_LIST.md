@@ -1,122 +1,128 @@
 # v0.4.x Punch List
 
-**Last updated:** 2026-05-06
-**Status:** active — opportunistic pre-May-7 ship; v0.3.6 is the safe Thursday floor.
+**Last updated:** 2026-05-06 (post Tier-A ship + diagnostic data review)
+**Current shipped state:** v0.3.8.
+**Status:** active — opportunistic pre-May-7 ship; v0.3.8 is the safe Thursday floor.
 
-## Framing
+## What v0.3.8 ships
 
-v0.3.6 (shipped 2026-05-06) closes the TTY-block bug that was breaking 100% of hub participants. That makes the May 7 event executable. Beyond v0.3.6, anything we ship is **improvement**, not blocker. Each item below has its own go/no-go gate; if any individual fix introduces ship risk inside the 36-hour pre-event window, hold it post-event.
+Three coordinated capabilities now live in main:
 
-The four highest-priority items surfaced by the 2026-05-06 review of the `ibd_phage_targeting` talk-45 deck (memoryless peer-scientist review + image-gen decision diagnostic). Plus the architectural follow-up (#85) which was always slated for post-event.
+- **v0.3.6 halt-and-handoff** at the throughline-pick gate (paper-writer pattern). Fixes 100% TTY-block failure for hub participants.
+- **v0.3.7 image_gen_decision LLM-judgment layer.** Closes the silent "deferred to v0.3.4" bug; figure-rich projects now produce 5-12 AI illustrations instead of 0. Per-call cost ~$0.005-0.01; net per-draft +$0.10-0.20.
+- **v0.3.8 process-detail-bleed post-checker.** Mechanical scan over slide content + speaker_notes for internal-artifact references; advisory output to `<draft_dir>/audit/no_artifact_refs.md`. On the live `ibd_phage_targeting` deck: 30/37 slides flagged with 496 hits across all 6 pattern categories — actionable hand-edit checklist.
+
+861 unit tests passing. Wall-clock per `talk-45 STRONG` end-to-end: ~3.7h on the hub (verified). Cost: $16-20 per draft.
+
+## Gap analysis from May 5-6 live data
+
+Two diagnostic findings reshape what's worth doing next:
+
+1. **Per-substory fan-out is 80% of wall-clock and 86% of cost.** Verified from `audit/runs/run-3/summary.json` on ibd_phage_targeting: stages 3-10 (citation_pool through speaker_notes) ran 158 minutes for $14.23. Within that segment, `slide_compose-S{1,2,3}` and `speaker_notes-S{1,2,3}` are six independent LLM calls that operate on independent substory data and currently run sequentially. Worker-pool parallelization is the single biggest available wall-clock win — estimated 60-90 min saved per draft.
+
+2. **Process-detail bleed lives mostly in speaker notes (50%) and qa_anticipated answers (24%).** Of 497 hits flagged on the live deck, 247 are in speaker_notes and 122 are in qa_anticipated answer fields. Original task #88 (revise-loop bias) was filed at the wrong layer — the bleed is upstream in `qa_prep.v1.md` and `speaker_notes.v1.md` prompts, not in revise. Prompt-rule edits to those two prompts would address ~75% of the remaining post-checker hits.
 
 ## Sequencing — go/no-go decision tree
 
 ```
-v0.3.6 (SHIPPED) — TTY block + halt-and-handoff
+v0.3.8 (SHIPPED 2026-05-06)
   │
-  ├─ Tier A (pre-May-7 IF time allows; independent — can land in either order)
+  ├─ Tier B (pre-May-7 IF time allows; small surface, low risk)
   │   │
-  │   ├─ #90 image_gen_decision LLM-judgment      [ ~6-8h, biggest visible uplift ]
-  │   └─ #87 process-detail-bleed post-checker    [ ~6-8h, biggest perceived-quality uplift ]
+  │   ├─ B1  Docs update — wall-clock from real data            [DONE 2026-05-06]
+  │   ├─ B2  Live-test image-gen LLM-judgment on a fresh project [pending Adam's run]
+  │   ├─ B3  qa_prep.v1.md anti-pattern rule + worked example   [~2-3h, taste-level]
+  │   └─ B4  speaker_notes.v1.md anti-pattern rule + example    [~2-3h, taste-level]
   │
-  ├─ Tier B (pre-May-7 IF Tier A landed cleanly; investigation-only, no ship risk)
+  ├─ Tier C (post-May-7, larger surface or architectural)
   │   │
-  │   └─ #89 wall-clock investigation             [ analysis only — no code ship pre-event ]
+  │   ├─ C1  Per-substory worker-pool for slide_compose +       [~6-8h, biggest wall-clock win]
+  │   │     speaker_notes (#89 fix)
+  │   ├─ C2  state.json + Phase enum (#85, paper-writer parity, [~1.5-2 days, architectural]
+  │   │     replaces single-purpose .handoff.json)
+  │   ├─ C3  Vocabulary-shaped-codes refinement to              [~1-2h, post-checker noise reduction]
+  │   │     check_no_artifact_refs (E\d, S\d in vocab-defined
+  │   │     mode rolled into single deck-level note)
+  │   ├─ C4  finalize_run.py no-op detection (#91)              [~30min, data hygiene]
+  │   ├─ C5  Plan stage refactor (parallelize internal sub-     [~1 day, profile-driven]
+  │   │     tasks; second-biggest wall-clock target)
+  │   └─ C6  Layout cosmetic fixes (#74-77)                     [hand-fixable for May 7;
+  │                                                              v0.4.x cleanup]
   │
-  └─ Tier C (post-May-7, larger scope)
+  └─ Tier D (Adam's call — possibly merge or defer)
       │
-      ├─ #85 state.json + Phase enum (paper-writer parity)
-      ├─ #88 revise-loop caveat-handling rewrite
-      └─ #74-77 layout cosmetic fixes
+      ├─ D1  revise_slide.v1 caveat-handling rewrite (original  [taste-level; defer until C3
+      │     #88 scope before re-targeting)                       lands and we have data]
+      └─ D2  citation_pool stage validator: filename-only        [related to v0.3.8 post-checker;
+            citations flagged                                    integrate post-event]
 ```
 
-## Tier A — high-impact, ship-bounded
+## Pre-event recommendation (next 24h)
 
-### #90 — image_gen_decision LLM-judgment layer
+**Sequence A — minimal additional ship (recommended).**
 
-**Status:** in flight (this conversation)
-**Effort:** 6-8 hours
-**Ship plan:** v0.3.7 (own release; isolated to one Python module + one new prompt)
+1. **Docs update (DONE)** — corrected wall-clock + cost in TUTORIAL.md + PARTICIPANT-RUNBOOK.md per the live `ibd_phage_targeting` data.
+2. **Adam runs a fresh-project draft on the hub** to live-test the v0.3.7 image-gen LLM-judgment calibration. Output:
+   - `<draft_dir>/working/05_image_decisions.json` — confirm `llm_judgment_used: true` and 3-12 emit=true entries on a typical talk-30 STRONG.
+   - Inspect 1-2 generated illustrations for quality.
+3. **If calibration looks right:** stop here. v0.3.8 is the May 7 floor.
+4. **If calibration is off (>50% emit=true on talk-30, or <3 emit=true on talk-45 STRONG):** prompt-iterate `_build_judge_prompt()` and ship as v0.3.9 by Wednesday EOD. Otherwise the docs are honest and the floor is solid.
 
-**Problem.** `image_gen_decision.py` has a `_DEFERRED_LLM_DECISION` frozenset listing 6 layouts (claim_evidence, workflow_diagram, two_column_compare, big_idea, big_number, implications). Current Python returns `emit=false` for all of them with reason "supplemental-image decision deferred to v0.3.4 LLM-judgment layer." The deferred layer was never built. Outcome on `ibd_phage_targeting` talk-45: 15 of 33 candidate slides got rejected → **zero** AI illustrations in a 37-slide deck.
+**Sequence B — opportunistic prompt fixes (if time allows after sequence A).**
 
-**Acceptance criteria.**
-1. New per-slide LLM call for slides whose layout is in `_DEFERRED_LLM_DECISION`. Prompt asks "would a conceptual AI illustration add value beyond what this layout's existing content provides?" with slide title, content, tier, substory context as input. Returns `yes|no` + brief reason.
-2. Cost: ≤$0.01/slide (Sonnet 4.6 short-call); <$0.20 added per draft for typical 15-20 deferred slides.
-3. Calibration on ≥2 projects post-implementation: expect 3-7 illustrations per talk-45 (not 15 — LLM should reject many; >0 is the bar).
-4. Per-slide approval gate downstream still runs (`--auto-approve-images` aware).
-5. Tests: unit-level mock of the LLM call; integration smoke that emit=true is achievable on candidate slides.
+5. **B3 + B4: qa_prep + speaker_notes anti-pattern rules.** Two small prompt-rule edits modeled after slide_compose's existing structure. Per-prompt change is well-scoped (worked example showing artifact-citation → peer-citation substitution). Ship as v0.3.9 docs+prompt patch. Risk: prompt regressions are hard to pre-test; if it ships and underperforms, the post-checker still catches the issue advisory-only.
 
-**Smoke at boundary.** Re-run draft on `ibd_phage_targeting` (or any STRONG project) → expect emit=true on a non-zero subset of deferred-layout slides. Inspect generated illustrations on 1-2 slides for quality.
+If Sequence A reveals image-gen needs prompt iteration, fold B3/B4 into the same v0.3.9 ship to amortize the testing-and-tagging cost.
 
-**Go/no-go gate.** If LLM returns malformed responses on >10% of calls, hold post-event for prompt iteration. If costs spike beyond $0.30/draft, hold for cap revisit.
+**What I'd NOT do pre-event:**
 
-### #87 — process-detail-bleed post-checker + prompt rules
+- Per-substory parallelization (C1). Bash worker-pool patterns are fragile under concurrent LLM calls; needs careful test design. 6-8h focused work + smoke testing. Wrong project to land in <24 hours.
+- state.json refactor (C2). 1.5-2 days. Same reasoning.
+- Plan stage refactor (C5). Profile-driven; we don't have per-stage breakdown data yet to know what to parallelize within plan. Need C1 done first to demonstrate the pattern.
 
-**Status:** specced (#87)
-**Effort:** 6-8 hours
-**Ship plan:** v0.3.8 (independent of #90; can interleave or sequence)
+## Post-event development plan (May 8-21)
 
-**Problem.** Memoryless reviewer flagged ~11 of 37 slides leaking internal artifact names (NB\d+, .ipynb, REPORT.md, .tsv, data/nb, §Pillar, A/H/L/E\d+) into slide bullets, captions, and speaker notes. Reads as internal jargon to peer audiences.
+**Week 1 (May 8-14): impact-ordered.**
 
-**Acceptance criteria.**
-1. New `tools/check_no_artifact_refs.py` post-checker mirroring `check_quantitative_grounding.py` architecture. Regex scan over slide_spec.content + speaker_notes; advisory exit (rc=0 with diagnostic block to stderr); slide+location breakdown.
-2. Wired into orchestrator at merge stage (after slide_spec is final, before assemble).
-3. Prompt rules added to `slide_compose.v1.md` and `revise_slide.v1.md`: explicit anti-pattern + worked example showing artifact-citation → peer-citation substitution. Cite the live failure.
-4. Citation_pool stage validator: any citation entry whose only source is a filename gets flagged (separate from regex check; addresses the deeper "citing files instead of papers" problem).
-5. Tests: regex hit/miss on synthetic specs; integration smoke on a fabricated artifact-laden spec.
+- **Day 1 (May 8):** C1 — per-substory worker pool. Highest-impact single change. Target: 60-90 min off `talk-45 STRONG` wall-clock. Ship as v0.4.0.
+  - Approach: bash background jobs with `wait`; per-substory `claude -p` invocations parallelize. Stream output via per-substory log files; merge in finalize_run.
+  - Testing: smoke on `ibd_phage_targeting` (re-run from substory_design); verify total wall-clock cuts from ~158 min to ~60 min for the per-substory segment.
+  - Risk: rate limits at 3-5 concurrent Sonnet calls. May need to throttle to 2-3.
 
-**Smoke at boundary.** Re-run on `ibd_phage_targeting` slide_spec.json → expect post-checker to flag ~11 slides matching the reviewer's manual-flagged set. Apply prompt rule fixes; re-run draft on a fresh project; verify <5 flagged slides on the new run.
+- **Day 2-3 (May 9-10):** C2 — state.json + Phase enum (paper-writer parity).
+  - Replace single-purpose `.handoff.json` with full state machine.
+  - Migrates substory_overflow gate too (the second TTY block we left in v0.3.6).
+  - Ship as v0.4.1 (or roll into v0.4.0 if C1 is small enough — judge by Day 1 EOD).
 
-**Go/no-go gate.** If prompt changes don't reduce artifact references in a fresh run, hold the prompt edits and ship just the post-checker (informative-only is still valuable for participants doing hand-edits).
+- **Day 4 (May 11):** C3 + C4 — post-checker noise reduction + finalize_run no-op detection. Both small. Ship as v0.4.2.
 
-## Tier B — investigation only, no pre-event ship
+- **Day 5-7 (May 12-14):** D1 + D2 — revise_slide caveat handling + citation_pool validator. Iterative prompt work; multiple cycles with Adam's project tests.
 
-### #89 — wall-clock investigation
+**Week 2 (May 15-21): cosmetic + atlas integration.**
 
-**Status:** specced (#89)
-**Effort:** 2-3 hours analysis
-**Ship plan:** post-event (any code fix from this lands in v0.4.0+; the diagnosis itself is enough)
+- **C6** layout cosmetic fixes (#74-77).
+- **C5** plan stage refactor (post-C1; we'll have parallelization patterns to copy).
+- Cross-skill cleanup pass per the doc-consistency thread.
 
-**Problem.** `ibd_phage_targeting` talk-45 STRONG ran 2+ hours; documented expectation is 45-60 min for talk-30. Stage-1 (plan) alone took 9.6 min — suspect.
+## Continuation philosophy
 
-**Acceptance criteria for this tier:** produce a per-stage cost+wall-clock table (from `audit/stages/stage_metadata.json`), identify the 2-3 longest stages, write a 1-page memo on parallelization opportunities. No code change required pre-event.
+The rhythm that's been working for v0.3.5 → v0.3.8 is **single-ish-issue patches with explicit ship gates**:
 
-**Smoke at boundary.** Memo + table delivered.
+- Each version addresses one identified failure mode (TTY block; deferred-to-NO; process-detail-bleed).
+- Each ships with: source change + tests + smoke against real data + docs update + commit-message file.
+- Each ship has an explicit go/no-go gate (don't tag if test suite drops; don't push if smoke fails).
+- Live test on hub, observe, iterate.
 
-## Tier C — post-event
-
-### #85 — state.json + Phase enum (paper-writer parity)
-
-The full architectural follow-up to v0.3.6's minimal halt-and-handoff. Replaces single-purpose `.handoff.json` with a real state machine; migrates the substory_overflow gate too. ~1.5-2 days of focused work. Tracked separately; does NOT block any of Tier A or B.
-
-### #88 — revise-loop caveat-handling rewrite
-
-Taste-level prompt engineering; defer until #87 + #90 land.
-
-### #74, #75, #76, #77 — layout cosmetic fixes
-
-Hand-fixable in PowerPoint by participants for May 7. Defer until v0.4.x cycle.
-
-## Cumulative scope check
-
-If Tier A lands clean by Wednesday end-of-day, the Thursday hub experience improves materially:
-
-- **Image-gen produces 3-7 illustrations per talk** instead of 0 (#90).
-- **Process-detail bleed flagged** as advisory in the audit log so participants know what to hand-fix (#87 post-checker).
-- **Slide-compose + revise prompts** generate cleaner first drafts (#87 prompt rules).
-
-If only one tier-A item lands clean, prefer #90 — the visible-capability uplift is larger than the perceived-quality uplift from #87.
-
-If neither lands clean, v0.3.6 is the floor and the docs already explain the limitations honestly. No regret path.
+This is producing measurable per-version improvements with no rollbacks. Continue this rhythm post-event. The temptation will be to bundle multiple Tier-C items into a single v0.4.0 — resist; the smaller versions are easier to bisect when something goes wrong.
 
 ## Decision points
 
-- **End of Wed work session (2026-05-06 EOD):** if either #90 or #87 is shippable with clean tests + smoke verified, tag as v0.3.7 / v0.3.8 and push. Otherwise, hold both for v0.4.0 post-event.
-- **Thu morning pre-event:** participant runbook URL pinned to whatever is most recently tagged. v0.3.6 if nothing else shipped, v0.3.7+ if Tier A landed.
-- **Post-event Mon/Tue (May 11-12):** start on #85 architectural rework + #88 / #74-77 cleanup.
+- **End of Wed work session (2026-05-06 EOD):** if Adam's fresh-project hub run validates image-gen calibration, stop development. v0.3.8 is the floor.
+- **Thursday morning pre-event:** participant runbook URL pinned to v0.3.8 (or v0.3.9 if Sequence B shipped).
+- **Mon May 11:** start C1 (per-substory parallelization).
+- **Mid-May:** all of Tier C landed.
 
-## What's out of scope for this punch list
+## What's out of scope
 
 - Cross-skill items (paper-writer's HUB_INSTALL.md, atlas's CONTRACT.md if a real consumer emerges) — those teams own their cycles.
 - BERIL upstream changes — never push.
