@@ -143,46 +143,25 @@ def _resolve_beril_root() -> Path | None:
 
 
 def _resolve_real_draft(beril_root: Path) -> Path | None:
-    """Find a real draft for the live test. Adversarial v0.5.2+
-    detects v0.3.1 layout and requires the complete fragment suite
+    """Find a real draft for the live test. Adversarial v0.5.2+ detects
+    v0.3.1 layout and requires the complete fragment suite
     (qa_anticipated.json, cross_tenant.json, S1_slides.json, etc.) —
-    reproducing that in synthetic fixture would mean reimplementing
-    the orchestrator. Use a real draft instead.
+    reproducing that in synthetic fixture would mean reimplementing the
+    orchestrator. Use a real draft instead.
 
-    Resolution order:
-      1. $TEST_DRAFT_DIR env var (explicit operator override)
-      2. <BERIL_ROOT>/projects/<any>/talks/draft_<latest> if it has
-         the full fragment suite
-      3. None — caller skips
+    M4a Tier D1 (Adam 2026-05-23): EXPLICIT operator opt-in only. The
+    pre-Tier-D auto-discovery walked <BERIL_ROOT>/projects/ looking for
+    any draft with a full fragment suite; if one happened to exist
+    (which is normal mid-development), the test fired a live ~$0.50
+    LLM call during routine `pytest tests/`. Stalled Adam's M3 commit-
+    gate run for 3.5 minutes.
+
+    Returns the draft pointed at by $TEST_DRAFT_DIR, or None (the
+    caller skips). No discovery walk.
     """
     explicit = os.environ.get("TEST_DRAFT_DIR")
     if explicit and Path(explicit).is_dir():
         return Path(explicit)
-    # Auto-discover: walk projects, find latest draft with full fragments
-    projects_dir = beril_root / "projects"
-    if not projects_dir.is_dir():
-        return None
-    for project_dir in sorted(projects_dir.iterdir()):
-        talks_dir = project_dir / "talks"
-        if not talks_dir.is_dir():
-            continue
-        # Prefer most recent draft_N
-        drafts = sorted(
-            (d for d in talks_dir.iterdir() if d.name.startswith("draft_")),
-            key=lambda p: int(p.name.split("_", 1)[1])
-            if p.name.split("_", 1)[1].isdigit() else -1,
-            reverse=True,
-        )
-        for draft in drafts:
-            slides_dir = draft / "working" / "03_slides"
-            if not slides_dir.is_dir():
-                continue
-            # Heuristic: require at least one S<N>_slides.json fragment AND
-            # qa_anticipated.json (the producer's required inputs).
-            has_substory = any(slides_dir.glob("S*_slides.json"))
-            has_qa = (slides_dir / "qa_anticipated.json").is_file()
-            if has_substory and has_qa:
-                return draft
     return None
 
 
@@ -192,14 +171,26 @@ def test_live_adversarial_review_emits_v3_schema(tmp_path):
     presentation` against a real draft, assert (a) exits 0, (b) output
     file exists, (c) JSON parses, (d) schema_version is v3.
 
-    Runs only when `pytest -m integration` is explicitly requested.
-    Costs ~$0.50/run on live LLM (Sonnet review).
+    Costs ~$0.50/run on live LLM (Sonnet review). M4a Tier D1
+    (Adam 2026-05-23): the @pytest.mark.integration marker alone is
+    insufficient gating — pyproject's addopts doesn't deselect
+    integration tests, so `pytest tests/` collected this test, and the
+    pre-D auto-discovery walk picked up a real draft and fired the
+    live LLM call (stalled the M3 commit-gate run 3.5 min). Now gated
+    by TWO explicit opt-ins; both must be set:
+
+      BERIL_PRESENTATION_MAKER_RUN_LIVE=1   ← "yes, I want live LLM
+                                              calls in this pytest run"
+      TEST_DRAFT_DIR=/path/to/real/draft    ← which draft to review
+
+    The first guard makes it impossible to fire a live call
+    accidentally — `TEST_DRAFT_DIR` may legitimately be set for
+    unrelated reasons (e.g., an IDE leftover). The second guard
+    replaces the auto-discovery walk.
 
     Requires:
     - beril-adversarial CLI installed via pipx
     - BERIL_ROOT resolvable ($BERIL_ROOT or spike/beril-extended/)
-    - A real draft on disk (set $TEST_DRAFT_DIR or have any project
-      with a complete v0.3.1+ draft under <BERIL_ROOT>/projects/)
     - CBORG_API_KEY in env (or in BERIL_ROOT/.env)
 
     Pointing at a real draft (vs. synthetic fixture) avoids
@@ -207,6 +198,15 @@ def test_live_adversarial_review_emits_v3_schema(tmp_path):
     requires every per-substory + qa_anticipated + cross_tenant
     fragment once it detects v0.3.1+ layout.
     """
+    # Tier D1: hard gate on the explicit opt-in env var. The marker
+    # alone doesn't keep `pytest tests/` from collecting + running
+    # this test (addopts has no -m filter).
+    if os.environ.get("BERIL_PRESENTATION_MAKER_RUN_LIVE") != "1":
+        pytest.skip(
+            "live LLM test gated behind BERIL_PRESENTATION_MAKER_RUN_LIVE=1 "
+            "(M4a Tier D1 — prevents accidental ~$0.50 spend on routine "
+            "pytest runs)"
+        )
     if not _adversarial_cli_is_installed():
         pytest.skip("beril-adversarial CLI not installed")
     if not _adversarial_cli_has_review_subcommand():
@@ -220,10 +220,10 @@ def test_live_adversarial_review_emits_v3_schema(tmp_path):
     real_draft = _resolve_real_draft(beril_root)
     if real_draft is None:
         pytest.skip(
-            "No complete v0.3.1+ draft found under "
-            f"{beril_root}/projects/. Set $TEST_DRAFT_DIR to a real "
-            "draft path, OR run a full presentation-maker pipeline "
-            "first to populate one."
+            "Set $TEST_DRAFT_DIR to a real v0.3.1+ draft path "
+            "(M4a Tier D1: explicit operator opt-in only; the prior "
+            "auto-discovery walk was removed to prevent accidental "
+            "live LLM spend)."
         )
 
     # Snapshot the real draft's existing audit/adversarial_review.{md,json}
