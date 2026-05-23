@@ -75,6 +75,13 @@
 #                            ~30 images at $0.014 / gemini-3-pro-image).
 #   --image-style <style>    Force style override across all images this run
 #                            (e.g., scientific_illustration / metaphor).
+#   --visual-qa              Run the visual-QA pass after assembly (v0.4 M4a
+#                            Tier C). Renders the deck to per-slide PNGs and
+#                            runs a vision claude -p over them to flag
+#                            render-quality defects (overflow, overlap,
+#                            footer collisions, illegible scale, headline↔body
+#                            mismatch). Advisory (rc=0). Adds ~$0.02-0.05 +
+#                            ~30s per run for a talk-30 deck. Off by default.
 #   --help                   Show this message
 
 set -euo pipefail
@@ -101,6 +108,11 @@ AUTO_APPROVE_IMAGES=0         # bypass per-slide approval gate (CI / power users
 IMAGE_ALLOW_EXPLORATORY=0     # allow concept_illustration on EXPLORATORY tier
 MAX_IMAGE_COST_USD="0.50"     # cumulative cap; default ~30 images at $0.014/each
 IMAGE_STYLE=""                # optional style override forwarded to ai_image_prompt
+
+# v0.4 M4a Tier C — opt-in visual-QA pass (DQ1 — Adam 2026-05-23).
+# Off by default; vision-LLM call + LibreOffice render adds cost per
+# run, so opt-in until M4b's cascade exists (which may absorb it).
+VISUAL_QA=0
 
 CLAUDE_TOOLS="Read,Write,Bash,Grep,Glob,WebSearch,Agent,ToolSearch"
 
@@ -139,6 +151,8 @@ while [[ $# -gt 0 ]]; do
     --image-allow-exploratory) IMAGE_ALLOW_EXPLORATORY=1; shift ;;
     --max-image-cost-usd)    MAX_IMAGE_COST_USD="$2"; shift 2 ;;
     --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
+    # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
+    --visual-qa)         VISUAL_QA=1; shift ;;
     --help)              usage ;;
     -*)                  echo "Error: Unknown option $1" >&2; usage 1 ;;
     *)
@@ -1953,6 +1967,18 @@ stage_merge_and_assemble() {
   echo "  running deck reconciliation check..." >&2
   "$PYTHON_BIN" "$TOOLS_DIR/reconcile_deck.py" \
     "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
+
+  # v0.4 M4a Tier C (DQ1 — opt-in): visual-QA pass. Renders the deck to
+  # per-slide PNGs and runs a vision-capable claude -p over them to flag
+  # render-quality defects (overflow, overlap, footer collision,
+  # illegible scale, headline↔body mismatch). Opt-in via --visual-qa
+  # because the vision-LLM + LibreOffice render adds non-trivial cost
+  # per run; always advisory (rc=0). Writes audit/visual_qa.{md,json}.
+  if [[ "$VISUAL_QA" -eq 1 ]]; then
+    echo "  running visual-QA pass (--visual-qa)..." >&2
+    "$PYTHON_BIN" "$TOOLS_DIR/visual_qa.py" \
+      "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
+  fi
 
   echo "" >&2
   echo "==================================================================" >&2
