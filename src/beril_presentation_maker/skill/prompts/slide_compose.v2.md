@@ -591,6 +591,11 @@ memory; the schema field names matter.
   be a single-step derivation from a REPORT cell. Never aggregate
   numbers by mental arithmetic. THIN tier: include `source_footer`
   with the n / scope qualifier.
+- **Subtitle length (advisory):** ≤80 characters — one short sentence,
+  not a paragraph. The renderer's shrink-to-fit (M4a Tier A) absorbs
+  longer subtitles, but the slot is a single 0.52in band below the
+  big number; brevity is the design intent. The validator emits a
+  soft-warning above 80 chars.
 
 ### `claim_evidence`
 
@@ -719,6 +724,11 @@ Worked example (quadrant matrix):
 - **Authoring rule:** use only when you have a real procedural
   sequence. ≥3 steps. step_caption length is fixed at 3 — even if
   your workflow has 5 steps, summarize as 3 narrative beats.
+- **step_caption length (advisory):** ≤70 characters per caption. The
+  three captions render in a 3-column band ~3.0in wide at y=4.16;
+  longer captions trigger renderer shrink-to-fit and start eating
+  into the tool-version footer. The validator emits a soft-warning
+  above 70 chars/step.
 
 The `diagram` object is **closed-vocabulary**. Use ONLY these values:
 

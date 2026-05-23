@@ -16,7 +16,7 @@ times during M3 Tier E — `deliverable/pngs{,2,3}/`, `pngs4/draft.pdf`).
 | Tier | Scope | Status |
 |---|---|---|
 | A — explicit shrink-to-fit renderer + diagram connector labels | `assemble_pptx.py`, `diagram_render.py` | ✅ committed 2026-05-23 (suite 1058 passed; visual round pending in Tier E) |
-| B — content-length caps (prompts + validator backstops) | prompts, `slide_spec.py` | ⬜ not started |
+| B — content-length caps (prompts + validator backstops) | prompts, `slide_spec.py` | ✅ committed 2026-05-23 (suite 1068 passed; takes effect on next slide_compose/diagram_design/qa_prep run, verified in Tier E) |
 | C — the visual-QA pass | new `tools/visual_qa.py` + `visual_qa.v1.md` | ⬜ not started |
 | D — test-hygiene tidy + Slide-13 verification | `test_adversarial_interop.py` | ⬜ not started |
 | E — end-to-end render smoke on `ibd_phage_targeting` | live | ⬜ not started |

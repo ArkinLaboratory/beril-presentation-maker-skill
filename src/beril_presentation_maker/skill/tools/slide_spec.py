@@ -126,12 +126,24 @@ CONCEPT_CHANNELS: tuple[str, ...] = ("A", "B")  # SPEC §8.3 two-channel
 @dataclass
 class ValidatorIssue:
     """A single contract violation. `path` uses dotted JSON-pointer-ish
-    syntax (`slides[5].content.bullets[2]`) to identify the offending location."""
+    syntax (`slides[5].content.bullets[2]`) to identify the offending location.
+
+    M4a Tier B (DQ4): `severity` distinguishes hard-reject ("error" —
+    blocks render; the v0.3.x behaviour for all issues) from advisory
+    ("soft-warning" — surfaced to the assembler's warnings channel but
+    does not block). The renderer's explicit-fontScale shrink-to-fit
+    (Tier A) is the safety net for the new content-length caps; a
+    slightly-long node label or step_caption should not fail the
+    pipeline after LLM spend. Defaults to "error" so existing callsites
+    keep the v0.3.x semantics.
+    """
     path: str
     message: str
+    severity: str = "error"   # "error" | "soft-warning"
 
     def format(self) -> str:
-        return f"{self.path}: {self.message}"
+        prefix = "" if self.severity == "error" else "[soft-warning] "
+        return f"{prefix}{self.path}: {self.message}"
 
 
 class ValidationError(Exception):
@@ -285,6 +297,22 @@ def _check_diagram(content: dict, key: str, path: str, issues: list[ValidatorIss
                 node_ids.add(node["id"])
             if not _is_str(node.get("label")):
                 issues.append(ValidatorIssue(f"{np}.label", "required non-empty string"))
+            else:
+                # M4a Tier B advisory cap (DQ4): a node label is a short
+                # phrase, not a sentence. The renderer's Tier-A shrink-
+                # to-fit absorbs longer labels toward the 60% floor, but
+                # node boxes are tight (~1.75in wide × 0.8in tall) and
+                # readability degrades fast past ~40 chars.
+                label = node["label"]
+                if len(label) > DIAGRAM_NODE_LABEL_MAX_CHARS:
+                    issues.append(ValidatorIssue(
+                        f"{np}.label",
+                        f"{len(label)} chars; advisory cap "
+                        f"{DIAGRAM_NODE_LABEL_MAX_CHARS} (node boxes are "
+                        f"~1.75in wide; shrink-to-fit absorbs but a phrase "
+                        f"reads better than a sentence).",
+                        severity="soft-warning",
+                    ))
             if node.get("shape") not in DIAGRAM_NODE_SHAPES:
                 issues.append(ValidatorIssue(f"{np}.shape",
                     f"must be one of {DIAGRAM_NODE_SHAPES}, got {node.get('shape')!r}"))
@@ -351,6 +379,15 @@ def _check_big_number(content: dict, path: str) -> list[ValidatorIssue]:
     _check_required_str(content, "subtitle", path, iss)
     _check_optional_str(content, "sub_pointer", path, iss)
     _check_optional_str(content, "source_footer", path, iss)
+    # M4a Tier B advisory cap (DQ4 soft-warning): the subtitle sits in a
+    # fixed 0.52in textbox below the big number; Tier A's _fit_textbox
+    # shrinks long subtitles toward the 60% floor, but the slot reads
+    # most cleanly when the subtitle is one short sentence.
+    _check_advisory_max_chars(
+        content, "subtitle", path, BIG_NUMBER_SUBTITLE_MAX_CHARS,
+        "subtitle slot is 0.52in; >80 chars triggers shrink-to-fit",
+        iss,
+    )
     return iss
 
 
@@ -412,6 +449,57 @@ def _check_two_column_compare(content: dict, path: str) -> list[ValidatorIssue]:
 # assemble_pptx._fill_data_figure is the third layer (belt-and-
 # suspenders) for any case the validator misses or is bypassed.
 DATA_FIGURE_CAPTION_MAX_CHARS = 280
+
+
+# ---------------------------------------------------------------------------
+# M4a Tier B — advisory content-length caps (DQ4 → soft-warning)
+# ---------------------------------------------------------------------------
+#
+# The renderer's explicit-fontScale shrink-to-fit (Tier A) is the safety
+# net — if the LLM emits a slightly-long subtitle / step_caption / node
+# label, the rendered text shrinks rather than spilling past the box.
+# These caps are the BACKSTOP for prompt-drift on the content side:
+# they catch the "the prompt cap was raised but the renderer didn't
+# follow" failure mode that
+# `feedback_prompt_discipline_needs_post_check.md` describes — without
+# failing the pipeline after LLM spend on a length the renderer can
+# absorb. Soft-warning severity (DQ4): surfaced to the assembler's
+# warnings channel and the Tier-C visual-QA pass, but never raised.
+#
+# Pinned alongside DATA_FIGURE_CAPTION_MAX_CHARS (the hard-reject cap —
+# unchanged; that one's the load-bearing 280-char data_figure caption
+# cap from v0.3.5, motivated by a live render failure into the brand
+# strip with no shrink-to-fit fallback at the time).
+
+BIG_NUMBER_SUBTITLE_MAX_CHARS = 80          # ~one short sentence
+WORKFLOW_STEP_CAPTION_MAX_CHARS = 70        # per step (3 steps)
+QA_ANSWER_SUMMARY_MAX_CHARS = 600           # one glance; depth lives in answer_detail
+DIAGRAM_NODE_LABEL_MAX_CHARS = 40           # short phrase, not a sentence
+
+
+def _check_advisory_max_chars(content: dict, key: str, path: str,
+                              max_chars: int, where_note: str,
+                              issues: list[ValidatorIssue]) -> None:
+    """Append a soft-warning if `content[key]` is a string longer than
+    `max_chars`. No-op if the field is missing / not a string.
+
+    DQ4: the renderer's shrink-to-fit (Tier A) absorbs slightly-long
+    strings; this is a backstop against prompt drift, surfaced as
+    advisory so the operator sees it (assembler warnings + Tier-C
+    visual-QA) without failing the pipeline.
+    """
+    val = content.get(key)
+    if not isinstance(val, str):
+        return
+    if len(val) <= max_chars:
+        return
+    issues.append(ValidatorIssue(
+        f"{path}.{key}",
+        f"{len(val)} chars; advisory cap {max_chars} ({where_note}). "
+        f"Renderer shrink-to-fit will absorb the overflow; consider a "
+        f"tighter wording for legibility.",
+        severity="soft-warning",
+    ))
 
 
 def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
@@ -571,6 +659,22 @@ def _check_workflow_diagram(content: dict, path: str) -> list[ValidatorIssue]:
     _check_str_list(content, "step_caption", path, iss,
                     required=True, min_len=3, max_len=3)
     _check_optional_str(content, "tool_version_footer", path, iss)
+    # M4a Tier B advisory cap (DQ4): step_captions render in a 3-column
+    # band at y=4.16, 0.52in tall, ~3.0in wide; >70 chars/step starts
+    # eating into the tool-version footer. Tier A shrink-to-fit
+    # absorbs it; the cap is advisory so prompt drift surfaces.
+    caps = content.get("step_caption")
+    if isinstance(caps, list):
+        for i, cap in enumerate(caps):
+            if isinstance(cap, str) and len(cap) > WORKFLOW_STEP_CAPTION_MAX_CHARS:
+                iss.append(ValidatorIssue(
+                    f"{path}.step_caption[{i}]",
+                    f"{len(cap)} chars; advisory cap "
+                    f"{WORKFLOW_STEP_CAPTION_MAX_CHARS} (one of 3 captions in a "
+                    f"~3.0in column at y=4.16). Renderer shrink-to-fit will "
+                    f"absorb the overflow; consider a tighter wording.",
+                    severity="soft-warning",
+                ))
     return iss
 
 
@@ -724,6 +828,17 @@ def _check_qa_anticipated(content: dict, path: str) -> list[ValidatorIssue]:
     _check_required_str(content, "answer_summary", path, iss)
     _check_required_str(content, "evidence_pointer", path, iss)
     _check_optional_str(content, "answer_detail", path, iss)
+    # M4a Tier B advisory cap (DQ4): answer_summary is the glanceable
+    # slide-face line; depth lives in answer_detail (routed to the
+    # notes pane per M3 E-5). Long summaries trigger the renderer's
+    # adaptive autofit ladder; the cap is advisory to encourage tight
+    # one-glance wording without failing the pipeline.
+    _check_advisory_max_chars(
+        content, "answer_summary", path, QA_ANSWER_SUMMARY_MAX_CHARS,
+        "answer_summary is the slide face; depth belongs in answer_detail "
+        "(notes pane)",
+        iss,
+    )
     return iss
 
 

@@ -997,6 +997,59 @@ def test_overflow_prone_slots_carry_explicit_fontscale(ss, asm, tmp_path):
 
 
 @requires_master
+def test_advisory_soft_warning_flows_to_assembly_warnings(ss, asm, tmp_path):
+    """M4a Tier B (DQ4): a long big_number subtitle emits a soft-warning
+    validator issue; the assembler does NOT raise (renderer Tier A
+    absorbs the overflow) but surfaces the warning through
+    AssemblyResult.warnings so the operator + Tier-C visual-QA pass see
+    it. Mirrors how _fit_textbox clamp-warnings flow."""
+    long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 50)
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "id": 1, "substory_id": None, "layout": "big_number",
+            "content": {"headline": "42", "subtitle": long_subtitle},
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    result = asm.assemble(spec_path, out)  # must not raise
+    assert result.n_slides == 1
+    assert any("subtitle" in w and "advisory cap" in w
+               for w in result.warnings), \
+        f"expected soft-warning surfaced in AssemblyResult.warnings: {result.warnings}"
+
+
+@requires_master
+def test_strict_mode_treats_soft_warnings_as_failures(ss, asm, tmp_path):
+    """--strict is the explicit opt-in to fail on any warning. Soft-
+    warnings flow through .warnings, so --strict raises on them too —
+    by design, the same way it raises on missing-figure warnings."""
+    long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 50)
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "id": 1, "substory_id": None, "layout": "big_number",
+            "content": {"headline": "42", "subtitle": long_subtitle},
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    with pytest.raises(asm.AssemblyError, match="strict"):
+        asm.assemble(spec_path, out, strict=True)
+
+
+@requires_master
 def test_overflow_prone_slots_geometry_clears_footer(ss, asm, tmp_path):
     """M4a Tier A AC: the same slot-busting deck assembles with all text-
     bearing freeform textboxes ending at or above FOOTER_SAFE_BOTTOM

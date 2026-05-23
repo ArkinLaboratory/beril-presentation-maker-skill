@@ -84,7 +84,7 @@ Field rules:
 | `slides[].position` | int | 0-indexed within this Q&A set; orchestrator renumbers |
 | `slides[].layout` | enum | `"qa_anticipated"` (only) |
 | `slides[].content.question` | str | The question, in audience voice |
-| `slides[].content.answer_summary` | str | 100–300 word answer; the slide body |
+| `slides[].content.answer_summary` | str | One-glance answer; ≤600 characters advisory (≈100 words) — the slide body. Depth goes in `answer_detail` (routed to notes pane, M3 E-5). |
 | `slides[].content.answer_detail` | str | Optional. 200–500 words of expansion for the speaker — does NOT appear on the slide; speaker glances at it during Q&A |
 | `slides[].content.evidence_pointer` | str | Specific REPORT / notebook locator |
 | `slides[].weakness_target` | str | Substory + analysis ID this question targets (`S2/A3`) or `cross-deck` for cross-substory questions |
@@ -95,8 +95,12 @@ Field rules:
 - **`question` is in audience voice.** Open with what the audience
   would actually ask ("How do you know…", "What about…", "Did you
   control for…"). Not your meta-frame ("A common question is…").
-- **`answer_summary` ≤300 words** — it appears on the slide and
-  must be readable in 30 seconds.
+- **`answer_summary` ≤600 characters advisory (≈100 words)** — it
+  appears on the slide and must be readable at a glance. M3 E-5
+  routes `answer_detail` to the speaker-notes pane; depth lives
+  there, not on the slide face. The validator emits a soft-warning
+  above 600 chars; the renderer's adaptive autofit absorbs longer
+  but the slide reads tightest at the cap.
 - **`answer_detail` is for the speaker**, not the slide. It expands
   with the deeper-dive content the speaker uses to handle follow-ups.
 - **`weakness_target` must reference a real substory + analysis.**

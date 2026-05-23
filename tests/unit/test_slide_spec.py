@@ -788,3 +788,156 @@ def test_cli_example_known_layout(ss, capsys):
 def test_cli_example_unknown_layout_errors(ss, capsys):
     rc = ss.main(["example", "frobozz"])
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# M4a Tier B — advisory content-length caps (DQ4 soft-warning)
+# ---------------------------------------------------------------------------
+
+def _spec_with_one_slide(ss, slide):
+    return {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [slide],
+    }
+
+
+def test_validator_issue_severity_defaults_to_error(ss):
+    """Existing call sites omit `severity`; default must be hard-error
+    so v0.3.x semantics are preserved."""
+    iss = ss.ValidatorIssue("$.foo", "bad")
+    assert iss.severity == "error"
+
+
+def test_big_number_subtitle_advisory_cap_emits_soft_warning(ss):
+    """80-char advisory cap on big_number subtitle (Tier-A safety net
+    absorbs it; the cap is advisory so prompt drift surfaces)."""
+    long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 20)
+    slide = {"id": 1, "substory_id": None, "layout": "big_number",
+             "content": {"headline": "42", "subtitle": long_subtitle}}
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    soft = [i for i in issues if i.severity == "soft-warning"]
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"expected no errors, got {errors}"
+    assert any("subtitle" in i.path and "advisory cap" in i.message
+               for i in soft), soft
+
+
+def test_big_number_subtitle_at_cap_no_warning(ss):
+    """A subtitle at exactly the cap is fine — no warning."""
+    slide = {"id": 1, "substory_id": None, "layout": "big_number",
+             "content": {"headline": "42",
+                         "subtitle": "x" * ss.BIG_NUMBER_SUBTITLE_MAX_CHARS}}
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    assert all(i.severity == "error" for i in issues) or issues == []
+
+
+def test_workflow_step_caption_advisory_cap_emits_soft_warning(ss):
+    """70-char advisory cap per step_caption (3-column band; renderer
+    shrink-to-fit absorbs)."""
+    long_cap = "x" * (ss.WORKFLOW_STEP_CAPTION_MAX_CHARS + 20)
+    slide = {
+        "id": 1, "substory_id": None, "layout": "workflow_diagram",
+        "content": {
+            "title": "t",
+            "diagram": {
+                "kind": "boxes_and_arrows",
+                "nodes": [
+                    {"id": "n1", "label": "a", "shape": "rounded",
+                     "x": 0.5, "y": 1.4, "w": 1.5, "h": 0.8},
+                    {"id": "n2", "label": "b", "shape": "rounded",
+                     "x": 7.0, "y": 1.4, "w": 1.5, "h": 0.8},
+                ],
+                "edges": [{"from": "n1", "to": "n2", "kind": "straight"}],
+            },
+            "step_caption": [long_cap, "ok", "also ok"],
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    soft = [i for i in issues if i.severity == "soft-warning"]
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"expected no errors, got {errors}"
+    assert any("step_caption[0]" in i.path and "advisory cap" in i.message
+               for i in soft), soft
+
+
+def test_qa_answer_summary_advisory_cap_emits_soft_warning(ss):
+    """400-char advisory cap on qa_anticipated.answer_summary (depth
+    belongs in answer_detail, routed to notes pane per M3 E-5)."""
+    long_ans = "x" * (ss.QA_ANSWER_SUMMARY_MAX_CHARS + 50)
+    slide = {
+        "id": 1, "substory_id": None, "layout": "qa_anticipated",
+        "content": {
+            "question": "q?",
+            "answer_summary": long_ans,
+            "evidence_pointer": "Substory 1",
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    soft = [i for i in issues if i.severity == "soft-warning"]
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"expected no errors, got {errors}"
+    assert any("answer_summary" in i.path and "advisory cap" in i.message
+               for i in soft), soft
+
+
+def test_diagram_node_label_advisory_cap_emits_soft_warning(ss):
+    """40-char advisory cap on diagram node label (a phrase, not a
+    sentence)."""
+    long_label = "x" * (ss.DIAGRAM_NODE_LABEL_MAX_CHARS + 10)
+    slide = {
+        "id": 1, "substory_id": None, "layout": "workflow_diagram",
+        "content": {
+            "title": "t",
+            "diagram": {
+                "kind": "boxes_and_arrows",
+                "nodes": [
+                    {"id": "n1", "label": long_label, "shape": "rounded",
+                     "x": 0.5, "y": 1.4, "w": 1.5, "h": 0.8},
+                    {"id": "n2", "label": "b", "shape": "rounded",
+                     "x": 7.0, "y": 1.4, "w": 1.5, "h": 0.8},
+                ],
+                "edges": [{"from": "n1", "to": "n2", "kind": "straight"}],
+            },
+            "step_caption": ["a", "b", "c"],
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    soft = [i for i in issues if i.severity == "soft-warning"]
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"expected no errors, got {errors}"
+    assert any("nodes[0].label" in i.path and "advisory cap" in i.message
+               for i in soft), soft
+
+
+def test_data_figure_caption_remains_hard_error(ss):
+    """The pre-existing DATA_FIGURE_CAPTION_MAX_CHARS=280 hard-reject
+    is unchanged by Tier B (it's load-bearing for the no-shrink render
+    of the data_figure caption — v0.3.5; see slide_spec.py docstring)."""
+    long_cap = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)
+    slide = {
+        "id": 1, "substory_id": None, "layout": "data_figure",
+        "content": {
+            "title": "t",
+            "figure": "figures/x.png",
+            "caption": long_cap,
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    # The caption check appends an error-severity issue (no `severity=`
+    # keyword passed → default "error").
+    errors = [i for i in issues if i.severity == "error"
+              and "caption" in i.path]
+    assert errors, f"expected hard error on long data_figure caption, got {issues}"
+
+
+def test_validator_issue_format_marks_soft_warnings(ss):
+    """ValidatorIssue.format() prefixes soft-warnings so they're visible
+    in the assembler's error/warning channels."""
+    err = ss.ValidatorIssue("$.foo", "bad")
+    soft = ss.ValidatorIssue("$.bar", "advisory", severity="soft-warning")
+    assert not err.format().startswith("[soft-warning]")
+    assert soft.format().startswith("[soft-warning]")

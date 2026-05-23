@@ -100,7 +100,7 @@ Field rules — diagram-specific (validator-blocking):
 | `diagram.kind` | str | `"boxes_and_arrows"` (only kind in v1) |
 | `diagram.nodes[]` | array | ≥1; ≤8 (more crowds the slide) |
 | `diagram.nodes[].id` | str | Non-empty; unique within nodes |
-| `diagram.nodes[].label` | str | Non-empty; ≤30 chars per line; `\n` for line break |
+| `diagram.nodes[].label` | str | Non-empty; ≤30 chars per line, ≤40 chars total advisory (renderer shrink-to-fit absorbs longer; node boxes are ~1.75in wide); `\n` for line break |
 | `diagram.nodes[].shape` | enum | `rectangle \| rounded \| ellipse \| parallelogram \| cylinder \| callout \| swimlane` |
 | `diagram.nodes[].x, y` | num | Inches from slide top-left; ≥0 |
 | `diagram.nodes[].w, h` | num | Inches; ≥0.5 (smaller is unreadable) |

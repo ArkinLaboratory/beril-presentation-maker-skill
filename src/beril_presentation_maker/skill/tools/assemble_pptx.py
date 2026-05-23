@@ -1695,16 +1695,29 @@ def assemble(slide_spec_path: str | Path,
 
     spec = json.loads(slide_spec_path.read_text(encoding="utf-8"))
 
-    # Pre-flight validation
+    # Pre-flight validation.
+    # M4a Tier B (DQ4): ValidatorIssue.severity splits hard-reject
+    # ("error") from advisory ("soft-warning"). Errors still raise
+    # AssemblyError (the v0.3.x behaviour for all issues; DATA_FIGURE_
+    # CAPTION_MAX_CHARS is the only pre-existing hard-reject and stays
+    # one). Soft-warnings surface through the AssemblyResult.warnings
+    # channel — the same channel the Tier-A _fit_textbox clamp warning
+    # uses, and the same channel the Tier-C visual-QA pass will read.
     ss = _load_slide_spec_module()
     issues = ss.validate_slide_spec(spec)
-    if issues:
+    errors = [i for i in issues if getattr(i, "severity", "error") == "error"]
+    soft_warnings = [i for i in issues if getattr(i, "severity", "error") == "soft-warning"]
+    if errors:
         raise AssemblyError(
             f"slide_spec.json failed schema validation "
-            f"({len(issues)} issue(s)):\n  "
-            + "\n  ".join(i.format() for i in issues[:20])
-            + ("\n  ..." if len(issues) > 20 else "")
+            f"({len(errors)} error(s)):\n  "
+            + "\n  ".join(i.format() for i in errors[:20])
+            + ("\n  ..." if len(errors) > 20 else "")
         )
+    # Surface advisory soft-warnings (DQ4) to the assembler warnings
+    # channel so they appear in AssemblyResult.warnings alongside
+    # _fit_textbox clamp warnings and missing-asset warnings.
+    soft_warning_messages = [i.format() for i in soft_warnings]
 
     # Poster mode dispatches to poster_fill (separate render path per
     # SPEC §12 / D-013). Posters skip the slide-by-slide handler loop.
@@ -1740,7 +1753,10 @@ def assemble(slide_spec_path: str | Path,
     # resolution against project_dir = draft_N/../../. Walk up if we see the
     # working/ subdir.
     draft_dir = _derive_actual_draft_dir(slide_spec_path.parent)
-    warnings: list[str] = []
+    # M4a Tier B: seed `warnings` with the validator's advisory soft-
+    # warnings (DQ4) so they appear alongside handler warnings in the
+    # AssemblyResult and on the assembler banner.
+    warnings: list[str] = list(soft_warning_messages)
 
     for slide_data in spec["slides"]:
         layout_name = slide_data["layout"]
