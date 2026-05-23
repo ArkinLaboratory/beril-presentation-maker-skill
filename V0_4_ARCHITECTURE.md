@@ -1280,30 +1280,52 @@ not the composer.
 ### 20.7 Probe evidence
 
 The outline probe (`experiments/m2-outline-probe/` — README has the
-full method) composed 3 `ibd_phage_targeting` substories under two
-conditions: **B** naive parallel (no prior fragments, no outline) and
-**C** with the hand-written outline. 6 `claude -p` calls, $2.93 total.
+full method) composed 3 `ibd_phage_targeting` substories with
+`slide_compose.v1.md`, over two runs:
 
-C beat B on every dimension M2-lite targets, with none favoring B:
+- **Run 1 (2026-05-23):** conditions **B** (naive parallel — no prior
+  fragments, no outline) and **C** (with the hand-written outline).
+  6 calls, $2.93.
+- **Run 2 (2026-05-23):** conditions **A** (today's sequential
+  pipeline — `PRIOR_SUBSTORY_OUTPUTS` chained), **B**, **C**. 9 calls,
+  $3.96.
 
-- **Transitions** — C/S2 produced an explicit "Bridge from S1" tee-up;
-  B/S2 opened cold. (S2→S3: both bridged; C more specific.)
-- **Headline-stat placement** — C promoted the outline's prescribed
-  numbers (8,489 sample count, 88.2% replication) to `big_number`
-  slides; B buried them in `claim_evidence` / `two_column` titles.
-- **Slide-budget discipline** — C hit the 5-slide S3 budget; B overran
-  to 6.
-- **Structural consistency** — C used a uniform section-opening layout
-  + `big_number` headline treatment across all three sections; B
-  varied.
+**Transitions — A ≈ C > B.** Both A and C produced explicit lead-in
+bridges (run 2: `A_S2` and `C_S2` both open with a "Bridge from S1"
+tee-up; `B_S2` opened cold on its own terms — consistent with run 1).
+A bridges because today's *sequential* composer sees the prior
+substory's actual composed fragment; C bridges because it has the
+outline. B — naive parallel — has neither and loses the transition.
 
-Hedge discipline was *not* a differentiator — both arms handled
-partial-evidence claims well. Caveat: n=1, LLM non-determinism — this
-is a directional read, not statistical; its weight comes from being
-consistent across four independent dimensions. A condition-A
-regression reference (today's sequential pipeline, `PRIOR_SUBSTORY_-
-OUTPUTS` chained) was run separately to confirm M2-lite does not
-regress vs today's coherence; result recorded with the probe.
+The decisive reading: **M2-lite does not regress vs today's pipeline,
+and its real value is coordination-preservation under parallelism.**
+A gets good transitions *only* by being sequential — it cannot be
+parallelized without becoming B. C gets the same transition quality
+*and* is parallelizable. M2-lite is the layer that lets M3 parallelize
+without dropping to B-grade coordination — exactly the "coordination
+layer that makes parallelism safe" §1.3 posited, now evidenced.
+
+**Other dimensions.** C follows the outline's headline-slot
+prescriptions where there is a real choice — only C made the 8,489
+sample count S1's `big_number` (A used 73%, B none); the 88.2% S2
+headline was picked by all three because it is the obvious choice. C
+is consistently the most structurally uniform (uniform section-opening
+layout in both runs). Hedge discipline is *not* a differentiator — all
+three handle partial-evidence claims well.
+
+**Corrected from the run-1 single-run read.** Run 1 suggested C beat B
+on slide-budget discipline (B overran S3 to 6 slides). Run 2 did not
+replicate this — all three conditions hit the 5-slide S3 budget. The
+overrun was LLM non-determinism, not a systematic naive-parallel
+defect; budget is *not* a reliable C-vs-B differentiator.
+
+**Confidence.** n=2 runs; LLM non-determinism is real (the budget
+finding is a live example of why n>1 matters). The findings that
+*replicated* — `A ≈ C > B` on transitions, C the most structurally
+uniform — are the load-bearing evidence for D-042. The verdict (build
+M2-lite) holds: parallelization without M2-lite drops to B-grade
+coordination; M2-lite restores A-grade coordination while keeping
+parallelism.
 
 ---
 
