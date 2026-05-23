@@ -1,0 +1,144 @@
+{
+  "schema_version": "compose-fragment.v1",
+  "substory_id": "S2",
+  "substory_punchline": "Within-ecotype, within-substudy meta-analysis surfaces six actionable pathobionts that replicate at 88% on a held-out cohort",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "section_divider",
+      "content": {
+        "punchline": "Within-ecotype, within-substudy meta-analysis surfaces six actionable pathobionts that replicate at 88% on a held-out cohort",
+        "substory_number": 2
+      },
+      "speaker_notes_seed": "Lead in from S1's close: 'the ecotypes are a usable framework, not bit-reproducible — the operational question is whether the targets inside each ecotype replicate.' Answer that directly here: the answer is yes, at 88.2%, on a genuinely held-out cohort. The key methodological move is the within-ecotype × within-substudy design — it strips the confound that naive cross-cohort DA would carry. This section covers how the analysis was designed (position 1), what it found (positions 2–3), and where the honest limits are (position 4).",
+      "evidence_anchors": []
+    },
+    {
+      "position": 1,
+      "layout": "workflow_diagram",
+      "content": {
+        "title": "Within-ecotype × within-substudy design strips cross-cohort confounds from target discovery",
+        "diagram": {
+          "kind": "boxes_and_arrows",
+          "nodes": [
+            {
+              "id": "input",
+              "label": "cMD IBD studies\n(4 sub-studies with CD + nonIBD)",
+              "shape": "parallelogram",
+              "x": 0.6,
+              "y": 1.8,
+              "w": 2.0,
+              "h": 1.0
+            },
+            {
+              "id": "stratify",
+              "label": "Stratify samples\nby ecotype (E0–E3)",
+              "shape": "rectangle",
+              "x": 3.0,
+              "y": 1.8,
+              "w": 2.0,
+              "h": 1.0
+            },
+            {
+              "id": "meta",
+              "label": "Within-ecotype,\nwithin-substudy DA\n(NB04e meta-analysis)",
+              "shape": "rectangle",
+              "x": 5.4,
+              "y": 1.8,
+              "w": 2.0,
+              "h": 1.0
+            },
+            {
+              "id": "score",
+              "label": "NB05 multi-criteria\nscoring (score ≥ 2.5\n→ Tier-A actionable)",
+              "shape": "rectangle",
+              "x": 7.8,
+              "y": 1.8,
+              "w": 2.0,
+              "h": 1.0
+            }
+          ],
+          "edges": [
+            {"from": "input",    "to": "stratify", "kind": "straight"},
+            {"from": "stratify", "to": "meta",     "kind": "straight"},
+            {"from": "meta",     "to": "score",    "kind": "straight", "label": "51 E1 candidates"}
+          ]
+        },
+        "step_caption": [
+          "Ecotype stratification isolates biologically comparable subpopulations before DA",
+          "Within-substudy contrast removes cohort-specific technical and dietary confounds",
+          "Four-criteria NB05 scoring (literature + engraftment + strain-adaptation + BGC) thresholds to 6 actionable targets"
+        ],
+        "tool_version_footer": "curatedMetagenomicData v3.18 · networkx 3.5"
+      },
+      "speaker_notes_seed": "The critical design choice is nesting: DA is run within ecotype AND within substudy simultaneously. Naive cross-cohort DA conflates population-composition differences between studies (geography, diet, medication) with disease signal. NB04e uses 4 IBD sub-studies that each have both CD and nonIBD arms; E1 DA runs on HallAB_2017 + NielsenHB_2014 (82 CD / 280 nonIBD), yielding 51 sign-concordant candidates. NB05 then applies 4 criteria: literature/cohort CD-association (A3), protective-analog exclusion (A4), engraftment evidence (A5), BGC inflammatory mediator (A6). The 2.5 threshold selects 6 of 71 scored candidates. REPORT §5g + §5h.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5g (NB05 scoring pipeline)"},
+        {"kind": "notebook", "ref": "notebooks/NB04e_option_A_viability.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB05_tier_a_scoring.ipynb"}
+      ]
+    },
+    {
+      "position": 2,
+      "layout": "big_number",
+      "content": {
+        "headline": "88.2%",
+        "subtitle": "E1 Tier-A candidates sign-concordant on independently held-out HMP2 cohort",
+        "sub_pointer": "45 of 51 E1 candidates are CD↑ in both discovery and held-out HMP2 (n=130 subjects)",
+        "source_footer": "REPORT.md §5f (NB04h); HMP2 not in CMD_IBD training set"
+      },
+      "speaker_notes_seed": "This is the deck's strongest credibility number. HMP2 (HMP_2019_ibdmdb) was explicitly held out — it was absent from the CMD_IBD sub-study list used for training. The comparison uses the same MetaPhlAn3 namespace, so there is no Kaiju↔MetaPhlAn3 fragility (unlike the UC Davis GMM projection). Within HMP2-projected E1 samples (593 CD / 337 nonIBD), 45/51 E1 Tier-A candidates are sign-concordant. Only two top-20 candidates fail: S. thermophilus (possibly dairy exposure artifact in HMP2) and Bacteroides stercoris (n.s.). REPORT §5f verbatim: '45 / 51 (88.2 %) are sign-concordant (both CD↑).' The ecotype framework has cross-study variance (LOSO ARI 0.113 from S1) but the operational Tier-A replicates at 88.2% — framework stability and Tier-A replication are distinct properties.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5f (NB04h HMP2 external replication)"},
+        {"kind": "notebook", "ref": "notebooks/NB04h_hmp2_external_replication.ipynb"}
+      ]
+    },
+    {
+      "position": 3,
+      "layout": "data_table",
+      "content": {
+        "title": "Six actionable Tier-A pathobionts emerge from 71 scored candidates (threshold score ≥ 2.5)",
+        "columns": ["Rank", "Pathobiont", "Ecotype", "Score", "Key evidence tier"],
+        "rows": [
+          ["1", "H. hathewayi",  "E1 + engraftment",      "4.0", "All 5 A3 signals; 6 BGCs, 4 CD-enriched CB-ORFs"],
+          ["2", "M. gnavus",     "E1, E3-prov + engraftment", "3.8", "39 BGCs, 26 CD-enriched CB-ORFs; glucorhamnan"],
+          ["3", "E. coli",       "E1 + engraftment",      "3.6", "AIEC strain: Colibactin + Yersiniabactin + Enterobactin"],
+          ["4", "E. lenta",      "E1 + engraftment",      "3.3", "Engraftment; IBD-adapted Cgr2 drug-metabolism"],
+          ["5", "F. plautii",    "E1, E3-prov",           "3.3", "Kumbhari strain-competition; 7α-dehydroxylation"],
+          ["6", "E. bolteae",    "E1 + engraftment",      "2.8", "Engraftment; Myoviridae in-vivo correlation"]
+        ],
+        "caption": "Six actionable Tier-A candidates from NB05 scoring of 71 rigor-controlled candidates (51 E1 + 40 E3-provisional + 5 engraftment, dedup). Full scored table in REPORT.md §5g.",
+        "footnote": "Full scored table (71 candidates) in REPORT.md §5g; Tier-B threshold 2.2–2.4.",
+        "data_source": "REPORT.md §5g (NB05_tier_a_scoring.ipynb); actionable threshold = 2.5",
+        "highlight_rows": [0]
+      },
+      "speaker_notes_seed": "The table comes directly from REPORT §5g. Four scoring criteria: A3 literature/cohort CD-association (0–5), A4 protective-analog exclusion (binary), A5 engraftment/strain-adaptation (0/0.5/1), A6 BGC inflammatory mediator (0/0.5/1). Total range 0–4; threshold 2.5 selects 6 of 71. H. hathewayi leads at 4.0 despite being less studied than E. coli — it passes all 5 A3 signals and has 6 BGCs with 4 CD-enriched CB-ORFs. M. gnavus has the largest BGC signal (39 BGCs, 26 CD-enriched). E. coli is AIEC-subset-specific — the strain-resolution requirement matters for phage targeting, which S3 addresses. Note denominator: all 6 ranks are from the 71-candidate pool; Tier-B (score 2.2–2.4) is a separate group not on this slide.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5g, Table: 6 actionable candidates (top 6 of 71 scored)"},
+        {"kind": "notebook", "ref": "notebooks/NB05_tier_a_scoring.ipynb"}
+      ]
+    },
+    {
+      "position": 4,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "Targets co-occur in one pathobiont module per ecotype; E3 Tier-A is preliminary evidence pending replication",
+        "bullets": [
+          "E1 co-occurrence network (NB06): 4–5 of 6 Tier-A targets sit in a single module (E1_CD module 0, size 75) — consistent with shared bile-acid dysregulation and low-oxygen inflammation driving co-abundance",
+          "E3 Tier-A (40 candidates from HallAB_2017 only, 22 CD / 31 nonIBD) is preliminary evidence for an E3-specific target set; replication is blocked pending HMP2 E3 ingestion (only 10 E3 subjects in HMP2)",
+          "Six replicated E1 targets; E3-assigned patients (31% of UC Davis) inherit the provisional E3 list — cocktail recommendations for E3 patients require explicit uncertainty framing in S3"
+        ],
+        "citations": []
+      },
+      "speaker_notes_seed": "Two claims on this slide; denominators differ — flag explicitly. First bullet (A7): denominator is the 6 actionable Tier-A targets, of which 4–5 sit in one module per subnet (REPORT §5h). The module structure is consistent with shared ecological conditions (bile-acid dysregulation, low-oxygen inflammation) rather than direct competition — this matters for cocktail design because co-targeting 3+ module members should have compounding effects. Second bullet (A6, partial): denominator is the 40-candidate E3 provisional list, NOT the 51 E1 meta-viable list. HMP2 cannot rescue E3 replication (only 10 E3 subjects). Language discipline: do NOT say 'E3 Tier-A confirms' or 'demonstrates'; say 'preliminary evidence for.' The handoff line: 'Six targets are identified, the E1 set replicates at 88.2% — the next question is whether phage can actually hit them.' That is S3's opening.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5h (NB06 H2d co-occurrence networks)"},
+        {"kind": "report_section", "ref": "REPORT.md §5c + Limitations §E3 Tier-A (A6 partial evidence)"},
+        {"kind": "notebook", "ref": "notebooks/NB06_cooccurrence_networks.ipynb"}
+      ]
+    }
+  ]
+}

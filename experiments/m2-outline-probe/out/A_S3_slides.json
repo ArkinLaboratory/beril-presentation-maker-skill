@@ -1,0 +1,201 @@
+{
+  "schema_version": "compose-fragment.v1",
+  "substory_id": "S3",
+  "substory_punchline": "A hybrid three-strategy framework turns six targets into concrete per-patient cocktail drafts for 61% of a real cohort",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "section_divider",
+      "content": {
+        "punchline": "A hybrid three-strategy framework turns six targets into concrete per-patient cocktail drafts for 61% of a real cohort",
+        "substory_number": 3
+      },
+      "speaker_notes_seed": "Bridge from S2: six Tier-A pathobionts are now in hand, externally replicated. The question S3 answers is whether those targets can translate into a concrete clinical intervention. The punchline is yes — but with an honest pivot: three of the six highest-scored targets have no lytic phage, so a pure phage cocktail is structurally infeasible for the dominant E1 ecotype. The deck closes on what IS achievable: a hybrid 3-strategy framework that gives concrete cocktail drafts to 61% of a real UC Davis patient cohort, plus state-dependent dosing rules grounded in a longitudinal trajectory observation.",
+      "evidence_anchors": []
+    },
+    {
+      "position": 1,
+      "layout": "methods_summary",
+      "content": {
+        "title": "Methods: 3-layer phage-evidence stack assesses targetability across 6 Tier-A candidates, then NB15 + NB16 build per-patient cocktail drafts",
+        "bullets": [
+          "NB12 — curated literature foundation: 12 organisms × phage-availability scoring (0–3); stratifies Tier-A into 4 classes: clinical-trial-stage, lytic-literature, temperate-only, GAP",
+          "NB13 — PhageFoundry quantitative cocktail design: 96 phages × 188 E. coli strains × 17,672 experimentally-tested susceptibility pairs; greedy minimum-set-cover finds smallest cocktail covering ≥95% of strains",
+          "NB14 — in-vivo HMP2 phageome correlation: per-phage-family correlation with Tier-A abundance in HMP2 samples; validates in-vivo phage presence for E. coli (Podoviridae +0.18, Myoviridae +0.13)",
+          "NB15 — per-patient cocktail draft: 23 UC Davis CD patients × per-patient profile (ecotype + Montreal + calprotectin + medication + Kuehl_WGS Tier-A presence); apply Pillar-4 hand-off framework to produce concrete per-patient cocktail components",
+          "NB16 — longitudinal stability: patient 6967 (the only multi-timepoint patient with biological-replicate samples) tests cocktail drift across ecotype transitions; NB16 §5 derives state-dependent dosing rules",
+          "NB17 — cross-cutting synthesis: per-patient master table + target decision matrix (6 Tier-A × 5 attributes) + 4-phase clinical-translation roadmap"
+        ],
+        "tools_versions": [
+          {"tool": "BERDL phagefoundry_strain_modelling", "version": "Gaborieau 2025-10-02 release"},
+          {"tool": "curatedMetagenomicData", "version": "v3.18"},
+          {"tool": "Kaiju", "version": "unknown"}
+        ],
+        "see_notes_footer": true
+      },
+      "speaker_notes_seed": "Walk through all three phage-evidence layers before revealing the cocktail. Layer 1 (NB12) is qualitative but load-bearing: it is the only layer that covers all 6 Tier-A species, and it is where the GAP classification for H. hathewayi and F. plautii originates. Layer 2 (NB13) is quantitative but E. coli-only: the 96 × 188 × 17,672 susceptibility matrix is the most rigorous piece of the stack. Layer 3 (NB14) is corroborative: in-vivo phage correlation validates that the E. coli phage signal is ecologically real, not just a lab artifact. NB15 and NB16 are the clinical-translation layer that turns the phage-targetability framework into per-patient deliverables. Emphasize the honest limitation: NB12 has no experimental susceptibility data for the 5 non-E. coli species — PhageFoundry is E. coli-only. Source: REPORT.md §Pillar 4 deliverables (NB12/NB13/NB14) + §22-23 (NB15/NB16).",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 4 deliverables (NB12 4-class stratification; NB13 greedy set-cover 96×188 strains; NB14 HMP2 phageome correlation)"},
+        {"kind": "report_section", "ref": "REPORT.md §22 (NB15 per-patient cocktail draft); §23 (NB16 longitudinal stability + state-dependent dosing)"},
+        {"kind": "notebook", "ref": "notebooks/NB12_phage_targetability_matrix.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB13_phagefoundry_cocktail_design.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB14_hmp2_phageome_correlation.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB15_patient_cocktail_draft.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB16_longitudinal_stability.ipynb"}
+      ]
+    },
+    {
+      "position": 2,
+      "layout": "data_table",
+      "content": {
+        "title": "Four-class phage stratification reveals two GAP species — H. hathewayi and F. plautii lack any lytic phage",
+        "columns": ["Target", "NB05 Score", "Phage class", "Best available option"],
+        "rows": [
+          ["E. coli AIEC",   "3.6", "Clinical-trial",  "5-phage cocktail (94.7% of 188 strains; EcoActive precedent)"],
+          ["E. bolteae",     "2.8", "Lytic-literature", "PMBT24 (characterised lytic phage)"],
+          ["E. lenta",       "3.3", "Lytic-literature", "PMBT5 (characterised lytic phage)"],
+          ["M. gnavus",      "3.8", "Temperate-only",   "6 temperate siphoviruses; lytic engineering required"],
+          ["H. hathewayi",   "4.0", "GAP",              "None — GAG-degrading enzyme inhibitors as alternative"],
+          ["F. plautii",     "3.3", "GAP",              "None — BA-binding co-therapy (UDCA/cholestyramine)"]
+        ],
+        "caption": "NB12 4-class stratification of 6 actionable Tier-A. The two highest-scored targets (H. hathewayi 4.0, F. plautii 3.3) have no lytic phage across all three evidence layers.",
+        "footnote": "Full 4-class stratification and per-species notes in REPORT.md §Pillar 4 closure synthesis (NB12); quantitative E. coli cocktail in NB13.",
+        "data_source": "REPORT.md §Pillar 4 deliverables (NB12 + NB13); REPORT §Pillar 4 closure synthesis table",
+        "highlight_rows": [4, 5]
+      },
+      "speaker_notes_seed": "This slide covers A8 (✓ direct) and A9 (✓ direct). The NB05 scores in column 2 are REPORT §7 verbatim: H. hathewayi 4.0, M. gnavus 3.8, E. coli 3.6, E. lenta 3.3, F. plautii 3.3, E. bolteae 2.8. The 4-class structure and 'best available option' column come from REPORT §Pillar 4 closure synthesis table. The 94.7% exact figure is from REPORT NB13 greedy-set-cover table (line: '≥95% → 5 phages → 94.7% → DIJ07_P2 + LF73_P1 + AL505_Ev3 + 55989_P2 + LF110_P2'). The punch: the two HIGHEST-scored targets (H. hathewayi 4.0 is the top-ranked target; F. plautii 3.3 ties with E. lenta) are exactly the two GAP species with no lytic phage anywhere across all three layers. M. gnavus is also in the 3.8 band (second-highest score) and is temperate-only. So the three species that contribute most to the design challenge are also the three that a pure phage cocktail cannot address. Transition: that gap forces a structural choice on the framework.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 4 deliverables (NB12 4-class: clinical-trial / lytic-literature / temperate-only / GAP)"},
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 4 closure synthesis (NB12: H. hathewayi + F. plautii confirmed GAP across all 3 layers; NB13 5-phage 94.7%)"},
+        {"kind": "report_section", "ref": "REPORT.md §7 (NB05 scores: H. hathewayi 4.0, M. gnavus 3.8, E. coli 3.6, E. lenta 3.3, F. plautii 3.3, E. bolteae 2.8)"},
+        {"kind": "notebook", "ref": "notebooks/NB12_phage_targetability_matrix.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB13_phagefoundry_cocktail_design.ipynb"}
+      ]
+    },
+    {
+      "position": 3,
+      "layout": "workflow_diagram",
+      "content": {
+        "title": "Hybrid 3-strategy framework: direct phage + alternative therapy + limited/engineered, matched to per-target phage class",
+        "diagram": {
+          "kind": "boxes_and_arrows",
+          "nodes": [
+            {
+              "id": "target",
+              "label": "Tier-A target\n(per patient profile)",
+              "shape": "parallelogram",
+              "x": 0.6,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            },
+            {
+              "id": "classify",
+              "label": "NB12 phage class\n(clinical-trial / lytic /\ntemperate / GAP)",
+              "shape": "ellipse",
+              "x": 3.0,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            },
+            {
+              "id": "s1",
+              "label": "Strategy 1:\nDirect phage\n(E. coli, E. bolteae,\nE. lenta)",
+              "shape": "rectangle",
+              "x": 5.4,
+              "y": 0.9,
+              "w": 1.9,
+              "h": 1.1
+            },
+            {
+              "id": "s2",
+              "label": "Strategy 2:\nAlternative therapy\n(H. hathewayi: enzyme\ninhib; F. plautii: UDCA)",
+              "shape": "rectangle",
+              "x": 5.4,
+              "y": 2.2,
+              "w": 1.9,
+              "h": 1.1
+            },
+            {
+              "id": "s3",
+              "label": "Strategy 3:\nLimited / engineered\n(M. gnavus: lytic-lock\nor biochemical)",
+              "shape": "rectangle",
+              "x": 5.4,
+              "y": 3.5,
+              "w": 1.9,
+              "h": 1.1
+            },
+            {
+              "id": "cocktail",
+              "label": "Per-patient\nhybrid cocktail\ndraft",
+              "shape": "parallelogram",
+              "x": 7.8,
+              "y": 2.2,
+              "w": 1.9,
+              "h": 0.9
+            }
+          ],
+          "edges": [
+            {"from": "target",   "to": "classify", "kind": "straight"},
+            {"from": "classify", "to": "s1",       "kind": "elbow",    "label": "lytic-phage available"},
+            {"from": "classify", "to": "s2",       "kind": "straight", "label": "phage GAP"},
+            {"from": "classify", "to": "s3",       "kind": "elbow",    "label": "temperate-only"},
+            {"from": "s1",       "to": "cocktail", "kind": "elbow"},
+            {"from": "s2",       "to": "cocktail", "kind": "straight"},
+            {"from": "s3",       "to": "cocktail", "kind": "elbow"}
+          ]
+        },
+        "step_caption": [
+          "Each Tier-A target is classified by NB12 phage-availability tier; patients may carry 2–5 targets depending on ecotype + carriage profile",
+          "Three design strategies are matched to phage class: direct lytic phage for E. coli/E. bolteae/E. lenta, non-phage alternatives for GAP species, engineering/biochemical for M. gnavus",
+          "Per-patient hybrid cocktail blends all applicable strategies; pure phage cocktail is structurally infeasible for any E1 patient (all 9 E1 carry at least 2 GAP/temperate species)"
+        ],
+        "tool_version_footer": "NB15 · NB12 Pillar-4 hand-off framework"
+      },
+      "speaker_notes_seed": "This slide covers A9 (✓ direct) and A10 (✓ direct). The 3-strategy framework is verbatim from REPORT §Pillar 4 closure synthesis: '(1) direct phage targeting (E. coli AIEC + E. bolteae PMBT24 + E. lenta PMBT5), (2) alternative therapies (H. hathewayi GAG-degrading enzyme inhibitors; F. plautii BA-binding co-therapy), (3) limited/engineered (M. gnavus lytic-locked phage engineering or biochemical glucorhamnan-synthesis target).' Principle 1 from REPORT §Pillar 5 closure synthesis: 'Pure phage cocktail is structurally infeasible for the dominant E1 ecotype. All 9 E1 patients carry the full 5-species Tier-A pathobiont module, but only 3 of the 5 species have direct lytic phage options. The remaining 2 (H. hathewayi, F. plautii) are Pillar-4 GAP species.' Stress to audience: this is an honest finding — the framework cannot be a pure phage cocktail, and it doesn't pretend to be. The clinical-translation deliverable is the hybrid framework + templates, not a ready-to-deploy cocktail. Transition: so what fraction of patients actually get a concrete draft from this framework?",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 4 closure synthesis (3 design strategies; Pillar 4→Pillar 5 hand-off framework)"},
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 5 Principle 1 (NB15: pure phage cocktail not feasible for any E1 patient; 3 GAP/temperate species require non-phage strategies)"},
+        {"kind": "notebook", "ref": "notebooks/NB15_patient_cocktail_draft.ipynb"}
+      ]
+    },
+    {
+      "position": 4,
+      "layout": "big_number",
+      "content": {
+        "headline": "61%",
+        "subtitle": "of UC Davis CD patients receive concrete phage cocktail drafts from the hybrid framework",
+        "sub_pointer": "14 of 23 patients; all 9 E1 + 4 of 6 E3 + patient 6967 (mixed ecotype); 9 quiescent patients flagged 'reserve for flare'",
+        "source_footer": "REPORT.md §Pillar 5 (NB15 + NB17 per-patient master table); n=23 UC Davis CD patients"
+      },
+      "speaker_notes_seed": "This slide covers A11 (✓ direct). The 61% figure and '14 of 23' are verbatim from REPORT §Pillar 5 (NB15): '14 of 23 patients (61 %) have concrete phage cocktail drafts' and REPORT §Pillar 5 closure capstone (NB17): 'Concrete phage cocktail drafts: 14 of 23 patients (61 %).' The sub-pointer breakdown: REPORT §NB15 states 'All 9 E1 patients receive concrete cocktails (PMBT24 + PMBT5 + AIEC 5-phage if E. coli present); 4 of 6 E3 patients; 1 mixed (patient 6967).' The 9 E0 quiescent patients 'lack concrete components because their priority targets (H. hathewayi, M. gnavus) are in Pillar-4 GAP / temperate-only.' Important nuance: the 9 quiescent patients (calp < 250 or unmeasured) are not left empty-handed — they get the Tier-A panel as a 'reserve for flare' plan per NB17. The contribution of this number is the framework + templates, not a generalizable per-patient prescription — the cohort is n=23 and multi-center validation is flagged as required in the NB17 roadmap. Transition: this snapshot is from a single timepoint — does the cocktail hold if the patient's microbiome shifts?",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 5 (NB15: 14 of 23 patients (61%) have concrete phage cocktail drafts)"},
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 5 closure capstone NB17 (per-patient master table; 14/23 concrete phage drafts; 4-category patient stratification)"},
+        {"kind": "notebook", "ref": "notebooks/NB15_patient_cocktail_draft.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB17_cross_cutting_synthesis.ipynb"}
+      ]
+    },
+    {
+      "position": 5,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "Patient 6967's E1→E3 drift is consistent with ecotype-dynamic dosing — a universal trio anchors the cocktail backbone across states",
+        "bullets": [
+          "Patient 6967 shows E1→E3 ecotype drift with M. gnavus 14× expansion (0.53→7.45 reads) as dominant signature; cocktail Jaccard between visits = 0.60 — moderate overlap, not a complete rewrite (n=1 trajectory; ecotype call confidences 0.64 / 0.41)",
+          "Three species span both ecotype states: M. gnavus + H. hathewayi + E. lenta constitute the universal Tier-1 trio — cocktail backbone for any active-disease CD patient regardless of ecotype",
+          "Five state-dependent dosing rules follow (Novel Contribution #24): F. plautii inclusion is E1-specific; E. coli inclusion is E3-specific; M. gnavus qPCR 5-fold change as a candidate proxy for triggering full ecotype re-test — preliminary evidence only, not a validated assay"
+        ]
+      },
+      "speaker_notes_seed": "This slide covers A12 (⚠ partial — n=1 longitudinal trajectory; ecotype call confidence moderate; M. gnavus qPCR threshold is a hypothesis, not validated). The language is deliberately hedged per the partial-analysis discipline. Key numbers verbatim from REPORT §NB16: 'M. gnavus 14× expansion (0.53 → 7.45 reads)'; 'Cocktail Jaccard (visit 1 × visit 2) = 0.60'; ecotype call confidence '0.64' and '0.41'; 'Patient 1112 technical replicate Spearman ρ = 1.000 (p < 0.001)' validates Kaiju reliability. The 5 state-dependent dosing rules are REPORT §NB16 §5 verbatim: (a) re-test ecotype every 3-6 months; (b) F. plautii inclusion E1-specific; (c) E. coli inclusion E3-specific; (d) universal Tier-1 trio is backbone; (e) M. gnavus qPCR as cheap clinical proxy. REPORT explicitly flags: '5-fold change in M. gnavus abundance might be the threshold for triggering full ecotype re-evaluation' — the 'might' is the author's word, not just our caution. Caveat to name aloud: n=1 trajectory means these rules are biologically motivated hypotheses, not clinically validated guidelines. Multi-cohort longitudinal validation is flagged in the NB17 roadmap as near-term priority.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §NB16 (patient 6967: M. gnavus 14× expansion 0.53→7.45; Jaccard 0.60; ecotype confidence 0.64/0.41)"},
+        {"kind": "report_section", "ref": "REPORT.md §NB16 §5 + Novel Contribution #24 (5 state-dependent dosing rules; M. gnavus qPCR proxy hypothesis)"},
+        {"kind": "notebook", "ref": "notebooks/NB16_longitudinal_stability.ipynb"}
+      ]
+    }
+  ]
+}

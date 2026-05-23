@@ -1,0 +1,108 @@
+{
+  "schema_version": "compose-fragment.v1",
+  "substory_id": "S2",
+  "substory_punchline": "Within-ecotype, within-substudy meta-analysis surfaces six actionable pathobionts that replicate at 88% on a held-out cohort",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "section_divider",
+      "content": {
+        "punchline": "Within-ecotype, within-substudy meta-analysis surfaces six actionable pathobionts that replicate at 88% on a held-out cohort",
+        "substory_number": 2
+      },
+      "speaker_notes_seed": "Bridge from S1: now that ecotypes exist and patients are distributed non-randomly across them, stratification makes something possible that was structurally impossible in the pooled cohort — a confound-free CD-vs-nonIBD contrast. The key setup: cMD's study nesting means zero sub-studies contain both HC and CD samples, so a pooled CD-vs-HC LME is unidentifiable. Within IBD sub-studies, CD-vs-nonIBD IS identifiable within each study. Stratify by ecotype before meta-analysis and you get Tier-A lists that are free of both leakage and study confounding. E1 Tier-A replicates at 88.2% on HMP2; E3 Tier-A is provisional. Six targets cleared a multi-criteria score threshold of 2.5.",
+      "evidence_anchors": []
+    },
+    {
+      "position": 1,
+      "layout": "methods_summary",
+      "content": {
+        "title": "Methods: within-ecotype × within-substudy meta-analysis eliminates two structural confounds, then five-criterion scoring narrows to actionable targets",
+        "bullets": [
+          "Pooled CD-vs-HC is unidentifiable in cMD: zero sub-studies have both CD and HC; LME random effect perfectly predicts diagnosis (statsmodels.mixedlm fails silently)",
+          "Confound-free design: CD-vs-nonIBD within each IBD sub-study (HallAB_2017, LiJ_2014, IjazUZ_2017, NielsenHB_2014); CLR-Δ computed on same-study samples, then inverse-variance weighted meta across sub-studies",
+          "Stratify by ecotype before meta-analysis: samples partitioned by ecotype (clustering axis); CLR-Δ computed within partition (DA axis) — no feature-leakage self-reference",
+          "Three (sub-study × ecotype × diagnosis) cells pass ≥10 CD + ≥10 nonIBD: E1 × HallAB_2017 + E1 × NielsenHB_2014 (meta-viable); E3 × HallAB_2017 only (single-study, provisional)",
+          "NB04h HMP2 external replication: 1,627 samples projected onto K=4 LDA; per-species CD-vs-nonIBD CLR-Δ in HMP2-projected E1 (593 CD / 337 nonIBD) cross-referenced against 51-candidate E1 Tier-A",
+          "NB05 multi-criterion scoring: A3 literature + cohort CD-association (0–5), A4 protective-analog exclusion (0/1), A5 virulence-mechanism support (0–2), A6 BGC inflammatory mediator (0/0.5/1); total_score ≥ 2.5 threshold applied to 71 rigor-controlled candidates"
+        ],
+        "tools_versions": [
+          {"tool": "curatedMetagenomicData", "version": "v3.18"},
+          {"tool": "statsmodels", "version": "0.14"},
+          {"tool": "networkx", "version": "3.5"}
+        ],
+        "see_notes_footer": true
+      },
+      "speaker_notes_seed": "Walk through each bullet in order. The key methodological insight is that the pooled cohort design CANNOT answer the question — not a matter of statistical power, a structural identifiability failure. The within-substudy CD-vs-nonIBD contrast is the only identifiable contrast in cMD. The ecotype stratification is then a second layer: partition samples by ecotype FIRST (this uses the clustering axis), then compute CLR-Δ across sub-studies WITHIN each partition (this uses the DA axis). These two axes are disjoint — no feature appears in both, so no selection-on-outcome leakage. Emphasize: E1 is meta-viable (two sub-studies); E3 is single-study-only (HallAB_2017 only), flagged provisional from the start. NB05 scoring applies five criteria to the 71-candidate union set. Source: REPORT.md §5 (NB04e) + §5f (NB04h) + §7 (NB05).",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5 (NB04e within-ecotype × within-substudy design; NB04c confound rationale)"},
+        {"kind": "report_section", "ref": "REPORT.md §5f (NB04h HMP2 external replication; 593 CD / 337 nonIBD)"},
+        {"kind": "report_section", "ref": "REPORT.md §7 (NB05 Tier-A scoring; 71 candidates, 6 actionable at score ≥ 2.5)"},
+        {"kind": "notebook", "ref": "notebooks/NB04e_option_A_viability.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB04h_hmp2_replication.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB05_tier_a_scoring.ipynb"}
+      ]
+    },
+    {
+      "position": 2,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "Confound-free meta-analysis yields six actionable E1 pathobionts — E1 robust, E3 provisional pending replication",
+        "bullets": [
+          "E1 Tier-A: 51 candidates, meta-viable across HallAB_2017 + NielsenHB_2014 (82 CD / 280 nonIBD), all 100% sign-concordant; top candidates include M. gnavus (CLR-Δ +4.85), S. salivarius (+3.26), E. innocuum (+2.65)",
+          "NB05 scoring of 71 rigor-controlled candidates at total_score ≥ 2.5: 6 actionable targets — H. hathewayi (4.0), M. gnavus (3.8), E. coli (3.6), E. lenta (3.3), F. plautii (3.3), E. bolteae (2.8)",
+          "E3 Tier-A is preliminary evidence: 40 candidates from HallAB_2017 only (22 CD / 31 nonIBD); HMP2 has only 10 E3 subjects and cannot provide a second-study meta; 31% of UC Davis patients are E3 and inherit this provisional status"
+        ]
+      },
+      "speaker_notes_seed": "This slide covers A4 (✓ direct) and surfaces A6 (⚠ partial). A4 is cleanly grounded: the 51-candidate E1 Tier-A, the 6-target actionable set at score ≥ 2.5, and their specific scores all appear verbatim in REPORT §5c and §7. The NB05 scores are REPORT §7 Table: H. hathewayi 4.0, M. gnavus 3.8, E. coli 3.6, E. lenta 3.3, F. plautii 3.3, E. bolteae 2.8. For A6 (E3 Tier-A provisional): this is ⚠ partial — the title uses 'preliminary evidence' rather than 'confirms' or 'establishes.' The third bullet names the specific limitation (22/31 single-study, HMP2 only 10 E3 subjects). Note: the scores in bullet 2 appear verbatim in REPORT §7 ('6 actionable candidates (top 6 of 71 scored)'). Transition: now that E1 Tier-A is established, did it actually replicate?",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5c (NB04e E1 Tier-A: 51 candidates, 82 CD / 280 nonIBD, 100% sign-concordant)"},
+        {"kind": "report_section", "ref": "REPORT.md §7 (NB05: 6 actionable at score ≥ 2.5; scores: H. hathewayi 4.0, M. gnavus 3.8, E. coli 3.6)"},
+        {"kind": "report_section", "ref": "REPORT.md §5c + Limitations §E3 Tier-A (E3 single-study HallAB_2017; 10 HMP2 E3 subjects)"},
+        {"kind": "notebook", "ref": "notebooks/NB04e_option_A_viability.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB05_tier_a_scoring.ipynb"}
+      ]
+    },
+    {
+      "position": 3,
+      "layout": "big_number",
+      "content": {
+        "headline": "88.2%",
+        "subtitle": "of E1 Tier-A candidates replicate sign-concordant on an independently held-out HMP2 cohort",
+        "sub_pointer": "45 of 51 E1 candidates are CD↑ in both discovery and HMP2; top-10 candidates all replicate",
+        "source_footer": "REPORT.md §5f (NB04h); HMP2 E1 slice: 593 CD / 337 nonIBD; HMP2 not in cMD training set"
+      },
+      "speaker_notes_seed": "This slide covers A5 (✓ direct). The 88.2% figure is verbatim from REPORT §5f: '45/51 (88.2%) are sign-concordant (both CD↑).' The HMP2 cohort (HMP_2019_ibdmdb) was NOT in the cMD training set — it was pulled live via curatedMetagenomicData v3.18 and held out for this exact replication test. The 593 CD / 337 nonIBD E1 slice is from REPORT §5f. Top replicators include M. gnavus (HMP2 +1.08, FDR 3e-13), E. bolteae (+1.27, FDR 2e-18), H. symbiosa (+1.18, FDR 6e-22). Only 2 of the top 20 fail (S. thermophilus possibly due to dairy exposure difference; B. stercoris n.s.). Important nuance: the ecotype FRAMEWORK has LOSO ARI 0.113 (cross-study variable), but the operational Tier-A replicates at 88.2% — framework stability and target-list replication are distinct properties (Novel Contribution #11). This is the clearest rebuttal to 'reproducible ecotypes overstates evidence.'",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5f (NB04h: 45/51 = 88.2% sign-concordant; HMP2 593 CD / 337 nonIBD in E1)"},
+        {"kind": "notebook", "ref": "notebooks/NB04h_hmp2_replication.ipynb"}
+      ]
+    },
+    {
+      "position": 4,
+      "layout": "data_table",
+      "content": {
+        "title": "All six actionable Tier-A targets co-cluster in one pathobiont module per ecotype — multi-target cocktails are ecologically grounded",
+        "columns": ["Ecotype subnet", "Module", "Module size (nodes)", "Tier-A members in module"],
+        "rows": [
+          ["E1_all",  "module 1", "84", "E. lenta, E. bolteae, F. plautii, H. hathewayi, M. gnavus (5/6)"],
+          ["E1_CD",   "module 0", "~68", "H. hathewayi, F. plautii, E. bolteae, E. lenta, M. gnavus (5/6)"],
+          ["E3_all",  "module 1", "~61", "E. lenta, E. coli, H. hathewayi, M. gnavus (4/6)"],
+          ["E3_CD",   "module 1", "57",  "E. lenta, E. coli, H. hathewayi, M. gnavus (4/6)"]
+        ],
+        "caption": "CLR + Spearman + Louvain community detection on four per-ecotype × CD/all subnets; single pathobiont module confirmed in every subnet. E. coli is E3-specific; F. plautii is E1-specific.",
+        "footnote": "Full module membership (size 57–84 nodes) and hub rankings in REPORT.md §5h (NB06 H2d); E1_CD module 0 sizes from NB06 notebook outputs.",
+        "data_source": "REPORT.md §5h (NB06 H2d); notebooks/NB06_cooccurrence_networks.ipynb",
+        "highlight_rows": [0]
+      },
+      "speaker_notes_seed": "This slide covers A7 (✓ direct). The key finding from REPORT §5h (NB06 H2d): 'In every subnet, a single module contains 4-5 of the 6 actionable Tier-A candidates' (module sizes 57–84 nodes). The verbatim REPORT numbers are: E1_all module 1 size 84 with E. lenta, E. bolteae, F. plautii, H. hathewayi, M. gnavus; E3_CD module 1 size 57 with E. lenta, E. coli, H. hathewayi, M. gnavus. Biological implication (REPORT §5h): 'ecological coupling suggests a cocktail hitting 3+ of {M. gnavus, E. lenta, E. bolteae, H. hathewayi, E. coli} will have compounding effects.' The ecotype-specific membership is mechanistically load-bearing for Substory 3's per-patient cocktail design: F. plautii is E1-specific, E. coli is E3-specific, which constrains which targets go into each patient's cocktail. Note for speaker: E1_CD module 0 size is approximate — REPORT §5h verbatim gives E1_all module 1 (84) and E3_CD module 1 (57); the E1_CD number comes from NB06 notebook output table.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §5h (NB06 H2d: 4-5 of 6 Tier-A in single pathobiont module per subnet; sizes 57–84 nodes)"},
+        {"kind": "notebook", "ref": "notebooks/NB06_cooccurrence_networks.ipynb"}
+      ]
+    }
+  ]
+}

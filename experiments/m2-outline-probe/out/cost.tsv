@@ -1,0 +1,10 @@
+condition	substory	cost_usd	exit	fragment_written
+A	S1	0.3954105	0	yes
+A	S2	0.4662885	0	yes
+A	S3	0.5659539	0	yes
+B	S1	0.44741340000000007	0	yes
+B	S2	0.44072235000000004	0	yes
+B	S3	0.4626135	0	yes
+C	S1	0.34354815	0	yes
+C	S2	0.5100204	0	yes
+C	S3	0.33003705	0	yes

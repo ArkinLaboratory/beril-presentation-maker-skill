@@ -1,0 +1,148 @@
+{
+  "schema_version": "compose-fragment.v1",
+  "substory_id": "S1",
+  "substory_punchline": "Four reproducible microbiome ecotypes stratify Crohn's disease into biologically distinct patient groups",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "section_divider",
+      "content": {
+        "punchline": "Four reproducible microbiome ecotypes stratify Crohn's disease into biologically distinct patient groups",
+        "substory_number": 1
+      },
+      "speaker_notes_seed": "Deck opener — no prior section to lead in from; establish the stratification premise from a standing start. The argument this section makes: a four-ecotype framework exists, CD patients distribute across it non-randomly, and clinical covariates alone cannot recover the assignment. That three-part case is what earns the rest of the deck: ecotypes make confound-free target discovery possible, and targets make the cocktail framework possible.",
+      "evidence_anchors": []
+    },
+    {
+      "position": 1,
+      "layout": "workflow_diagram",
+      "content": {
+        "title": "Ecotype discovery: cMD pooling → cross-method consensus → UC Davis projection",
+        "diagram": {
+          "kind": "boxes_and_arrows",
+          "nodes": [
+            {
+              "id": "cmd_pull",
+              "label": "8,489 cMD MetaPhlAn3 samples\n(5,333 HC + 3,156 IBD/other)",
+              "shape": "parallelogram",
+              "x": 0.6,
+              "y": 1.8,
+              "w": 2.2,
+              "h": 0.9
+            },
+            {
+              "id": "consensus",
+              "label": "K=4 consensus\n(cross-method ARI: LDA × GMM)",
+              "shape": "rectangle",
+              "x": 3.2,
+              "y": 1.8,
+              "w": 2.2,
+              "h": 0.9
+            },
+            {
+              "id": "synonymy",
+              "label": "Taxonomy synonymy layer\n(2,417 aliases → 1,848 canonical)",
+              "shape": "cylinder",
+              "x": 5.8,
+              "y": 1.8,
+              "w": 2.2,
+              "h": 0.9
+            },
+            {
+              "id": "projection",
+              "label": "UC Davis projection\n(23 CD patients onto K=4 LDA)",
+              "shape": "parallelogram",
+              "x": 8.4,
+              "y": 1.8,
+              "w": 1.8,
+              "h": 0.9
+            }
+          ],
+          "edges": [
+            {"from": "cmd_pull",   "to": "consensus",  "kind": "straight"},
+            {"from": "consensus",  "to": "synonymy",   "kind": "straight", "label": "E0/E1/E2/E3"},
+            {"from": "synonymy",   "to": "projection", "kind": "straight"}
+          ]
+        },
+        "step_caption": [
+          "Pool 8,489 curatedMetagenomicData MetaPhlAn3 samples; select K=4 by cross-method LDA×GMM adjusted Rand index local maximum",
+          "Commit a 2,417-alias synonymy layer (NCBI taxid + GTDB r214+ renames) as the project-wide species-reconciliation backbone",
+          "Project all 23 UC Davis CD patients onto the K=4 LDA embedding via the synonymy layer; ecotype call is LDA-primary, GMM advisory"
+        ],
+        "tool_version_footer": "curatedMetagenomicData v3.18 · MetaPhlAn3 · GTDB r214+"
+      },
+      "speaker_notes_seed": "The pipeline has three non-trivial choices worth flagging for a methods-savvy audience. First: K=4 is selected by cross-method ARI between an LDA and a GMM on the same data — not by perplexity or BIC alone, which monotonically prefer larger K. Second: the taxonomy synonymy layer (2,417 aliases → 1,848 canonical species) is the backbone that makes multi-cohort pooling tractable; without it, Kaiju→MetaPhlAn3 projection for UC Davis would have ≈30% species-name mismatches. Third: UC Davis projection is LDA-primary; GMM is advisory because Kaiju↔MetaPhlAn3 classifier mismatch makes GMM calls fragile on that cohort. Source: REPORT §'Pillar 1 deliverables', NB01b, NB02.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §'Pillar 1 deliverables' items 1 and 4"},
+        {"kind": "notebook", "ref": "NB01b_ecotype_refit.ipynb"},
+        {"kind": "notebook", "ref": "NB02_ecotype_projection.ipynb"}
+      ]
+    },
+    {
+      "position": 2,
+      "layout": "big_number",
+      "content": {
+        "headline": "8,489",
+        "subtitle": "curatedMetagenomicData samples support a K=4 consensus ecotype framework (E0–E3)",
+        "sub_pointer": "Cross-method ARI (LDA × GMM) selects K=4; LOSO ARI 0.113 (range 0.000–0.282) — a usable framework, not bit-reproducible across sub-studies",
+        "source_footer": "REPORT.md §'Finding 1' (NB01b); NB04f LOSO stability; 5,333 HC + 3,156 IBD/other"
+      },
+      "speaker_notes_seed": "The headline is the sample scale: 8,489 cMD MetaPhlAn3 samples across multiple sub-studies, five diagnosis classes (HC, CD, UC, T1D/T2D, CDI). K=4 selected by cross-method ARI local maximum — a more honest criterion than BIC/perplexity. The four ecotypes align with published enterotype biology: E0 (66.8% of HC; F. prausnitzii / R. bromii), E1 (Bacteroides2 transitional; 48% CD, 58% UC), E2 (Prevotella copri; non-Western healthy), E3 (severe Bacteroides-expanded; 50% CD, 40% UC). The critical hedge: LOSO ARI 0.113 (range 0.000–0.282 across 8 sub-studies) shows real cross-study variance. Cluster boundaries shift with training-set composition. This is a usable operational framework, not a bit-reproducible classifier. A sharp reviewer will cite this; we surface it here rather than burying it. Source: REPORT.md §'Finding 1'; NB04f.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §'1. Four reproducible IBD ecotypes with clear disease stratification'"},
+        {"kind": "notebook", "ref": "NB01b_ecotype_refit.ipynb"},
+        {"kind": "notebook", "ref": "NB04f_loso_ecotype_stability.ipynb"}
+      ]
+    },
+    {
+      "position": 3,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "UC Davis CD patients distribute across three ecotypes non-randomly (χ²=10.0, p=0.019)",
+        "bullets": [
+          "E0 27% / E1 42% / E3 31% / E2 0% — active-disease Western pattern; zero Prevotella-dominant patients",
+          "χ²(3) vs. uniform distribution = 10.0, p=0.019: non-random ecotype occupancy confirms stratification premise",
+          "73% of UC Davis patients fall in E1 or E3 — the two dysbiotic ecotypes with distinct pathobiont signatures"
+        ]
+      },
+      "speaker_notes_seed": "This slide cashes the stratification premise: real CD patients from UC Davis don't fall uniformly across ecotypes. The χ² is against uniform — a conservative null. The absence of E2 is itself informative: E2 is the non-Western healthy Prevotella enterotype, essentially absent in active-disease Western CD cohorts. The 73% E1+E3 concentration (11 E1 + 8 E3 of 23) is what drives the cocktail design in S3 — nine E1 patients carry the full Tier-A pathobiont module. Ecotype breakdown: REPORT §'2. UC Davis CD patients span three ecotypes, none in E2'; χ² and p from REPORT §'Finding 2'; E0/E1/E2/E3 counts confirmed at REPORT §'Key Findings' table (E0=7, E1=11, E3=8). Transition cue: patients span the framework; now the question is whether clinical data alone can tell us which ecotype a patient is in — the next slide shows it cannot.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §'2. UC Davis CD patients span three ecotypes, none in E2'"},
+        {"kind": "report_section", "ref": "REPORT.md §'Pillar 1 deliverables' item 2 (χ²=10.0, p=0.019)"},
+        {"kind": "notebook", "ref": "NB02_ecotype_projection.ipynb"}
+      ]
+    },
+    {
+      "position": 4,
+      "layout": "two_column_compare",
+      "content": {
+        "title": "Clinical covariates reach AUC 0.80 but fail individual patients — metagenomics is required",
+        "left_col_title": "Clinical covariates alone",
+        "left_col_content": [
+          "Classifier: {IBD status, sex, age}; n=8,489",
+          "Macro OvR AUC = 0.80 in cross-validation",
+          "Collapses to 'IBD → E1' on all-CD test cohort: is_ibd constant, classifier degenerates",
+          "Only 41% patient-level agreement with metagenomics on UC Davis",
+          "Extended classifier (+ HBI, SCCAI, calprotectin) reaches AUC 0.810 — marginal improvement"
+        ],
+        "right_col_title": "Metagenomics (required)",
+        "right_col_content": [
+          "LDA projection onto K=4 embedding via synonymy layer",
+          "Per-patient ecotype call with confidence score (LDA primary)",
+          "Assigns all 23 UC Davis patients; confidence > 0.70 for majority",
+          "Distinguishes E1 vs E3 within CD — clinically meaningful divergence in pathobiont composition",
+          "Prerequisite for ecotype-specific cocktail design; cannot be replaced by chart data"
+        ]
+      },
+      "speaker_notes_seed": "This slide makes the operational argument for why metagenomics is in the clinical workflow, not just the research workflow. The AUC 0.80 sounds strong, but it evaporates on a single-disease cohort: when the test set is all-CD patients, the 'is_ibd' feature is constant and the classifier collapses to predicting E1 for everyone. The 41% patient-level agreement with metagenomics is the operative number — coin-flip for individual patients. The E1-collapse failure mode is exactly the confound that motivates within-ecotype × within-substudy meta-analysis in S2. Source: REPORT §'3. Clinical covariates alone cannot assign IBD patients to ecotype'; NB03 minimal classifier. Closing hand-off to S2: ecotypes are real and CD patients occupy them non-randomly — but the framework has real cross-study variance (LOSO ARI 0.113). The operational question for S2 is whether the *targets* inside each ecotype replicate on a held-out cohort, even if the ecotype boundaries themselves shift. That is S2's opening line.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §'3. Clinical covariates alone cannot assign IBD patients to ecotype' (NB03)"},
+        {"kind": "report_section", "ref": "REPORT.md §'Pillar 1 deliverables' item 3 (AUC 0.80; 41% agreement)"},
+        {"kind": "notebook", "ref": "NB03_clinical_ecotype_classifier.ipynb"}
+      ]
+    }
+  ]
+}

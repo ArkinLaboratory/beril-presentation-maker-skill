@@ -1,0 +1,149 @@
+{
+  "schema_version": "compose-fragment.v1",
+  "substory_id": "S1",
+  "substory_punchline": "Four reproducible microbiome ecotypes stratify Crohn's disease into biologically distinct patient groups",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {
+      "position": 0,
+      "layout": "section_divider",
+      "content": {
+        "punchline": "Four reproducible microbiome ecotypes stratify Crohn's disease into biologically distinct patient groups",
+        "substory_number": 1
+      },
+      "speaker_notes_seed": "Deck opener. This substory establishes the stratification premise: the ecotype framework is biologically real, UC Davis CD patients distribute across it non-randomly, and clinical covariates alone cannot replace metagenomics for patient-level assignment. Key tension to flag early: 'reproducible' here means operationally replicable Tier-A findings across cohorts — not bit-identical cluster boundaries. LOSO ARI 0.113 is the honest cross-study stability number; the framework is usable, not perfectly stable. Transition: methods first, then what the projection reveals.",
+      "evidence_anchors": []
+    },
+    {
+      "position": 1,
+      "layout": "methods_summary",
+      "content": {
+        "title": "Methods: K=4 ecotype consensus from 8,489 cMD samples, UC Davis projection, and covariate classifier test",
+        "bullets": [
+          "Training corpus: 8,489 curatedMetagenomicData MetaPhlAn3 samples (5,333 HC + 3,156 IBD/other); synonymy layer maps 2,417 aliases to 1,848 canonical species (NCBI taxid + GTDB r214+ renames)",
+          "K-selection: dual-method scan (LDA + GMM, K=2–8); consensus K=4 chosen by cross-method ARI local maximum — standard per-method fit metrics (BIC, perplexity) monotonically preferred larger K",
+          "Cross-study stability: leave-one-substudy-out (LOSO) across 8 sub-studies — mean ARI 0.113 (range 0.000–0.282); framework is cross-study variable, not bit-reproducible",
+          "UC Davis projection: 23 CD patients projected via LDA synonymy layer; GMM advisory only (Kaiju↔MetaPhlAn3 classifier mismatch makes GMM fragile here; LDA call is primary)",
+          "Clinical covariate classifier: minimal {is_ibd, sex, age} OvR classifier trained on 8,489 cMD samples; compared against metagenomic projection on UC Davis",
+          "All analyses: NB01b (consensus refit), NB02 (UC Davis projection), NB03 (covariate classifier), NB04f (LOSO stability)"
+        ],
+        "tools_versions": [
+          {"tool": "MetaPhlAn3", "version": "3.x"},
+          {"tool": "curatedMetagenomicData", "version": "v3.18"},
+          {"tool": "GTDB taxonomy", "version": "r214"}
+        ],
+        "see_notes_footer": true
+      },
+      "speaker_notes_seed": "The training corpus (8,489 samples) is large enough to be informative but the LOSO stability finding (mean ARI 0.113) is a critical methodological caveat — be explicit that 'four reproducible ecotypes' means operationally replicable, not bit-stable. The dual-method K-selection (LDA + GMM) is the reason K=4 was chosen over K=5 or K=6: per-method fit metrics kept wanting more clusters, but cross-method agreement had a local max at K=4 — a more conservative and rigorous criterion. The Kaiju↔MetaPhlAn3 mismatch for UC Davis is important context for the projection confidence numbers in the next two slides. Transition: now let's look at the pipeline as a whole before seeing the patient distribution.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 1 deliverables"},
+        {"kind": "report_section", "ref": "REPORT.md §5f (NB04f LOSO stability)"},
+        {"kind": "notebook", "ref": "notebooks/NB01b_ecotype_refit.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB02_ecotype_projection.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB03_covariate_classifier.ipynb"}
+      ]
+    },
+    {
+      "position": 2,
+      "layout": "workflow_diagram",
+      "content": {
+        "title": "Ecotype pipeline: cMD training → K=4 consensus → UC Davis placement → covariate comparison",
+        "diagram": {
+          "kind": "boxes_and_arrows",
+          "nodes": [
+            {
+              "id": "cmd",
+              "label": "8,489 cMD\nMetaPhlAn3 samples",
+              "shape": "parallelogram",
+              "x": 0.9,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            },
+            {
+              "id": "kscan",
+              "label": "Dual-method K-scan\n(LDA + GMM, K=2–8)",
+              "shape": "rectangle",
+              "x": 3.1,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            },
+            {
+              "id": "k4",
+              "label": "K=4 consensus\n(cross-method ARI max)",
+              "shape": "rounded",
+              "x": 5.3,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            },
+            {
+              "id": "ucdavis",
+              "label": "UC Davis projection\n(23 CD patients)",
+              "shape": "parallelogram",
+              "x": 7.5,
+              "y": 1.8,
+              "w": 1.9,
+              "h": 0.9
+            }
+          ],
+          "edges": [
+            {"from": "cmd",   "to": "kscan", "kind": "straight"},
+            {"from": "kscan", "to": "k4",    "kind": "straight"},
+            {"from": "k4",    "to": "ucdavis", "kind": "straight", "label": "LDA primary"}
+          ]
+        },
+        "step_caption": [
+          "Assemble 8,489-sample cMD corpus with species synonymy layer; dual-method K-scan selects K=4 by cross-method ARI (LOSO ARI 0.113 — cross-study variable)",
+          "Four ecotypes defined: E0 healthy-commensal, E1 Bacteroides2-transitional (CD/UC dominant), E2 Prevotella copri (non-Western), E3 severe-Bacteroides (IBD flare/CDI)",
+          "23 UC Davis CD patients projected via LDA synonymy layer; χ²(3)=10.0, p=0.019 shows non-random distribution across E0/E1/E3"
+        ],
+        "tool_version_footer": "MetaPhlAn3 · curatedMetagenomicData v3.18 · GTDB r214"
+      },
+      "speaker_notes_seed": "This diagram shows the three analytical beats in sequence: (1) the cMD corpus assembly and K-selection — the key methodological choice is using cross-method ARI rather than BIC/perplexity, which avoids the larger-K preference artifact; (2) the four-ecotype biology — E0 is healthy baseline, E1 is the CD-dominant transitional ecotype, E2 is non-Western (zero UC Davis patients), E3 is the severe-Bacteroides state seen in IBD flare and CDI; (3) the UC Davis projection result — non-random at p=0.019. The LOSO ARI 0.113 caveat appears in step caption 1 — it is load-bearing and should be spoken aloud. Transition to next slide: let's look at what that distribution looks like for our patients.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 1 deliverables (items 1–2)"},
+        {"kind": "report_section", "ref": "REPORT.md §5f (NB04f LOSO: mean ARI 0.113, range 0.000–0.282)"},
+        {"kind": "notebook", "ref": "notebooks/NB01b_ecotype_refit.ipynb"},
+        {"kind": "notebook", "ref": "notebooks/NB02_ecotype_projection.ipynb"}
+      ]
+    },
+    {
+      "position": 3,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "UC Davis CD patients span three ecotypes non-randomly — E2 is absent, E1 and E3 together account for 73%",
+        "bullets": [
+          "χ²(3) = 10.0, p = 0.019: distribution is non-random for an active-disease Western cohort (n=23 UC Davis CD patients)",
+          "E0 27% (6/23) · E1 42% (9/23) · E3 31% (7/23) · E2 0% — no Prevotella-dominant patients, consistent with Western recruitment",
+          "All 9 E1 patients are the primary target population for Pillar 2–5; 7 E3 patients inherit provisional Tier-A status until E3 targets replicate in a second sub-study"
+        ]
+      },
+      "speaker_notes_seed": "Source: REPORT.md §Pillar 1 deliverable 2 and §NB02 projection (χ²(3)=10.0, p=0.019). The zero E2 patients is expected — UC Davis is a Western active-disease cohort; E2 is the Prevotella-dominant non-Western healthy enterotype. The 42%/31% E1/E3 split is the operationally important finding: E1 and E3 are the two clinically relevant IBD ecotypes, and the stratified targeting premise rests on them being distinct. The E3 provisional caveat (7/23 patients) is important to name here — it sets up the S2 substory's A6 analysis. All percentages share denominator n=23 UC Davis patients. Transition: but distribution alone doesn't validate the framework — can we get away with clinical covariates instead?",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 1 deliverable 2 (χ²=10.0, p=0.019; E0 27%, E1 42%, E3 31%, E2 0%)"},
+        {"kind": "notebook", "ref": "notebooks/NB02_ecotype_projection.ipynb"}
+      ]
+    },
+    {
+      "position": 4,
+      "layout": "claim_evidence",
+      "content": {
+        "title": "A covariate classifier reaches AUC 0.80 in cross-validation but only 41% patient agreement — metagenomics is not replaceable",
+        "bullets": [
+          "Minimal classifier {is_ibd, sex, age} trained on 8,489 cMD samples: macro OvR AUC = 0.80 in pooled cross-validation — strong on paper",
+          "Applied to 22 UC Davis patients with metagenomic calls available: 41% agreement with the metagenomic ecotype projection (9/22 patients) — the classifier collapses to 'IBD → E1' because is_ibd is constant on an all-CD cohort",
+          "Gap between cross-validation AUC (0.80, denominator: 8,489 diverse-diagnosis cMD samples) and patient agreement (41%, denominator: 22 all-CD UC Davis patients) is itself a methodologically load-bearing finding about OvR-AUC and cohort-axis features"
+        ]
+      },
+      "speaker_notes_seed": "Source: REPORT.md §Pillar 1 deliverable 3 and §NB03 (macro AUC 0.80 pooled; 41% agreement UC Davis). This is A3 in the plan — rated ✓ direct. The important analytical point: the 0.80 AUC is not wrong, it is measured on a corpus where is_ibd is a strong separating feature (HC vs IBD). When the test cohort is all-CD, is_ibd is constant and the classifier can only predict the plurality class (E1). The 41% patient agreement reflects this collapse. Third bullet explicitly names both denominators — 8,489 cMD samples for AUC, 22 UC Davis patients for agreement — to avoid denominator conflation (PA-11). Closing note for speaker: the takeaway is not that the covariate classifier is bad — it's that OvR-AUC overstates per-patient usefulness when the dominant feature changes distribution between training and test. Metagenomics remains required.",
+      "evidence_anchors": [
+        {"kind": "report_section", "ref": "REPORT.md §Pillar 1 deliverable 3 (AUC 0.80; 41% patient agreement; collapses to IBD→E1)"},
+        {"kind": "notebook", "ref": "notebooks/NB03_covariate_classifier.ipynb (minimal classifier, n=8489 training, n=22 UC Davis test)"}
+      ]
+    }
+  ]
+}
