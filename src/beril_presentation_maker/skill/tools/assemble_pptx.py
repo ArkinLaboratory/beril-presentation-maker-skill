@@ -420,6 +420,118 @@ def _enable_normautofit_on_title(slide,
                                ln_spc_reduction=ln_spc_reduction)
 
 
+# ---------------------------------------------------------------------------
+# M4a Tier A — explicit-fontScale shrink-to-fit for freeform textboxes / shapes
+# ---------------------------------------------------------------------------
+#
+# The mechanism `_enable_normautofit` writes is the only shrink-to-fit
+# LibreOffice honors at render time (a bare <a:normAutofit/> is not
+# computed — the fontScale must be explicit). This module previously
+# applied it only to placeholders. M4a generalises it to *any* shape
+# whose box is fixed and whose content is variable-length: the diagram
+# node auto-shapes, and the freeform textboxes added via _add_textbox
+# (big_number subtitle/sub_pointer/source_footer, workflow step-captions,
+# data_table caption + footnote, methods_summary tools-versions footer).
+#
+# Per DQ3 (Adam 2026-05-23): the floor is 60% (60000) — the same floor
+# the M3 E-4 _fill_qa_anticipated ladder uses. If a length-derived scale
+# would dip below the floor, the helper clamps at 60% AND appends to
+# `warnings` so the assembler warning channel and the Tier-C visual-QA
+# pass both see it. Never silently renders sub-60%.
+
+FONTSCALE_FLOOR = 60000        # DQ3 — 60% of the master pt size
+FONTSCALE_FULL = 100000        # 100% (no shrink)
+
+
+def _fontscale_for_chars(chars: int,
+                         *, full_below: int = 200,
+                         shrink_at: tuple[tuple[int, int], ...] = (
+                             (400, 90000),
+                             (700, 80000),
+                             (1100, 70000),
+                         )) -> int:
+    """Map a character count to an explicit OOXML fontScale (×1000).
+
+    Generalisation of the M3 E-4 _fill_qa_anticipated adaptive ladder.
+    Returns the largest scale whose char-cap is >= `chars`; falls through
+    to FONTSCALE_FLOOR if none match.
+
+    Defaults are tuned for the body-region freeform textboxes (big_number
+    subtitle, workflow step-caption, data_table caption, etc.). Callers
+    pass a different ladder for slots with different geometry — see
+    `_fit_textbox` callsites.
+    """
+    if chars <= full_below:
+        return FONTSCALE_FULL
+    for cap, scale in shrink_at:
+        if chars <= cap:
+            return scale
+    return FONTSCALE_FLOOR
+
+
+def _fit_textbox(shape, *, content_chars: int | None = None,
+                 ladder: tuple[tuple[int, int], ...] | None = None,
+                 full_below: int = 200,
+                 ln_spc_reduction: int = 20000,
+                 warnings: list[str] | None = None,
+                 where: str = "") -> int:
+    """Write an explicit-fontScale normAutofit onto a freeform shape.
+
+    Applies to the textboxes returned by `_add_textbox` and to the
+    auto-shapes added by `slide.shapes.add_shape` (the diagram node
+    boxes). The explicit fontScale is the only shrink-to-fit mechanism
+    LibreOffice honors at render — a bare `<a:normAutofit/>` is not
+    computed. This is the M4a Tier-A keystone.
+
+    Args:
+      shape: a python-pptx shape with a `.text_frame`.
+      content_chars: character count of the shape's content. If None,
+        derived from `shape.text_frame.text`.
+      ladder: optional override of the (char-cap, scale) ladder. Pass a
+        tighter ladder for short-text slots (node labels, step-captions);
+        the default is tuned for body-region captions.
+      full_below: chars at or below this render at 100% (no shrink).
+      ln_spc_reduction: line-spacing reduction at full shrink. Default
+        matches `_enable_normautofit`.
+      warnings: assembler warnings list. If the derived scale would clamp
+        at FONTSCALE_FLOOR (DQ3), a warning is appended so the operator
+        and the Tier-C visual-QA pass both see it.
+      where: free-text location for the warning ("slide N: <slot>").
+
+    Returns the fontScale written (always in [FONTSCALE_FLOOR, FONTSCALE_FULL]).
+    """
+    tf = shape.text_frame
+    if content_chars is None:
+        content_chars = len(tf.text or "")
+    if ladder is None:
+        scale = _fontscale_for_chars(content_chars, full_below=full_below)
+    else:
+        scale = _fontscale_for_chars(content_chars,
+                                     full_below=full_below,
+                                     shrink_at=ladder)
+    # Clamp warning: the LADDER returns a value in the closed [FLOOR, FULL]
+    # range; the floor is *reached* (not breached). The warning fires when
+    # the floor was reached, because longer content would have wanted to
+    # shrink further. This makes the warning a soft signal that the slot
+    # is at the edge of legibility — Tier-C should look at it.
+    if scale == FONTSCALE_FLOOR and content_chars > full_below and warnings is not None:
+        warnings.append(
+            f"{where or 'textbox'}: content {content_chars} chars at "
+            f"shrink-to-fit floor ({FONTSCALE_FLOOR/1000:.0f}%); "
+            f"content-length cap recommended"
+        )
+    # _ensure_slide_text_autofit writes the explicit normAutofit on the
+    # shape's <a:bodyPr> (re-using the OOXML-manipulation primitive). A
+    # textbox's element is <p:sp>; the helper finds <p:txBody> under it.
+    _ensure_slide_text_autofit(
+        shape.element,
+        font_scale=scale,
+        ln_spc_reduction=ln_spc_reduction,
+        anchor="t",
+    )
+    return scale
+
+
 def _is_tbd_placeholder(text: str) -> bool:
     """True if `text` is a TBD-style placeholder that should be hidden
     from the rendered deck.
@@ -780,20 +892,42 @@ def _fill_big_number(slide, content, draft_dir, warnings):
         title_ph.top = Inches(1.01)
         title_ph.width = Inches(8.57)
         title_ph.height = Inches(2.45)   # bottom 3.46
-    # subtitle — what the number means
-    _add_textbox(slide, content["subtitle"],
-                 0.72, 3.58, 8.57, 0.52,
-                 font_size_pt=16, align_center=True,
-                 word_wrap=True)
+    # subtitle — what the number means.
+    # M4a Tier A: write explicit-fontScale normAutofit on the three sub-
+    # element textboxes (subtitle / sub_pointer / source_footer). These
+    # are fixed boxes (0.52 / 0.34 / 0.30 in tall) and the composer can
+    # produce a subtitle 100+ chars long; without an explicit fontScale
+    # the rendered text spills past the box bottom into the next sub-
+    # element. The bare word_wrap=True wraps but does not shrink.
+    # Ladders are tuned for each slot's geometry.
+    subtitle_tb = _add_textbox(slide, content["subtitle"],
+                               0.72, 3.58, 8.57, 0.52,
+                               font_size_pt=16, align_center=True,
+                               word_wrap=True)
+    _fit_textbox(subtitle_tb,
+                 ladder=((80, 100000), (140, 90000), (200, 80000), (280, 70000)),
+                 full_below=80,
+                 warnings=warnings,
+                 where=f"big_number subtitle (slide {getattr(slide, 'slide_id', '?')})")
     if content.get("sub_pointer"):
-        _add_textbox(slide, content["sub_pointer"],
-                     0.72, 4.16, 8.57, 0.34,
-                     font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
-                     align_center=True, word_wrap=True)
+        sp_tb = _add_textbox(slide, content["sub_pointer"],
+                             0.72, 4.16, 8.57, 0.34,
+                             font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
+                             align_center=True, word_wrap=True)
+        _fit_textbox(sp_tb,
+                     ladder=((100, 100000), (160, 90000), (220, 80000), (300, 70000)),
+                     full_below=100,
+                     warnings=warnings,
+                     where=f"big_number sub_pointer (slide {getattr(slide, 'slide_id', '?')})")
     if content.get("source_footer"):
-        _add_textbox(slide, content["source_footer"],
-                     0.30, 4.58, 9.40, 0.30,
-                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+        sf_tb = _add_textbox(slide, content["source_footer"],
+                             0.30, 4.58, 9.40, 0.30,
+                             font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+        _fit_textbox(sf_tb,
+                     ladder=((120, 100000), (180, 90000), (240, 80000), (320, 70000)),
+                     full_below=120,
+                     warnings=warnings,
+                     where=f"big_number source_footer (slide {getattr(slide, 'slide_id', '?')})")
 
 
 def _fill_claim_evidence(slide, content, draft_dir, warnings):
@@ -1055,24 +1189,37 @@ def _fill_data_table(slide, content, draft_dir, warnings):
             )
 
     # --- Caption (fixed y below the bounded table) ---
+    # M4a Tier A: long table captions overflow the 0.30in box into the
+    # footnote band / logo strip (ibd_phage_targeting draft_1 slide 21).
+    # _fit_textbox shrinks the font so the text stays inside the box.
     caption = content.get("caption")
     if caption:
-        _add_textbox(
+        cap_tb = _add_textbox(
             slide, caption,
             0.50, 4.18, 9.00, 0.30,
             font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
             word_wrap=True,
         )
+        _fit_textbox(cap_tb,
+                     ladder=((180, 100000), (260, 90000), (340, 80000), (440, 70000)),
+                     full_below=180,
+                     warnings=warnings,
+                     where=f"data_table caption (slide {getattr(slide, 'slide_id', '?')})")
 
     # --- Footnote (fixed y, just above the logo strip) ---
     footnote = content.get("footnote") or content.get("data_source")
     if footnote:
-        _add_textbox(
+        fn_tb = _add_textbox(
             slide, footnote,
             0.50, 4.56, 9.00, 0.18,
             font_size_pt=9, color_rgb=GRAPHITE_GRAY_RGB,
             word_wrap=True,
         )
+        _fit_textbox(fn_tb,
+                     ladder=((140, 100000), (200, 90000), (260, 80000), (340, 70000)),
+                     full_below=140,
+                     warnings=warnings,
+                     where=f"data_table footnote (slide {getattr(slide, 'slide_id', '?')})")
 
 
 def _set_table_cell(cell, text: str, *, bg_rgb, text_rgb,
@@ -1161,16 +1308,31 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
             # boundaries (visible draft_10 slide 9: three captions visually
             # overlapping at the bottom). word_wrap=True lets each caption
             # wrap within its 3-in column. H=0.55 fits 2 lines at 11pt;
-            # captions >100 chars will be clipped — content-side cap (~80
-            # chars per step) is a v0.3 prompt iteration.
-            _add_textbox(slide, caption,
-                         x + 0.05, 4.16, column_w - 0.10, 0.52,
-                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
-                         word_wrap=True)
+            # captions >100 chars overflow the box bottom into the tool-
+            # version footer or the logo strip — M4a Tier A adds
+            # _fit_textbox with an explicit-fontScale ladder so long
+            # captions shrink rather than spill. Content-side cap lives
+            # in Tier B (slide_compose.v2.md ≤ ~70 chars/step).
+            tb = _add_textbox(slide, caption,
+                              x + 0.05, 4.16, column_w - 0.10, 0.52,
+                              font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+                              word_wrap=True)
+            _fit_textbox(tb,
+                         ladder=((90, 100000), (130, 90000), (170, 80000), (220, 70000)),
+                         full_below=90,
+                         warnings=warnings,
+                         where=f"workflow_diagram step_caption[{i}] "
+                               f"(slide {getattr(slide, 'slide_id', '?')})")
     if content.get("tool_version_footer"):
-        _add_textbox(slide, content["tool_version_footer"],
-                     0.30, 4.70, 9.40, 0.20,
-                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+        tvf_tb = _add_textbox(slide, content["tool_version_footer"],
+                              0.30, 4.70, 9.40, 0.20,
+                              font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+        _fit_textbox(tvf_tb,
+                     ladder=((140, 100000), (200, 90000), (260, 80000), (320, 70000)),
+                     full_below=140,
+                     warnings=warnings,
+                     where=f"workflow_diagram tool_version_footer "
+                           f"(slide {getattr(slide, 'slide_id', '?')})")
 
 
 def _fill_methods_summary(slide, content, draft_dir, warnings):
@@ -1209,9 +1371,20 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
             if isinstance(tv, dict)
         )
         if formatted:
-            _add_textbox(slide, formatted,
-                         0.30, 4.52, 9.40, 0.28,
-                         font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+            # M4a Tier A: long tools-versions footers (8-10 entries, one
+            # per pipeline step) overflow the 0.28in band. _fit_textbox
+            # shrinks to keep the footer inside its strip; the band is
+            # at y=4.52 with FOOTER_SAFE_BOTTOM=4.92 so the next 0.40in
+            # is reserved for the logo strip — no give if it overflows.
+            tvf_tb = _add_textbox(slide, formatted,
+                                  0.30, 4.52, 9.40, 0.28,
+                                  font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+            _fit_textbox(tvf_tb,
+                         ladder=((150, 100000), (220, 90000), (300, 80000), (400, 70000)),
+                         full_below=150,
+                         warnings=warnings,
+                         where=f"methods_summary tools_versions "
+                               f"(slide {getattr(slide, 'slide_id', '?')})")
             return  # tools_versions footer takes the speaker-notes hint slot
 
     # No tools_versions populated — fall back to the speaker-notes hint

@@ -732,3 +732,393 @@ def test_layout_handlers_dispatch_covers_full_vocabulary(ss, asm):
     """Every named layout has a handler registered. Pins the dispatch
     table so a future layout addition can't slip through unnoticed."""
     assert set(asm.LAYOUT_HANDLERS.keys()) == set(ss.LAYOUTS)
+
+
+# ---------------------------------------------------------------------------
+# M4a Tier A — explicit-fontScale shrink-to-fit + footer-safety geometry
+# ---------------------------------------------------------------------------
+
+def test_fontscale_for_chars_full_for_short_content(asm):
+    """Content at or below `full_below` renders at 100% — no shrink."""
+    assert asm._fontscale_for_chars(50, full_below=100) == asm.FONTSCALE_FULL
+    assert asm._fontscale_for_chars(100, full_below=100) == asm.FONTSCALE_FULL
+
+
+def test_fontscale_for_chars_floor_for_long_content(asm):
+    """Content past the longest ladder cap clamps at the 60% floor (DQ3)."""
+    # Default ladder: full_below=200, (400, 90), (700, 80), (1100, 70), else floor
+    assert asm._fontscale_for_chars(2000) == asm.FONTSCALE_FLOOR
+    assert asm.FONTSCALE_FLOOR == 60000  # DQ3 — 60% pinned
+
+
+def test_fontscale_for_chars_ladder_steps(asm):
+    """Adaptive ladder picks the first cap that fits."""
+    assert asm._fontscale_for_chars(300) == 90000   # in (200, 400]
+    assert asm._fontscale_for_chars(500) == 80000   # in (400, 700]
+    assert asm._fontscale_for_chars(900) == 70000   # in (700, 1100]
+
+
+def test_fit_textbox_appends_warning_when_clamped_at_floor(asm, tmp_path):
+    """DQ3: content beyond the longest ladder cap clamps at the floor
+    AND appends a soft-warning so the operator + Tier-C visual-QA pass
+    both see the slot is at the edge of legibility."""
+    from pptx import Presentation
+    from pptx.util import Inches as _In
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(_In(0.5), _In(0.5), _In(4.0), _In(0.4))
+    tb.text_frame.text = "x" * 1500   # past 1100, hits floor
+    warnings = []
+    scale = asm._fit_textbox(tb, warnings=warnings, where="synthetic")
+    assert scale == asm.FONTSCALE_FLOOR
+    assert any("floor" in w and "synthetic" in w for w in warnings), warnings
+
+
+def test_fit_textbox_no_warning_for_short_content(asm):
+    """Content that doesn't reach the floor produces no warning."""
+    from pptx import Presentation
+    from pptx.util import Inches as _In
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    tb = slide.shapes.add_textbox(_In(0.5), _In(0.5), _In(4.0), _In(0.4))
+    tb.text_frame.text = "short"
+    warnings = []
+    scale = asm._fit_textbox(tb, warnings=warnings, where="synthetic")
+    assert scale == asm.FONTSCALE_FULL
+    assert warnings == []
+
+
+@requires_master
+def test_overflow_prone_slots_carry_explicit_fontscale(ss, asm, tmp_path):
+    """M4a Tier A AC: a slot-busting synthetic deck (long content in every
+    Tier-A targeted slot) assembles AND the targeted freeform textboxes
+    each carry an explicit <a:normAutofit fontScale="..."> on their
+    bodyPr — the only shrink-to-fit LibreOffice computes at render. A
+    bare <a:normAutofit/> would silently fall back to no-shrink and the
+    text would spill (the M3 Tier-E render defect class).
+
+    Slots checked:
+      - big_number subtitle + sub_pointer + source_footer
+      - workflow_diagram step_caption[i] + tool_version_footer
+      - data_table caption + footnote
+      - methods_summary tools_versions footer
+    """
+    DML = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+    def _has_explicit_fontscale(shape) -> tuple[bool, str | None]:
+        """Return (has_normAutofit_with_explicit_fontScale, scale_str)."""
+        tx_body = shape.text_frame._txBody
+        body_pr = tx_body.find(f"{{{DML}}}bodyPr")
+        if body_pr is None:
+            return (False, None)
+        norm = body_pr.find(f"{{{DML}}}normAutofit")
+        if norm is None:
+            return (False, None)
+        return (norm.get("fontScale") is not None, norm.get("fontScale"))
+
+    # Slot-busting content: long enough to trigger shrink on every Tier-A
+    # textbox. Stay within slide_spec validator caps (data_figure caption
+    # 280 chars is the only hard cap; the rest are advisory in Tier B).
+    long_subtitle = "fitness scores integrated across 1,400 genomes " \
+                    "from the DOE-funded BERDL pipeline running on KBase " \
+                    "with Shewanella as the model organism (270 chars to busy autofit)"
+    long_sub_pointer = "Top decile by ensemble score across three independent " \
+                       "ML predictors plus phylogenetic conservation gates (180+ chars)"
+    long_source_footer = ("REPORT.md §4.2 cited from primary sources "
+                          "Smith2023, Jones2024, Lee2025; data DOI 10.5281/zenodo.example "
+                          "(stretched to push the source_footer slot past its full_below cap)")
+    long_step_caption = ("Run the workflow under controlled BERDL parameters "
+                         "with version pins from tools.lock to ensure reproducibility "
+                         "across the three pipeline steps")
+    long_tool_version_footer = (
+        "RAST 2.0.1 · fastp 0.23.4 · DRAM 1.4.6 · GTDB-Tk 2.3.0 · "
+        "checkm2 1.0.2 · diamond 2.1.8 · spades 3.15.5 · prodigal 2.6.3 (push past 200 chars)"
+    )
+    long_data_table_caption = ("Top-decile candidates ranked by ensemble score; "
+                               "ML+conservation+phenotype-gated subset from the "
+                               "n=347 candidate pool (REPORT.md §4.2 full ranking, "
+                               "with cross-validation on a 120-genome holdout — past 280 chars to test floor)")
+    long_data_table_footnote = ("Full ranking (n=347) in REPORT.md §4.2; scores "
+                                "are the geometric mean of three predictors; "
+                                "phenotype evidence sourced from Shewanella growth panels (>240 chars)")
+
+    slides = [
+        {
+            "id": 1, "substory_id": None, "layout": "big_number",
+            "content": {
+                "headline": "27,000,000",
+                "subtitle": long_subtitle,
+                "sub_pointer": long_sub_pointer,
+                "source_footer": long_source_footer,
+            },
+        },
+        {
+            "id": 2, "substory_id": None, "layout": "workflow_diagram",
+            "content": {
+                "title": "Slot-busting workflow.",
+                "diagram": {
+                    "kind": "boxes_and_arrows",
+                    "nodes": [
+                        {"id": "n1", "label": "Long node label that overruns its box badly",
+                         "shape": "rounded", "x": 0.5, "y": 1.4, "w": 1.5, "h": 0.8},
+                        {"id": "n2", "label": "End", "shape": "rounded",
+                         "x": 7.0, "y": 1.4, "w": 1.5, "h": 0.8},
+                    ],
+                    "edges": [{"from": "n1", "to": "n2", "kind": "straight",
+                               "label": "step"}],
+                },
+                "step_caption": [long_step_caption, long_step_caption, long_step_caption],
+                "tool_version_footer": long_tool_version_footer,
+            },
+        },
+        {
+            "id": 3, "substory_id": None, "layout": "data_table",
+            "content": {
+                "title": "Slot-busting table.",
+                "columns": ["A", "B", "C"],
+                "rows": [["a1", "b1", "c1"], ["a2", "b2", "c2"]],
+                "caption": long_data_table_caption,
+                "footnote": long_data_table_footnote,
+            },
+        },
+        {
+            "id": 4, "substory_id": None, "layout": "methods_summary",
+            "content": {
+                "title": "Slot-busting methods.",
+                "bullets": ["b1", "b2", "b3", "b4", "b5"],
+                "tools_versions": [
+                    {"tool": f"tool_{i}", "version": f"{i}.0.0"}
+                    for i in range(8)
+                ],
+            },
+        },
+    ]
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": slides,
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    result = asm.assemble(spec_path, out)
+    assert result.n_slides == 4
+
+    from pptx import Presentation
+    prs = Presentation(out)
+    failures = []
+
+    # --- Slide 1 (big_number): subtitle + sub_pointer + source_footer ---
+    bn = prs.slides[0]
+    # The three textboxes are added freeform AFTER the title placeholder.
+    # Walk shapes; the textboxes are the ones whose text matches our content.
+    bn_subtitle = bn_sub_pointer = bn_source_footer = None
+    for shp in bn.shapes:
+        if not shp.has_text_frame:
+            continue
+        txt = shp.text_frame.text
+        if txt.startswith("fitness scores"):
+            bn_subtitle = shp
+        elif txt.startswith("Top decile"):
+            bn_sub_pointer = shp
+        elif txt.startswith("REPORT.md §4.2 cited"):
+            bn_source_footer = shp
+    for name, shp in [("big_number subtitle", bn_subtitle),
+                       ("big_number sub_pointer", bn_sub_pointer),
+                       ("big_number source_footer", bn_source_footer)]:
+        assert shp is not None, f"{name}: textbox not found in rendered slide"
+        ok, scale = _has_explicit_fontscale(shp)
+        if not ok:
+            failures.append(f"{name}: no explicit fontScale on normAutofit "
+                            "(LibreOffice will not shrink the text)")
+
+    # --- Slide 2 (workflow_diagram): step_captions + tool_version_footer ---
+    wf = prs.slides[1]
+    wf_step_captions = []
+    wf_tvf = None
+    for shp in wf.shapes:
+        if not shp.has_text_frame:
+            continue
+        txt = shp.text_frame.text
+        if txt.startswith("Run the workflow"):
+            wf_step_captions.append(shp)
+        elif txt.startswith("RAST 2.0.1"):
+            wf_tvf = shp
+    assert len(wf_step_captions) == 3, \
+        f"expected 3 step_caption textboxes, got {len(wf_step_captions)}"
+    for i, shp in enumerate(wf_step_captions):
+        ok, scale = _has_explicit_fontscale(shp)
+        if not ok:
+            failures.append(f"workflow_diagram step_caption[{i}]: "
+                            "no explicit fontScale on normAutofit")
+    assert wf_tvf is not None, "workflow_diagram tool_version_footer: not found"
+    ok, _ = _has_explicit_fontscale(wf_tvf)
+    if not ok:
+        failures.append("workflow_diagram tool_version_footer: "
+                        "no explicit fontScale on normAutofit")
+
+    # --- Slide 3 (data_table): caption + footnote ---
+    dt = prs.slides[2]
+    dt_caption = dt_footnote = None
+    for shp in dt.shapes:
+        if not shp.has_text_frame:
+            continue
+        txt = shp.text_frame.text
+        if txt.startswith("Top-decile candidates"):
+            dt_caption = shp
+        elif txt.startswith("Full ranking"):
+            dt_footnote = shp
+    for name, shp in [("data_table caption", dt_caption),
+                       ("data_table footnote", dt_footnote)]:
+        assert shp is not None, f"{name}: textbox not found"
+        ok, _ = _has_explicit_fontscale(shp)
+        if not ok:
+            failures.append(f"{name}: no explicit fontScale on normAutofit")
+
+    # --- Slide 4 (methods_summary): tools_versions footer ---
+    ms = prs.slides[3]
+    ms_tvf = None
+    for shp in ms.shapes:
+        if not shp.has_text_frame:
+            continue
+        if "tool_0 0.0.0" in shp.text_frame.text:
+            ms_tvf = shp
+            break
+    assert ms_tvf is not None, "methods_summary tools_versions: textbox not found"
+    ok, _ = _has_explicit_fontscale(ms_tvf)
+    if not ok:
+        failures.append("methods_summary tools_versions: "
+                        "no explicit fontScale on normAutofit")
+
+    assert not failures, "\n  ".join([""] + failures)
+
+
+@requires_master
+def test_overflow_prone_slots_geometry_clears_footer(ss, asm, tmp_path):
+    """M4a Tier A AC: the same slot-busting deck assembles with all text-
+    bearing freeform textboxes ending at or above FOOTER_SAFE_BOTTOM
+    (4.92in). M3 E-6 set this constant; M3 E-7 added the width check
+    (zero-width placeholders rendered text one char per line). This test
+    pins both checks on a committed synthetic deck so regressions surface
+    in the suite, not on the next live render.
+    """
+    # Reuse the same slot-busting deck as the fontScale test
+    slides = [
+        {
+            "id": 1, "substory_id": None, "layout": "big_number",
+            "content": {
+                "headline": "27,000,000",
+                "subtitle": "x" * 250,
+                "sub_pointer": "y" * 180,
+                "source_footer": "z" * 200,
+            },
+        },
+        {
+            "id": 2, "substory_id": None, "layout": "workflow_diagram",
+            "content": {
+                "title": "wf",
+                "diagram": {
+                    "kind": "boxes_and_arrows",
+                    "nodes": [
+                        {"id": "n1", "label": "n1", "shape": "rounded",
+                         "x": 0.5, "y": 1.4, "w": 1.5, "h": 0.8},
+                        {"id": "n2", "label": "n2", "shape": "rounded",
+                         "x": 7.0, "y": 1.4, "w": 1.5, "h": 0.8},
+                    ],
+                    "edges": [{"from": "n1", "to": "n2", "kind": "straight"}],
+                },
+                "step_caption": ["s" * 150] * 3,
+                "tool_version_footer": "t" * 200,
+            },
+        },
+        {
+            "id": 3, "substory_id": None, "layout": "data_table",
+            "content": {
+                "title": "dt",
+                "columns": ["A", "B"],
+                "rows": [["a", "b"]],
+                "caption": "c" * 280,
+                "footnote": "f" * 200,
+            },
+        },
+        {
+            "id": 4, "substory_id": None, "layout": "methods_summary",
+            "content": {
+                "title": "ms",
+                "bullets": ["b1", "b2", "b3", "b4", "b5"],
+                "tools_versions": [
+                    {"tool": "t", "version": "1.0"} for _ in range(8)
+                ],
+            },
+        },
+        {
+            "id": 5, "substory_id": None, "layout": "qa_anticipated",
+            "content": {
+                "question": "q",
+                "answer_summary": "a" * 800,
+                "answer_detail": "d" * 200,
+                "evidence_pointer": "Substory 1",
+            },
+        },
+    ]
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": slides,
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    from pptx.util import Emu
+    prs = Presentation(out)
+    failures = []
+
+    for slide_idx, slide in enumerate(prs.slides, 1):
+        for shp in slide.shapes:
+            # Skip pictures, tables, connectors, the slide title (logos /
+            # decorative banners are baked into the master and can sit
+            # in the footer band by design — they're the FOOTER itself).
+            if not shp.has_text_frame:
+                continue
+            # Skip the slide title placeholder
+            if shp == slide.shapes.title:
+                continue
+            # Width must be > 0 (E-7 regression: placeholders with only
+            # top/height set zero-widthed text into one-char-per-line).
+            width_in = (shp.width or 0) / 914400  # EMU → in
+            height_in = (shp.height or 0) / 914400
+            top_in = (shp.top or 0) / 914400
+            left_in = (shp.left or 0) / 914400
+            if width_in <= 0.1:
+                failures.append(
+                    f"slide {slide_idx} ({slide.slide_layout.name}): "
+                    f"text shape '{shp.text_frame.text[:40]}...' has "
+                    f"width={width_in:.2f}in (E-7 zero-width regression)"
+                )
+            # Bottom must clear FOOTER_SAFE_BOTTOM = 4.92in
+            bottom_in = top_in + height_in
+            if bottom_in > asm.FOOTER_SAFE_BOTTOM + 0.01:  # 0.01 tolerance
+                failures.append(
+                    f"slide {slide_idx} ({slide.slide_layout.name}): "
+                    f"text shape '{shp.text_frame.text[:40]}...' bottom "
+                    f"{bottom_in:.2f}in > FOOTER_SAFE_BOTTOM "
+                    f"{asm.FOOTER_SAFE_BOTTOM}in (logo strip starts ~5.00)"
+                )
+            # Negative or off-slide positions
+            if left_in < -0.01 or top_in < -0.01:
+                failures.append(
+                    f"slide {slide_idx} ({slide.slide_layout.name}): "
+                    f"text shape '{shp.text_frame.text[:40]}...' negative "
+                    f"position (left={left_in:.2f}, top={top_in:.2f})"
+                )
+
+    assert not failures, "\n  ".join([""] + failures)

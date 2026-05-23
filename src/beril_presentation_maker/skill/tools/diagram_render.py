@@ -179,6 +179,82 @@ def _transform_coords(
 
 
 # ---------------------------------------------------------------------------
+# M4a Tier A — explicit-fontScale shrink-to-fit for diagram node labels
+# ---------------------------------------------------------------------------
+#
+# LibreOffice does NOT honor a bare <a:normAutofit/> at render — the
+# previous `tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE` wrote the
+# bare form and the rendered text spilled past the box (ibd_phage_
+# targeting draft_1 slides 6/10/19). The only mechanism LibreOffice
+# computes is an explicit `<a:normAutofit fontScale="...">`. This
+# helper writes that directly into the auto-shape's <a:bodyPr>.
+#
+# Parallel to assemble_pptx._fit_textbox (DQ3 — 60% fontScale floor);
+# duplicated locally because diagram_render is loaded as a standalone
+# module by assemble_pptx's importlib loader, so importing back into
+# assemble_pptx is circular. If a third consumer arrives in Tier C,
+# refactor both into a shared helper module.
+
+# OOXML namespace — must match the one in assemble_pptx._ensure_slide_text_autofit
+_DML_NS_DR = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PML_NS_DR = "http://schemas.openxmlformats.org/presentationml/2006/main"
+
+NODE_FONTSCALE_FLOOR = 60000   # DQ3 — 60% of 14pt = 8.4pt at projection
+NODE_FONTSCALE_FULL = 100000
+
+
+def _apply_fontscale_to_shape(
+    shape,
+    content_chars: int,
+    *,
+    ladder: tuple[tuple[int, int], ...],
+    full_below: int,
+    ln_spc_reduction: int = 20000,
+) -> int:
+    """Write an explicit-fontScale normAutofit onto an auto-shape's bodyPr.
+
+    Args:
+      shape: a python-pptx auto-shape (the diagram node).
+      content_chars: character count of the label.
+      ladder: (char_cap, scale) pairs in ascending char order; the first
+        cap >= chars wins. Falls through to NODE_FONTSCALE_FLOOR.
+      full_below: chars at or below this render at 100% (no shrink).
+
+    Returns the fontScale written.
+    """
+    from lxml import etree as _et
+
+    if content_chars <= full_below:
+        scale = NODE_FONTSCALE_FULL
+    else:
+        scale = NODE_FONTSCALE_FLOOR
+        for cap, sc in ladder:
+            if content_chars <= cap:
+                scale = sc
+                break
+
+    # Find <p:txBody> under the shape (the auto-shape uses the same
+    # namespace structure as a placeholder).
+    sp_el = shape.element
+    tx_body = sp_el.find(f"{{{_PML_NS_DR}}}txBody")
+    if tx_body is None:
+        tx_body = sp_el.find(f"{{{_DML_NS_DR}}}txBody")
+    if tx_body is None:
+        return scale
+    body_pr = tx_body.find(f"{{{_DML_NS_DR}}}bodyPr")
+    if body_pr is None:
+        return scale
+    for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+        for child in list(body_pr):
+            if child.tag == f"{{{_DML_NS_DR}}}{tag}":
+                body_pr.remove(child)
+    af = _et.SubElement(body_pr, f"{{{_DML_NS_DR}}}normAutofit")
+    af.set("fontScale", str(scale))
+    af.set("lnSpcReduction", str(ln_spc_reduction))
+    return scale
+
+
+# ---------------------------------------------------------------------------
 # Node rendering
 # ---------------------------------------------------------------------------
 
@@ -227,17 +303,20 @@ def _render_node(
     if label:
         tf = sp.text_frame
         tf.text = label
-        # Contain the label inside the node box: wrap long labels and
-        # shrink-to-fit rather than spilling outside the shape
-        # (ibd_phage_targeting draft_1 slides 6/10/19 — node text overran
-        # the box). word_wrap alone wraps; auto_size also shrinks the
-        # font when even wrapped text would overflow.
+        # Contain the label inside the node box. word_wrap alone wraps
+        # but does not shrink; the M3 attempt used `auto_size=
+        # MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE`, but LibreOffice does NOT
+        # honor a bare <a:normAutofit/> — the rendered text still spills
+        # past the box (ibd_phage_targeting draft_1 slides 6/10/19).
+        # M4a Tier A replaces it with `_apply_fontscale_to_shape`, which
+        # writes an explicit `<a:normAutofit fontScale="...">` — the
+        # only shrink-to-fit LibreOffice computes at render. The ladder
+        # is tuned for short node labels (~40 chars is the design size).
         tf.word_wrap = True
-        try:
-            from pptx.enum.text import MSO_AUTO_SIZE
-            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-        except Exception:  # noqa: BLE001
-            pass
+        _apply_fontscale_to_shape(sp, len(label),
+                                  ladder=((40, 100000), (60, 90000),
+                                          (90, 80000), (120, 70000)),
+                                  full_below=40)
         # Color the text based on text_color_name
         for paragraph in tf.paragraphs:
             for run in paragraph.runs:
@@ -258,13 +337,21 @@ def _render_node(
 # Edge rendering
 # ---------------------------------------------------------------------------
 
-def _render_edge(
+def _render_edge_line(
     slide,
     edge: dict,
     rendered_by_id: dict[str, _RenderedShape],
     brand_tokens: dict | None,
 ) -> None:
-    """Add one connector line between source and target node shapes."""
+    """Add the connector LINE only (no label) between two node shapes.
+
+    Edge labels render in a separate third pass (see render_diagram) so
+    they paint on top of the node fills. The previous implementation
+    rendered line + label in the same edge pass; because edges run
+    BEFORE nodes (M3 fix #54: node fills must occlude edge endpoints),
+    labels ended up UNDER the node boxes — visible as missing labels on
+    ibd_phage_targeting draft_1 slides 10/19 (M3 Tier-A-deferred item).
+    """
     edge_kind = edge.get("kind", "straight")
     if edge_kind not in EDGE_KIND_MAP:
         raise ValueError(
@@ -296,42 +383,58 @@ def _render_edge(
         "graphite_gray", brand_tokens, "graphite_gray",
     )
 
-    # Edge labels: render as a small text box positioned ABOVE the line
-    # (not at center y). Original 2026-04-26 implementation centered the
-    # label at (mid_x, mid_y) where mid_y == node center y, so labels
-    # rendered ON the nodes themselves (live failure draft_2). 2026-04-27
-    # fix #54: offset label upward by 0.30in (above line) and shrink
-    # textbox width to 0.7in so it fits in the inter-node gap rather
-    # than spanning into adjacent nodes.
+
+def _render_edge_label(
+    slide,
+    edge: dict,
+    rendered_by_id: dict[str, _RenderedShape],
+    brand_tokens: dict | None,
+) -> None:
+    """Add the edge LABEL textbox (no line) on top of the rendered nodes.
+
+    Called from the third pass in render_diagram, AFTER nodes have
+    painted. Splits the M3 fix #54 'edges-first, nodes-on-top' constraint
+    so node fills occlude edge endpoints (clean visual) BUT labels still
+    appear on top of the diagram instead of behind it (M4a Tier A3).
+
+    Geometry inherits the 2026-04-27 fix #54 heuristic: offset the label
+    above (horizontal edges), right (vertical edges), or above-and-right
+    (diagonal) so it sits clear of the connector AND the inter-node gap.
+    """
+    src_id = edge.get("from")
+    dst_id = edge.get("to")
+    if src_id not in rendered_by_id or dst_id not in rendered_by_id:
+        return
     label = edge.get("label", "")
-    if label:
-        mid_x = (src.cx + dst.cx) / 2
-        mid_y = (src.cy + dst.cy) / 2
-        # Heuristic: if endpoints are roughly horizontal (|dy|<0.3),
-        # offset label above by 0.30in. If vertical (|dx|<0.3), offset
-        # right. Otherwise (diagonal), offset above-and-right by half each.
-        dy = abs(dst.cy - src.cy)
-        dx = abs(dst.cx - src.cx)
-        if dy < 0.3:
-            label_x = mid_x - 0.35
-            label_y = mid_y - 0.40   # above the line
-        elif dx < 0.3:
-            label_x = mid_x + 0.10   # right of the line
-            label_y = mid_y - 0.15
-        else:
-            label_x = mid_x - 0.20
-            label_y = mid_y - 0.30
-        tb = slide.shapes.add_textbox(
-            Inches(label_x), Inches(label_y),
-            Inches(0.70), Inches(0.25),
-        )
-        tb.text_frame.text = label
-        for paragraph in tb.text_frame.paragraphs:
-            for run in paragraph.runs:
-                run.font.size = Pt(9)
-                run.font.color.rgb = resolve_color(
-                    "graphite_gray", brand_tokens, "graphite_gray",
-                )
+    if not label:
+        return
+
+    src = rendered_by_id[src_id]
+    dst = rendered_by_id[dst_id]
+    mid_x = (src.cx + dst.cx) / 2
+    mid_y = (src.cy + dst.cy) / 2
+    dy = abs(dst.cy - src.cy)
+    dx = abs(dst.cx - src.cx)
+    if dy < 0.3:
+        label_x = mid_x - 0.35
+        label_y = mid_y - 0.40   # above the line
+    elif dx < 0.3:
+        label_x = mid_x + 0.10   # right of the line
+        label_y = mid_y - 0.15
+    else:
+        label_x = mid_x - 0.20
+        label_y = mid_y - 0.30
+    tb = slide.shapes.add_textbox(
+        Inches(label_x), Inches(label_y),
+        Inches(0.70), Inches(0.25),
+    )
+    tb.text_frame.text = label
+    for paragraph in tb.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(9)
+            run.font.color.rgb = resolve_color(
+                "graphite_gray", brand_tokens, "graphite_gray",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -366,16 +469,18 @@ def render_diagram(
             f"see SPEC §6 / DECISIONS D-028 for v0.2 plans)"
         )
 
-    # 2026-04-27 fix #54: render order matters for visual quality.
-    # python-pptx z-order = paint order (later shapes on top). When
-    # nodes were rendered first then edges second, the connector lines
-    # painted OVER the node box fills — endpoints appeared to bisect
-    # the boxes (live failure draft_2 visual review).
+    # Render order matters for visual quality (python-pptx z-order = paint
+    # order; later shapes on top). M4a Tier A3 keeps the M3 fix #54
+    # constraint AND fixes the M3-deferred edge-label-behind-nodes issue
+    # (ibd_phage_targeting draft_1 slides 10/19):
     #
-    # Fix: pre-compute node centers from node geometry (without adding
-    # shapes to the slide), render edges using those centers, THEN
-    # render node shapes on top. Node fills now occlude edge endpoints
-    # cleanly — the line appears to "enter" the node edge.
+    #   Pass 1: edge LINES (computed from node centers, no shapes yet).
+    #   Pass 2: NODE shapes — fills occlude edge endpoints (the lines
+    #           appear to "enter" the node edge, clean visual).
+    #   Pass 3: edge LABELS — paint on top of nodes so labels are never
+    #           hidden behind a node box even when the inter-node gap is
+    #           tight (slide 10 in the M3 smoke). The 2026-04-27 fix #54
+    #           offset heuristic still keeps labels in the gap.
     nodes = diagram.get("nodes", []) or []
     edges = diagram.get("edges", []) or []
 
@@ -388,19 +493,23 @@ def render_diagram(
         h = float(node["h"])
         centers_by_id[node_id] = (x + w / 2, y + h / 2)
 
-    # Pass 1: render edges using computed centers
+    # Pass 1: render edge LINES using computed centers
     edge_proxy: dict[str, _RenderedShape] = {
         nid: _RenderedShape(node_id=nid, shape=None, cx=cx, cy=cy)
         for nid, (cx, cy) in centers_by_id.items()
     }
     for edge in edges:
-        _render_edge(slide, edge, edge_proxy, brand_tokens)
+        _render_edge_line(slide, edge, edge_proxy, brand_tokens)
 
     # Pass 2: render node shapes on top of edges
     rendered_by_id: dict[str, _RenderedShape] = {}
     for node in nodes:
         rs = _render_node(slide, node, region, brand_tokens)
         rendered_by_id[rs.node_id] = rs
+
+    # Pass 3: render edge LABELS on top of nodes
+    for edge in edges:
+        _render_edge_label(slide, edge, rendered_by_id, brand_tokens)
 
 
 # ---------------------------------------------------------------------------

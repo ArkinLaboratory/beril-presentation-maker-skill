@@ -161,7 +161,10 @@ def test_render_node_swimlane_has_no_fill(dr, blank_slide):
 # Edge rendering
 # ---------------------------------------------------------------------------
 
-def test_render_edge_unknown_kind_raises(dr, blank_slide):
+def test_render_edge_line_unknown_kind_raises(dr, blank_slide):
+    """M4a Tier A3: _render_edge was split into _render_edge_line +
+    _render_edge_label so labels paint on top of nodes (third pass).
+    The unknown-kind ValueError lives on the line function."""
     node_a = {"id": "a", "label": "A", "shape": "rectangle",
               "x": 0, "y": 0, "w": 1, "h": 1}
     node_b = {"id": "b", "label": "B", "shape": "rectangle",
@@ -169,11 +172,12 @@ def test_render_edge_unknown_kind_raises(dr, blank_slide):
     rsa = dr._render_node(blank_slide, node_a, (0, 0, 10, 5), None)
     rsb = dr._render_node(blank_slide, node_b, (0, 0, 10, 5), None)
     with pytest.raises(ValueError):
-        dr._render_edge(blank_slide, {"from": "a", "to": "b", "kind": "magic"},
-                        {"a": rsa, "b": rsb}, brand_tokens=None)
+        dr._render_edge_line(blank_slide,
+                             {"from": "a", "to": "b", "kind": "magic"},
+                             {"a": rsa, "b": rsb}, brand_tokens=None)
 
 
-def test_render_edge_skips_missing_node(dr, blank_slide):
+def test_render_edge_line_skips_missing_node(dr, blank_slide):
     """Edge referencing an undeclared node should silently skip
     (validator catches; renderer is forgiving)."""
     rsa = dr._render_node(blank_slide,
@@ -181,9 +185,122 @@ def test_render_edge_skips_missing_node(dr, blank_slide):
                            "x": 0, "y": 0, "w": 1, "h": 1},
                           (0, 0, 10, 5), None)
     # Should not crash
-    dr._render_edge(blank_slide,
-                    {"from": "a", "to": "ghost", "kind": "straight"},
-                    {"a": rsa}, brand_tokens=None)
+    dr._render_edge_line(blank_slide,
+                         {"from": "a", "to": "ghost", "kind": "straight"},
+                         {"a": rsa}, brand_tokens=None)
+
+
+def test_render_edge_label_skips_missing_node(dr, blank_slide):
+    """The label pass is independent of the line pass; missing node →
+    silent skip (same forgiving behavior, separate code path)."""
+    rsa = dr._render_node(blank_slide,
+                          {"id": "a", "label": "A", "shape": "rectangle",
+                           "x": 0, "y": 0, "w": 1, "h": 1},
+                          (0, 0, 10, 5), None)
+    # Should not crash; should not add any shape
+    n_before = len(blank_slide.shapes)
+    dr._render_edge_label(blank_slide,
+                          {"from": "a", "to": "ghost", "label": "lost",
+                           "kind": "straight"},
+                          {"a": rsa}, brand_tokens=None)
+    assert len(blank_slide.shapes) == n_before
+
+
+def test_render_edge_label_skips_empty_label(dr, blank_slide):
+    """Edges without a label add nothing on the third pass."""
+    rsa = dr._render_node(blank_slide,
+                          {"id": "a", "label": "A", "shape": "rectangle",
+                           "x": 0, "y": 0, "w": 1, "h": 1},
+                          (0, 0, 10, 5), None)
+    rsb = dr._render_node(blank_slide,
+                          {"id": "b", "label": "B", "shape": "rectangle",
+                           "x": 3, "y": 0, "w": 1, "h": 1},
+                          (0, 0, 10, 5), None)
+    n_before = len(blank_slide.shapes)
+    dr._render_edge_label(blank_slide,
+                          {"from": "a", "to": "b", "kind": "straight"},
+                          {"a": rsa, "b": rsb}, brand_tokens=None)
+    assert len(blank_slide.shapes) == n_before
+
+
+# ---------------------------------------------------------------------------
+# M4a Tier A — explicit-fontScale shrink-to-fit + label z-order
+# ---------------------------------------------------------------------------
+
+def test_apply_fontscale_to_shape_short_label_renders_full(dr, blank_slide):
+    """Short labels (<= full_below) render at 100% fontScale — no shrink."""
+    node = {"id": "n", "label": "Short", "shape": "rectangle",
+            "x": 0, "y": 0, "w": 1.5, "h": 0.8}
+    rs = dr._render_node(blank_slide, node, (0, 0, 10, 5), None)
+    # _render_node already calls _apply_fontscale_to_shape; inspect the
+    # bodyPr it wrote.
+    DML = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    PML = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    tx_body = rs.shape.element.find(f"{{{PML}}}txBody")
+    if tx_body is None:
+        tx_body = rs.shape.element.find(f"{{{DML}}}txBody")
+    body_pr = tx_body.find(f"{{{DML}}}bodyPr")
+    norm = body_pr.find(f"{{{DML}}}normAutofit")
+    assert norm is not None, "node label must carry explicit normAutofit (LibreOffice quirk)"
+    assert norm.get("fontScale") == str(dr.NODE_FONTSCALE_FULL), \
+        f"5-char label should render at full scale, got {norm.get('fontScale')}"
+
+
+def test_apply_fontscale_to_shape_long_label_clamps_at_floor(dr, blank_slide):
+    """Long labels clamp at the 60% floor (DQ3) — never silently sub-60%."""
+    # 150-char label, well past the (40, 60, 90, 120) ladder
+    long_label = "x" * 150
+    node = {"id": "n", "label": long_label, "shape": "rectangle",
+            "x": 0, "y": 0, "w": 1.5, "h": 0.8}
+    rs = dr._render_node(blank_slide, node, (0, 0, 10, 5), None)
+    DML = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    PML = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    tx_body = rs.shape.element.find(f"{{{PML}}}txBody")
+    if tx_body is None:
+        tx_body = rs.shape.element.find(f"{{{DML}}}txBody")
+    body_pr = tx_body.find(f"{{{DML}}}bodyPr")
+    norm = body_pr.find(f"{{{DML}}}normAutofit")
+    assert norm.get("fontScale") == str(dr.NODE_FONTSCALE_FLOOR), \
+        f"150-char label should clamp at floor (60%), got {norm.get('fontScale')}"
+
+
+def test_render_diagram_edge_labels_paint_after_nodes(dr, blank_slide):
+    """M4a Tier A3: label textboxes render AFTER node shapes in
+    document/paint order — z-order = paint order in python-pptx, so a
+    later position means the label paints on top. The M3 deferred
+    defect (ibd draft_1 slides 10/19) was that labels rendered before
+    nodes and disappeared under the boxes."""
+    diagram = {
+        "kind": "boxes_and_arrows",
+        "nodes": [
+            {"id": "a", "label": "A", "shape": "rectangle",
+             "x": 1.0, "y": 1.0, "w": 1.5, "h": 0.8},
+            {"id": "b", "label": "B", "shape": "rectangle",
+             "x": 4.0, "y": 1.0, "w": 1.5, "h": 0.8},
+        ],
+        "edges": [
+            {"from": "a", "to": "b", "kind": "straight",
+             "label": "transitions"},
+        ],
+    }
+    dr.render_diagram(blank_slide, diagram, (0, 0, 10, 5), None)
+    # Walk shapes in document order and record the index of the last
+    # node (auto-shape) and the first textbox whose text is "transitions".
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    last_node_idx = -1
+    label_idx = -1
+    for i, shp in enumerate(blank_slide.shapes):
+        if shp.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+            last_node_idx = i
+        if shp.has_text_frame and shp.text_frame.text == "transitions":
+            label_idx = i
+    assert last_node_idx >= 0, "expected at least one auto-shape (node)"
+    assert label_idx >= 0, "expected the edge-label textbox to be present"
+    assert label_idx > last_node_idx, (
+        f"edge label (idx {label_idx}) must paint AFTER all node shapes "
+        f"(last node idx {last_node_idx}); otherwise it sits behind a node "
+        f"box (M3 Tier-A-deferred defect on ibd draft_1 slides 10/19)."
+    )
 
 
 # ---------------------------------------------------------------------------

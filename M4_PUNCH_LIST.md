@@ -15,7 +15,7 @@ times during M3 Tier E — `deliverable/pngs{,2,3}/`, `pngs4/draft.pdf`).
 
 | Tier | Scope | Status |
 |---|---|---|
-| A — explicit shrink-to-fit renderer + diagram connector labels | `assemble_pptx.py`, `diagram_render.py` | ⬜ not started |
+| A — explicit shrink-to-fit renderer + diagram connector labels | `assemble_pptx.py`, `diagram_render.py` | ✅ committed 2026-05-23 (suite 1058 passed; visual round pending in Tier E) |
 | B — content-length caps (prompts + validator backstops) | prompts, `slide_spec.py` | ⬜ not started |
 | C — the visual-QA pass | new `tools/visual_qa.py` + `visual_qa.v1.md` | ⬜ not started |
 | D — test-hygiene tidy + Slide-13 verification | `test_adversarial_interop.py` | ⬜ not started |
@@ -71,6 +71,9 @@ invocation — DQ1 settles whether it auto-runs or is opt-in. No `--max-cost-usd
 runbooks (`feedback_cost_record_dont_gate`).
 
 ## Open design questions — need Adam's sign-off before the affected tier
+
+> **RESOLVED 2026-05-23 (build session open).** All four signed off by Adam.
+> DQ1 → **opt-in** (verb + flag, advisory). DQ2 → **`soffice --headless --convert-to pdf` then `pdftoppm`** (Poppler) — `pdftoppm` confirmed present. DQ3 → **60% `fontScale` floor**; below-floor clamps at the floor + appends to `warnings`. DQ4 → **advisory soft-warning** (no hard reject; renderer is the safety net). Land as D-050..D-053 in Tier F.
 
 **DQ1 (gates Tier C) — does the visual-QA pass auto-run in the pipeline, or is it opt-in?**
 It costs a LibreOffice render + a ~27-slide vision LLM call. **Recommendation: opt-in** —
