@@ -229,7 +229,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md deck_outline.v1.md slide_compose.v1.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -1240,7 +1240,6 @@ CURATED_FIGURES_PATH=$CURATED_FIGURES
 CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
-PRIOR_SUBSTORY_OUTPUTS=
 TRANSITION_IN=$ti
 TRANSITION_OUT=$to
 SECTION_BUDGET=$budget
@@ -1260,7 +1259,7 @@ CITATION_POOL_PATH may not exist — emit slides without figures and \
 without citations[] entries in that case (the prompt's escape hatches \
 cover this). Write the result to OUT_PATH."
 
-  invoke_claude_with_retry "$PROMPTS_DIR/slide_compose.v1.md" \
+  invoke_claude_with_retry "$PROMPTS_DIR/slide_compose.v2.md" \
     "$user_prompt" "$out" "slide_compose-$sid"
 }
 
@@ -1332,11 +1331,48 @@ _slide_compose_v0_4() {
   _M3_BRIEF_REGISTER="$(_m3_outline_field "$substories" register)"
   _M3_BRIEF_ARC="$(_m3_outline_field "$substories" arc)"
 
+  local _t0
+  _t0="$(date +%s)"
+
   wp_run_pool "$max" "$STAGE_LOGS_DIR" "slide_compose" \
     _compose_one_substory "$@" || {
     echo "Error: one or more parallel slide_compose workers failed" >&2
     return 1
   }
+
+  # v0.4 M3 (E-2): surface the parallel-composition telemetry. Each
+  # composer's stream_progress banner went to its worker log (removed
+  # on success by wp_run_pool), so the stage was otherwise silent on
+  # cost/time — yet the wall-clock here IS the M3 parallelism win, the
+  # milestone's primary metric. Read the per-composer .metadata.json
+  # sidecars stream_progress wrote (these persist) and print the stage
+  # wall-clock + cumulative LLM cost/time. Telemetry only — never fails
+  # the stage.
+  local _wall=$(( $(date +%s) - _t0 ))
+  "$PYTHON_BIN" - "$SLIDES_DIR" "$_wall" "$@" <<'PYEOF' >&2 || true
+import json, sys
+slides_dir, wall, sids = sys.argv[1], int(sys.argv[2]), sys.argv[3:]
+tot_cost, tot_llm = 0.0, 0
+for sid in sids:
+    try:
+        m = json.load(open(f"{slides_dir}/{sid}_slides.json.metadata.json"))
+    except Exception:
+        print(f"    {sid}: (no metadata sidecar)")
+        continue
+    c, e = m.get("estimated_cost_usd"), m.get("elapsed_seconds")
+    if isinstance(c, (int, float)):
+        tot_cost += c
+    if isinstance(e, int):
+        tot_llm += e
+    cs = f"~${c:.3f}" if isinstance(c, (int, float)) else "~$?"
+    es = f"{e // 60}:{e % 60:02d}" if isinstance(e, int) else "?"
+    print(f"    {sid}: {es}  ·  {cs}")
+def fmt(s):
+    return f"{s // 60}:{s % 60:02d}"
+print(f"  slide_compose (parallel): wall-clock {fmt(wall)}  ·  "
+      f"cumulative LLM {fmt(tot_llm)}  ·  ~${tot_cost:.3f}  ·  "
+      f"{len(sids)} composers")
+PYEOF
   return 0
 }
 
@@ -2180,7 +2216,12 @@ if should_run slide_compose;    then stage_slide_compose   || { echo "FAIL at sl
 if should_run qa_prep;          then stage_qa_prep         || { echo "FAIL at qa_prep" >&2; exit 1; }
                                 else echo "[skip] qa_prep (resume from $RESUME_FROM)" >&2; fi
 
-if should_run speaker_notes;    then stage_speaker_notes   || { echo "FAIL at speaker_notes" >&2; exit 1; }
+# v0.4 M3 (D-033): the v0.4 composer (slide_compose.v2.md) authors
+# speaker notes inline — the separate speaker_notes stage is retired
+# on the v0.4 path. v0.3.x still runs it.
+if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
+  echo "[skip] speaker_notes (v0.4 — fused into slide_compose.v2; D-033)" >&2
+elif should_run speaker_notes;  then stage_speaker_notes   || { echo "FAIL at speaker_notes" >&2; exit 1; }
                                 else echo "[skip] speaker_notes (resume from $RESUME_FROM)" >&2; fi
 
 # v0.3.3: image_gen between speaker_notes and merge. Stage owns its own

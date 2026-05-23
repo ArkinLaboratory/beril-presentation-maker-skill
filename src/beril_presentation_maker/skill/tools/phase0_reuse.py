@@ -114,8 +114,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from beril_presentation_maker.skill.tools import extract_claims, extract_methods
-from beril_presentation_maker.skill.tools.draft_paths import DraftPaths
+# Sibling vendored tools. The orchestrator runs this file as a script
+# (sys.path[0] = the tools dir); the test suite and the `python3 -m`
+# form run it as a package module. Try the package import first — that
+# keeps the test / `-m` path byte-identical — and on failure (the
+# orchestrator's script invocation under the pipx venv, where
+# `beril_presentation_maker` is not an importable package) fall back to
+# a bare sibling import with the tools dir resolved from __file__
+# (mirrors merge_compose_fragments.py's sys.path idiom).
+try:
+    from beril_presentation_maker.skill.tools import extract_claims, extract_methods
+    from beril_presentation_maker.skill.tools.draft_paths import DraftPaths
+except ImportError:
+    _TOOLS_DIR = Path(__file__).resolve().parent
+    if str(_TOOLS_DIR) not in sys.path:
+        sys.path.insert(0, str(_TOOLS_DIR))
+    import extract_claims  # noqa: E402  (sibling tool)
+    import extract_methods  # noqa: E402  (sibling tool)
+    from draft_paths import DraftPaths  # noqa: E402  (sibling tool)
 
 VERSION = "0.4.0-m1-tierF5"
 

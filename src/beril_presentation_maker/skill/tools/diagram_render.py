@@ -227,6 +227,17 @@ def _render_node(
     if label:
         tf = sp.text_frame
         tf.text = label
+        # Contain the label inside the node box: wrap long labels and
+        # shrink-to-fit rather than spilling outside the shape
+        # (ibd_phage_targeting draft_1 slides 6/10/19 — node text overran
+        # the box). word_wrap alone wraps; auto_size also shrinks the
+        # font when even wrapped text would overflow.
+        tf.word_wrap = True
+        try:
+            from pptx.enum.text import MSO_AUTO_SIZE
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        except Exception:  # noqa: BLE001
+            pass
         # Color the text based on text_color_name
         for paragraph in tf.paragraphs:
             for run in paragraph.runs:

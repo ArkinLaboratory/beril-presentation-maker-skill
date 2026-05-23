@@ -74,6 +74,10 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── phase0_reuse.py          v0.4 M1: Phase-0 reuse/originate helper
 │       │   ├── parse_deck_outline.py    v0.4 M2: extract deck-outline fields
 │       │   │                            from the enriched 02_substories.md
+│       │   ├── worker_pool.sh           v0.4 M3: bounded-concurrency batch
+│       │   │                            runner (parallel slide_compose)
+│       │   ├── reconcile_deck.py        v0.4 M3: post-merge conflict checker
+│       │   │                            (dup figure / dup headline / image budget)
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime)
 │       ├── prompts/
@@ -81,8 +85,10 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            candidates + substory sketch
 │       │   ├── throughline.v1.md        Detailed throughline candidate gen
 │       │   ├── substory_design.v1.md    Per-substory punchline + slide map
-│       │   ├── slide_compose.v1.md      Slide-by-slide layout + content
-│       │   ├── speaker_notes.v1.md      100–150 wd/slide, evidence-anchored
+│       │   ├── slide_compose.v1.md      Slide-by-slide layout + content (v0_3)
+│       │   ├── slide_compose.v2.md      v0.4 M3: v0_4 composer — advisory deck
+│       │   │                            brief + fused speaker notes (D-033/D-044)
+│       │   ├── speaker_notes.v1.md      100–150 wd/slide, evidence-anchored (v0_3)
 │       │   ├── qa_prep.v1.md            10 anticipated questions + answers
 │       │   ├── citation_pool.v1.md      Lit-scan + reuse-from-paper
 │       │   ├── cross_tenant.v1.md       Cross-tenant integration extraction

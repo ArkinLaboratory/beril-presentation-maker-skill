@@ -21,10 +21,15 @@ Smoke-only behavior:
     "TBD", contributors ["TBD"], refs_short ["TBD - smoke run"]).
     Production orchestrator will populate these from the project's
     metadata + citation pool.
-  - speaker_notes_seed (if present in fragments) is dropped, NOT
-    promoted to speaker_notes. Smoke skips speaker_notes.v1; the
-    production path runs that prompt before merge and the
-    orchestrator injects the result.
+  - Speaker notes: a v0.3.x `compose-fragment.v1` fragment carries a
+    raw `speaker_notes_seed` (dropped on merge); the v0.3.x path runs
+    `speaker_notes.v1` before merge and merge injects the parsed
+    result from `--speaker-notes-dir`. A v0.4 `compose-fragment.v2`
+    fragment carries the FINISHED `speaker_notes` inline per slide
+    (D-033 fusion) — merge keeps it, and derives
+    `working/04_speaker_notes/{sid}_notes.json` from it so
+    beril-adversarial's `--type presentation` reviewer still finds
+    the notes.
   - evidence_anchors (orchestrator metadata, not slide_spec.json
     fields) is dropped on merge.
   - cross_tenant_integration / qa_anticipated slides are NOT spliced
@@ -469,6 +474,53 @@ def load_speaker_notes_for_substory(
     return out
 
 
+def derive_speaker_notes_files(
+    fragments: dict,
+    substories: list[dict],
+    speaker_notes_dir: Path | None,
+) -> int:
+    """v0.4 (D-033 fusion): write `{sid}_notes.json` from inline notes.
+
+    A `compose-fragment.v2` fragment carries the finished `speaker_notes`
+    inline on each slide. The separate `speaker_notes` stage is retired
+    on the v0.4 path, but beril-adversarial's `--type presentation`
+    reviewer still reads `working/04_speaker_notes/{sid}_notes.json`.
+    This derives those files from the fused fragments, in the exact
+    `notes_by_position` shape `parse_speaker_notes.py` emits, so the
+    cross-skill contract holds.
+
+    No-op (returns 0) when `speaker_notes_dir` is None or no fragment
+    declares `schema_version == "compose-fragment.v2"` (the v0.3.x
+    path, where `speaker_notes.v1` already wrote those files).
+    """
+    if speaker_notes_dir is None:
+        return 0
+    written = 0
+    for substory in substories:
+        sid = substory["id"]
+        fragment = fragments.get(sid)
+        if not isinstance(fragment, dict):
+            continue
+        if fragment.get("schema_version") != "compose-fragment.v2":
+            continue
+        notes_by_position: dict[str, str] = {}
+        for pos, slide in enumerate(fragment.get("slides", []) or []):
+            notes = slide.get("speaker_notes") if isinstance(slide, dict) else None
+            if isinstance(notes, str) and notes.strip():
+                notes_by_position[str(pos)] = notes
+        speaker_notes_dir.mkdir(parents=True, exist_ok=True)
+        out_path = speaker_notes_dir / f"{sid}_notes.json"
+        out_path.write_text(
+            json.dumps(
+                {"substory_id": sid, "notes_by_position": notes_by_position},
+                indent=2, ensure_ascii=False,
+            ) + "\n",
+            encoding="utf-8",
+        )
+        written += 1
+    return written
+
+
 def load_intro_fragment(path: Path | None) -> list[dict]:
     """Load the intro fragment (intro.json) if present and non-empty.
 
@@ -668,6 +720,16 @@ def main() -> int:
             slides.append(cleaned)
             next_id += 1
 
+    # v0.4 (D-033 fusion): a compose-fragment.v2 fragment carries the
+    # speaker_notes inline (kept by strip_orchestrator_metadata, which
+    # only drops speaker_notes_seed). The separate speaker_notes stage
+    # is retired on the v0.4 path, so derive the
+    # working/04_speaker_notes/{sid}_notes.json files that
+    # beril-adversarial's --type presentation reviewer still reads.
+    n_notes_derived = derive_speaker_notes_files(
+        fragments, substories, speaker_notes_dir
+    )
+
     # 4. Cross-tenant slide (optional, deck-level — between last substory
     #    and acknowledgments). Per cross_tenant.v1.md, this is a single
     #    slide describing the project's K-BERDL platform integration if
@@ -766,6 +828,10 @@ def main() -> int:
           f"{len(substories)} substories)", file=sys.stderr)
     if n_notes_injected > 0:
         print(f"  -> injected speaker_notes on {n_notes_injected} slide(s)",
+              file=sys.stderr)
+    if n_notes_derived > 0:
+        print(f"  -> v0.4 fused notes: derived {n_notes_derived} "
+              f"{{sid}}_notes.json file(s) for the adversarial reviewer",
               file=sys.stderr)
     if image_manifest is not None:
         print(f"  -> image-manifest: bound {n_images_bound} approved image(s); "

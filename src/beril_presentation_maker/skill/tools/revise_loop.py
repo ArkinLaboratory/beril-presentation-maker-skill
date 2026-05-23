@@ -702,7 +702,7 @@ def _render_next_actions(review: dict[str, Any],
             f = by_id.get(fid, {})
             sev = f.get("severity", "?")
             cls = f.get("class", "?")
-            slide_id = f.get("slide_id", "n/a")
+            slide_id = f.get("slide_id") or "n/a"
             issue = f.get("issue", "")[:160]
             lines.append(f"- **{fid}** ({sev} {cls}, slide {slide_id}): {issue}...")
         lines.append("")
@@ -715,7 +715,7 @@ def _render_next_actions(review: dict[str, Any],
             f = by_id.get(fid, {})
             sev = f.get("severity", "?")
             cls = f.get("class", "?")
-            slide_id = f.get("slide_id", "n/a")
+            slide_id = f.get("slide_id") or "n/a"
             issue = f.get("issue", "")
             fix_hint = f.get("fix_hint", "")
             lines.append(f"- **{fid}** ({sev} {cls}, slide {slide_id}):")
@@ -743,7 +743,7 @@ def _render_next_actions(review: dict[str, Any],
         lines.append("")
         for f in by_severity[sev]:
             cls = f.get("class", "?")
-            slide_id = f.get("slide_id", "n/a")
+            slide_id = f.get("slide_id") or "n/a"
             issue = f.get("issue", "")
             lines.append(f"- **{f.get('id')}** ({cls}, slide {slide_id}): {issue}")
         lines.append("")
@@ -777,7 +777,7 @@ def _render_next_actions(review: dict[str, Any],
         lines.append("")
         for f in citation_findings:
             cid = f.get("citation_id", "<missing citation_id>")
-            slide_id = f.get("slide_id", "n/a")
+            slide_id = f.get("slide_id") or "n/a"
             issue = f.get("issue", "")
             lines.append(f"- **{f.get('id')}** (slide {slide_id}, "
                          f"citation_id `{cid}`): {issue}")

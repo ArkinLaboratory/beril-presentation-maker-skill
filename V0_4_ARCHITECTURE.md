@@ -1067,16 +1067,39 @@ architecture-time validators, the `deck_architecture_pick` gate.
 Validated by the 2026-05-23 outline probe (§20.7). Opt-in
 `--architecture-pipeline v0_4`; v0.3.x default unchanged. Est. ~12–18h.
 
-**M3 — Per-substory parallel composition.** Worker-pool
-implementation in `presentation_maker.sh` (or Python wrapper).
-Composer prompt narrowed to read architecture + assigned slots only.
-Fused `slide_compose` + `speaker_notes` per substory. Empirical
-Tier-2 detection-class calibration done at M3 start (paper-writer §7.5 pattern).
+**M3 — Per-substory parallel composition — STRUCTURALLY COMPLETE 2026-05-23.**
+`tools/worker_pool.sh` (sourceable bounded-concurrency batch runner) +
+a parallel `_slide_compose_v0_4` branch; the v0.4 dispatch re-sequenced
+so the Phase-0 producers run before `deck_outline` (closed M1 Tier F1);
+`tools/reconcile_deck.py` post-merge conflict checker; `slide_compose.v2.md`
+(advisory deck-outline brief + fused speaker notes, D-033 / D-044; emits
+`compose-fragment.v2`); `merge_compose_fragments.py` dual-mode. Tier E
+live smoke on `ibd_phage_targeting` ran the v0.4 path end-to-end; patches
+E-1…E-7 logged in `M3_PUNCH_LIST.md`. The deck's render-quality debt —
+fixed-size assembler boxes vs variable composer content — is **routed to
+M4** (Adam 2026-05-23), not M3's blast radius. Empirical Tier-2
+detection-class calibration moved to M4b (D-049). Detail: `M3_PUNCH_LIST.md`.
 
-**M4 — Tiered review cascade.** `review_cascade.py` orchestrator;
-Tier 1 deterministic (existing P-validators + new architecture-drift
-check); Tier 2 Haiku; Tier 3 canonical adversarial. Fail-fast
-short-circuiting at every tier boundary.
+**M4 — Render-quality + review cascade.** Two halves, M4a before M4b
+(Adam 2026-05-23):
+
+- **M4a — visual-QA + content discipline.** The render-debt fix.
+  (i) Renderer: explicit shrink-to-fit (explicit `fontScale` — the
+  mechanism LibreOffice honours; a bare `<a:normAutofit>` is not
+  computed at render) on the overflow-prone slots — diagram nodes,
+  workflow step-captions, `big_number` subtitle, `data_table` caption.
+  (ii) Content: length caps in the prompts — `diagram_design` node
+  labels, `slide_compose.v2` subtitle/caption, `qa_prep` `answer_summary`.
+  (iii) A visual-QA check: render → PNG → vision pass flagging
+  containment / overflow / footer-collision + headline↔body coherence.
+  Absorbs the M3-deferred items: workflow inter-box connector-label
+  placement, Slide-13 compound-headline verification. Needs a
+  render-validate loop. Spec input: the M3 Tier-E examination + defect
+  taxonomy (`M3_PUNCH_LIST.md` E-phase patch log).
+- **M4b — tiered review cascade.** The original §16 M4: `review_cascade.py`
+  orchestrator; Tier 1 deterministic P-validators; Tier 2 Haiku with
+  empirical detection-class calibration; Tier 3 canonical adversarial;
+  fail-fast short-circuiting at every tier boundary.
 
 **M5 — Image-gen multi-provider + revise invariance.** AI Studio
 provider in `image_client.py`; auth discovery; model probe;
@@ -1337,6 +1360,11 @@ coordination; M2-lite restores A-grade coordination while keeping
 parallelism.
 
 ### 20.8 M2-lite ship state (2026-05-23) and the M3-carried dependency
+
+> **RESOLVED 2026-05-23.** The M3-carried dependency described below —
+> wiring `phase0_reuse.py` into the orchestrator — shipped in M3 Tier A
+> (`stage_phase0_tooling` + the v0.4 dispatch re-sequencing). M3 is
+> structurally complete; see `M3_PUNCH_LIST.md` and §16 M3.
 
 M2-lite shipped 2026-05-23. In tree: `deck_outline.v1.md` (the prompt,
 an enrichment of `substory_design.v1`), `parse_deck_outline.py` (+ 15

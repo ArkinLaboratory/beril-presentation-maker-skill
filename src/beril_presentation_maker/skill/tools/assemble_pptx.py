@@ -549,10 +549,19 @@ FIGURE_REGIONS = {
     "concept_illustration": (5.30, 1.30, 4.50, 3.70),
 }
 
-# Caption/footer regions (overlaid on slide)
-CAPTION_BAND = (0.30, 4.95, 9.40, 0.40)   # bottom 0.4-inch strip
-CITATION_BAND = (0.30, 5.20, 9.40, 0.30)  # very-bottom strip
-AI_DISCLOSURE_BAND = (0.30, 5.30, 9.40, 0.20)  # 8pt graphite-gray
+# Caption/footer regions (overlaid on slide).
+#
+# The bottom logo strip (DOE seal + KBase logo, baked into every master
+# layout) occupies y ≈ 5.00–5.55 on the 10.0 × 5.62in slide. ALL slide
+# content — placeholders, figures, captions, footers — must end above
+# FOOTER_SAFE_BOTTOM. The bands below are sized to land in the
+# secondary-text strip just above it (2026-05-23: ibd_phage_targeting
+# draft_1 surfaced ~8 slides with text rendered into the logo strip).
+FOOTER_SAFE_BOTTOM = 4.92
+
+CAPTION_BAND = (0.30, 4.48, 9.40, 0.40)   # secondary-text strip, ends 4.88
+CITATION_BAND = (0.30, 4.58, 9.40, 0.30)  # citation strip, ends 4.88
+AI_DISCLOSURE_BAND = (0.30, 4.70, 9.40, 0.20)  # 8pt graphite-gray, ends 4.90
 
 GRAPHITE_GRAY_RGB = (157, 146, 135)  # KBase secondary palette
 
@@ -695,7 +704,7 @@ def _fill_section_divider(slide, content, draft_dir, warnings):
     if content.get("substory_number"):
         # Add a small footer with the substory number
         _add_textbox(slide, f"Substory {content['substory_number']}",
-                     0.30, 5.10, 4.00, 0.30,
+                     0.30, 4.60, 4.00, 0.30,
                      font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB)
 
 
@@ -753,31 +762,37 @@ def _fill_big_number(slide, content, draft_dir, warnings):
     smaller subtitle below as a separate text box (the placeholder font is
     66pt bold, and we want subtitle smaller)."""
     _set_title(slide, content["headline"])
-    # Subtitle in a separate textbox below the title region.
-    # Title region per LAYOUT_FIXES: off (660902,923453) ext (7840301,3286408)
-    # = (0.72, 1.01, 8.57 × 3.59 in). Title bottom = 4.60; logos start
-    # at 5.00. Only 0.40 in available for subtitle.
-    #
-    # 2026-04-28 (v0.2.1 fix, draft_9 slide 18):
-    #   Subtitle was 20pt × H=0.40 without word_wrap. Production text
-    #   (64 chars) needs ~1.5 lines at 20pt — overflowed off the right
-    #   edge. Cannot grow box height (would overlap title or logos),
-    #   so reduce font to 16pt: 64 chars / 8.57in × (1.6 × 72/16) cpi
-    #   = ~1.04 lines, fits 0.40 in tall slot. word_wrap=True handles
-    #   any longer subtitles via wrapping (slide_compose prompt should
-    #   cap subtitle ≤45 chars in v0.3+).
+    # The big number sits in the TITLE placeholder. The master's
+    # LAYOUT_FIXES region (top 1.01in, 3.59in tall, bottom 4.60) left
+    # only 0.40in between the title and the logo strip at y=5.00 — too
+    # little for THREE stacked sub-elements, which forced
+    # subtitle/sub_pointer/source_footer down into the footer
+    # (2026-05-23: ibd_phage_targeting draft_1 slides 7/11/17/20).
+    # Shrink the title placeholder so the ~1in number centres higher
+    # and the three sub-elements fit above FOOTER_SAFE_BOTTOM.
+    title_ph = _find_placeholder(slide, 0)
+    if title_ph is not None:
+        # Set ALL FOUR dims — a placeholder that inherits geometry from
+        # the layout has no slide-level xfrm; setting only top/height
+        # leaves left/width at 0 and the text collapses to a zero-width
+        # column. left/width here mirror big_number's LAYOUT_FIXES region.
+        title_ph.left = Inches(0.72)
+        title_ph.top = Inches(1.01)
+        title_ph.width = Inches(8.57)
+        title_ph.height = Inches(2.45)   # bottom 3.46
+    # subtitle — what the number means
     _add_textbox(slide, content["subtitle"],
-                 0.72, 4.65, 8.57, 0.40,
+                 0.72, 3.58, 8.57, 0.52,
                  font_size_pt=16, align_center=True,
                  word_wrap=True)
     if content.get("sub_pointer"):
         _add_textbox(slide, content["sub_pointer"],
-                     0.72, 5.05, 8.57, 0.30,
+                     0.72, 4.16, 8.57, 0.34,
                      font_size_pt=12, color_rgb=GRAPHITE_GRAY_RGB,
-                     align_center=True)
+                     align_center=True, word_wrap=True)
     if content.get("source_footer"):
         _add_textbox(slide, content["source_footer"],
-                     0.30, 5.35, 9.40, 0.20,
+                     0.30, 4.58, 9.40, 0.30,
                      font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
 
 
@@ -821,7 +836,20 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
                          font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
                          word_wrap=True)
     else:
+        # No figure — bullets fill the body placeholder. Trim it clear
+        # of the footer band + add autofit (the master body runs to
+        # y=5.00, into the logo strip; the no-figure branch previously
+        # had neither trim nor autofit — ibd draft_1 slide 8).
+        ph = _find_placeholder(slide, 1)
+        if ph is not None:
+            # All four dims — see the big_number note: top/height-only on
+            # an inheriting placeholder zero-widths the text.
+            ph.left = Inches(0.34)
+            ph.top = Inches(1.30)
+            ph.width = Inches(9.32)
+            ph.height = Inches(3.25)   # bottom 4.55
         _set_placeholder_bullets(slide, 1, bullets)
+        _enable_normautofit(slide, 1)
     if content.get("citations"):
         # short-form citation footer at bottom
         cite_text = " · ".join(content["citations"])
@@ -957,9 +985,14 @@ def _fill_data_table(slide, content, draft_dir, warnings):
     table_left = Inches(0.50)
     table_top = Inches(1.10)
     table_width = Inches(9.00)
-    # Max usable vertical band: 1.10 → 4.50 = 3.40 in. Leaves 0.50 in
-    # below the table for caption + footnote, then logos at 5.00.
-    max_table_h_in = 3.40
+    # Max table band: 1.10 → 4.10 = 3.00 in. The caption + footnote sit
+    # at FIXED y's below it (4.18, 4.56) — NOT table-bottom-relative —
+    # because python-pptx `add_table` height is only a hint: rows grow
+    # to fit cell content, so a table-bottom estimate undershoots the
+    # real bottom and the caption lands on the table (ibd_phage_targeting
+    # draft_1 slides 16, 21). Bounding the table + fixed caption/footnote
+    # y's keeps both clear, all above the logo strip at y=5.00.
+    max_table_h_in = 3.00
     # Header row gets a slightly taller line (16pt + padding); data rows
     # use 14pt. Cap row height so 12-row tables fit; smaller tables get
     # taller rows for legibility.
@@ -1021,24 +1054,22 @@ def _fill_data_table(slide, content, draft_dir, warnings):
                 align=PP_ALIGN.LEFT,
             )
 
-    # --- Caption (below table) ---
-    table_bottom_in = 1.10 + target_row_h_in * n_rows
+    # --- Caption (fixed y below the bounded table) ---
     caption = content.get("caption")
     if caption:
         _add_textbox(
             slide, caption,
-            0.50, table_bottom_in + 0.05, 9.00, 0.30,
+            0.50, 4.18, 9.00, 0.30,
             font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
             word_wrap=True,
         )
 
-    # --- Footnote (very bottom, above logo strip) ---
+    # --- Footnote (fixed y, just above the logo strip) ---
     footnote = content.get("footnote") or content.get("data_source")
     if footnote:
-        # Place at y=4.80, height 0.18, above logos at 5.00.
         _add_textbox(
             slide, footnote,
-            0.50, 4.80, 9.00, 0.18,
+            0.50, 4.56, 9.00, 0.18,
             font_size_pt=9, color_rgb=GRAPHITE_GRAY_RGB,
             word_wrap=True,
         )
@@ -1100,8 +1131,9 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
         # Same pattern used in _load_slide_spec_module above.
         sys.modules["diagram_render"] = _dr
         _spec.loader.exec_module(_dr)
-        # Diagram region: most of the body, leaving room for step caption + footer.
-        region = (0.50, 1.30, 9.00, 3.10)
+        # Diagram region: most of the body, shrunk to leave room for the
+        # step-caption band + tool-version footer ABOVE the logo strip.
+        region = (0.50, 1.25, 9.00, 2.85)
         # Brand tokens for color resolution
         tokens = _dr.load_brand_tokens()
         _dr.render_diagram(slide, diagram, region, tokens)
@@ -1132,18 +1164,29 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
             # captions >100 chars will be clipped — content-side cap (~80
             # chars per step) is a v0.3 prompt iteration.
             _add_textbox(slide, caption,
-                         x + 0.05, 4.50, column_w - 0.10, 0.55,
+                         x + 0.05, 4.16, column_w - 0.10, 0.52,
                          font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
                          word_wrap=True)
     if content.get("tool_version_footer"):
         _add_textbox(slide, content["tool_version_footer"],
-                     0.30, 5.30, 9.40, 0.20,
+                     0.30, 4.70, 9.40, 0.20,
                      font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
 
 
 def _fill_methods_summary(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
     _set_placeholder_bullets(slide, 1, content["bullets"])
+    # Trim the body placeholder clear of the footer band — the master
+    # body runs to y=5.00 (into the logo strip); reserve 4.50–4.92 for
+    # the tools-versions / see-notes footer below.
+    _mp = _find_placeholder(slide, 1)
+    if _mp is not None:
+        # All four dims — see the big_number note: top/height-only on an
+        # inheriting placeholder zero-widths the text.
+        _mp.left = Inches(0.34)
+        _mp.top = Inches(1.30)
+        _mp.width = Inches(9.32)
+        _mp.height = Inches(3.15)   # bottom 4.45
     # 2026-04-28 (v0.2.1): normAutofit at slide level so dense methods
     # content (5-7 bullets, 600-800 chars) shrinks to fit. The layout-
     # level body_pr autofit from LAYOUT_FIXES gets overridden when
@@ -1167,14 +1210,14 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
         )
         if formatted:
             _add_textbox(slide, formatted,
-                         0.30, 5.18, 9.40, 0.28,
+                         0.30, 4.52, 9.40, 0.28,
                          font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
             return  # tools_versions footer takes the speaker-notes hint slot
 
     # No tools_versions populated — fall back to the speaker-notes hint
     if content.get("see_notes_footer", True):
         _add_textbox(slide, "(see speaker notes for full detail)",
-                     0.30, 5.20, 9.40, 0.30,
+                     0.30, 4.52, 9.40, 0.30,
                      font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
 
 
@@ -1296,22 +1339,60 @@ def _fill_references(slide, content, draft_dir, warnings):
 
 def _fill_qa_anticipated(slide, content, draft_dir, warnings):
     _set_title(slide, content["question"])
-    body_lines = [content["answer_summary"]]
-    if content.get("answer_detail"):
-        body_lines.append("")
-        body_lines.append(content["answer_detail"])
-    body_lines.append("")
-    body_lines.append(f"↪ {content['evidence_pointer']}")
+    # The `question` is an anticipated *audience question* — naturally
+    # longer than a normal slide title. Shrink it to fit the 1.3in title
+    # band rather than letting it overflow into the body region (the same
+    # treatment big_idea's centered-assertion mode gives long claims).
+    _enable_normautofit_on_title(slide)
+
+    # The slide FACE carries the glanceable answer only: `answer_summary`
+    # + the evidence pointer. `answer_detail` is the *speaker reference*
+    # by qa_prep's own contract (qa_prep stage prompt: "answer_summary
+    # (slide body) + answer_detail (speaker reference)") — it belongs in
+    # the notes pane, not on the slide. Rendering it on the face was
+    # renderer/contract drift and the direct cause of the unreadable
+    # Q&A slides (ibd_phage_targeting draft_1 slides 23-25 carried
+    # ~3.8K characters on one slide; ~2.2K of that was answer_detail).
+    body_lines = [
+        content["answer_summary"],
+        "",
+        f"↪ {content['evidence_pointer']}",
+    ]
     _set_placeholder_bullets(slide, 1, body_lines)
-    # 2026-04-29 (v0.2.2): tighter normAutofit specifically for qa_anticipated.
-    # v0.2.1's 80% fontScale wasn't aggressive enough — math: 80% × 18pt
-    # × 1.2 leading × 4.00 in body × 9.32 in width ≈ 1400 chars capacity,
-    # but production qa_prep produces 2000+ char 5-paragraph answers (~50%
-    # overflow). 60% scale gives ~2000 chars at 10.8pt — readable at
-    # projection. methods/refs stay at 80% (their content fits within that).
-    # Companion fix: qa_prep.v1.md word-budget cap (~600 chars) lands in
-    # v0.3+ as prompt iteration.
-    _enable_normautofit(slide, 1, font_scale=60000, ln_spc_reduction=20000)
+    # Trim the body placeholder clear of the footer band — the master
+    # qa body runs to y=5.30, deep into the logo strip.
+    qa_body = _find_placeholder(slide, 1)
+    if qa_body is not None:
+        # All four dims — see the big_number note: top/height-only on an
+        # inheriting placeholder zero-widths the text.
+        qa_body.left = Inches(0.34)
+        qa_body.top = Inches(1.55)
+        qa_body.width = Inches(9.32)
+        qa_body.height = Inches(3.00)   # bottom 4.55
+
+    # Adaptive body autofit — scale by actual content length so short
+    # answers render full-size and long ones shrink toward the 60%
+    # floor. (v0.2.2 used a fixed 60%, which rendered moderate answers
+    # tiny.) General — a function of content length, not of any one
+    # deck. A hard answer-length cap belongs in qa_prep.v1.md; this
+    # keeps the render legible whatever length arrives.
+    body_chars = sum(len(s) for s in body_lines)
+    if body_chars <= 700:
+        scale = 100000
+    elif body_chars <= 1100:
+        scale = 90000
+    elif body_chars <= 1500:
+        scale = 80000
+    elif body_chars <= 2000:
+        scale = 70000
+    else:
+        scale = 60000
+    _enable_normautofit(slide, 1, font_scale=scale, ln_spc_reduction=20000)
+
+    # Route `answer_detail` (the speaker reference) to the notes pane.
+    detail = content.get("answer_detail")
+    if isinstance(detail, str) and detail.strip():
+        _set_speaker_notes(slide, detail.strip())
 
 
 # Dispatcher
@@ -1501,7 +1582,11 @@ def assemble(slide_spec_path: str | Path,
             )
         handler(slide, slide_data["content"], draft_dir, warnings)
 
-        if "speaker_notes" in slide_data:
+        # Only override handler-set notes when slide_data carries real
+        # notes content. `in` would let a present-but-empty/null
+        # speaker_notes clobber notes a layout handler set itself (e.g.
+        # qa_anticipated routes answer_detail to the notes pane).
+        if slide_data.get("speaker_notes"):
             _set_speaker_notes(slide, slide_data["speaker_notes"])
 
     if strict and warnings:

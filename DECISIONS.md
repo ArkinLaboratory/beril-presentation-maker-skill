@@ -1017,3 +1017,45 @@ DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC re
 **Alternatives considered:** Keep the architecture-approval gate — rejected; a second gate on an advisory artifact is friction without a commensurate decision at stake. Make the gate opt-in via a flag — rejected; an unused gate is dead code.
 
 **Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §20.2, §10.1; supersedes §6.7.
+
+---
+
+## D-046 — 2026-05-23 — M3: Phase-0 stages cluster after the throughline gate (DQ1)
+
+**Decision:** On the v0.4 path, `phase0_tooling` and the other Phase-0 producers (`curate_figures`, `citation_pool`, `cross_tenant`) run as a contiguous cluster *after* the throughline-pick gate and immediately before `deck_outline` — not before the gate as the §10.1 enum sketch implied.
+
+**Rationale:** `citation_pool` and `cross_tenant` need the approved throughline anyway; one contiguous reorder is lower-risk than scattering; Phase-0 spend ($0.50–$1.50) lands only on gate-approved runs. The §10.1 ordering is immaterial to correctness — `phase0_reuse.py` depends only on the project.
+
+**Related:** [M3_PUNCH_LIST.md](M3_PUNCH_LIST.md) Tier A; V0_4_ARCHITECTURE §10.1.
+
+---
+
+## D-047 — 2026-05-23 — M3: bash `&`/`wait` worker-pool for parallel slide_compose (DQ2)
+
+**Decision:** Parallel per-substory composition uses a bash `&`/`wait` worker-pool (`tools/worker_pool.sh`, `wp_run_pool`) that reuses `invoke_claude_with_retry` verbatim, rather than a Python `concurrent.futures` wrapper.
+
+**Rationale:** `invoke_claude_with_retry` already encodes the load-bearing retry semantics (rc=2 Write-not-invoked; rc=4 API-transient backoff). A Python pool would reimplement them. The pool is bash-3.2-compatible (indexed arrays, no `wait -n`); the concurrency risk under `set -euo pipefail` is contained by per-worker `wait "$pid" || rc=$?` and per-worker stderr capture.
+
+**Alternatives considered:** Python `concurrent.futures` subprocess wrapper — rejected; reimplements the retry/stream machinery for no gain.
+
+**Related:** [M3_PUNCH_LIST.md](M3_PUNCH_LIST.md) Tier B; V0_4_ARCHITECTURE §7.3.
+
+---
+
+## D-048 — 2026-05-23 — M3: full speaker-notes fusion into the composer (DQ3)
+
+**Decision:** The v0.4 composer (`slide_compose.v2.md`) authors the full 200–400-word speaker notes inline (one `speaker_notes` string per slide); the separate `speaker_notes.v1` stage is retired on the v0.4 path. Confirms D-033.
+
+**Rationale:** §7.3's shared-context argument holds (don't reload REPORT/throughline/outline twice). D-033's original premise — a *narrowed* composer with spare capacity — partly eroded when M2-lite kept the composer full; so the decision carries a documented **un-fuse off-ramp**: if Tier-E notes quality disappoints, `speaker_notes` returns as its own stage, parallelized through `wp_run_pool`. Cross-skill: `merge_compose_fragments.py` derives `working/04_speaker_notes/{sid}_notes.json` so beril-adversarial's reviewer contract holds.
+
+**Related:** [M3_PUNCH_LIST.md](M3_PUNCH_LIST.md) Tier D; D-033; `feedback_cross_skill_contract_drift`.
+
+---
+
+## D-049 — 2026-05-23 — M3: Tier-2 detection-class calibration deferred to M4b (DQ4)
+
+**Decision:** The empirical Tier-2 adversarial-detection-class calibration that §16 originally assigned to "M3 start" is deferred to M4b (the review cascade).
+
+**Rationale:** Tier 2 is a review-cascade component; calibrating detection classes for a cascade that does not exist yet is premature, and §16's assignment predates the M2-lite reshape.
+
+**Related:** [M3_PUNCH_LIST.md](M3_PUNCH_LIST.md) DQ4; V0_4_ARCHITECTURE §16 M4b.

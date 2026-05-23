@@ -1,6 +1,14 @@
 # M3 Punch List — Per-substory parallel composition
 
-**Filed:** 2026-05-23. **Status: IN PROGRESS — DQ1–DQ4 resolved 2026-05-23; Tiers A–C shipped 2026-05-23; Tier D next.**
+**Filed:** 2026-05-23. **Status (2026-05-23): M3 STRUCTURALLY COMPLETE.** Tiers A–E done
+— the v0.4 path runs end-to-end on `ibd_phage_targeting` (phase0 reuse → deck_outline →
+4 parallel composers → fused notes → reconcile → valid 27-slide deck). Tier E surfaced
+patches E-1…E-7. The remaining render-quality debt — diagram containment, fixed-box text
+overflow, Slide-13 headline — is **routed to M4** (Adam, 2026-05-23): it is one root
+cause (fixed-size boxes vs variable composer content), an assembler/content concern, not
+M3's blast radius. **Tier F closeout complete 2026-05-23 — M3 COMPLETE; awaiting Adam's
+M3-closeout commit. Next milestone: M4 (M4a visual-QA + content discipline, then M4b
+review cascade).**
 **Milestone:** M3 of the v0.4 architectural pivot (`V0_4_ARCHITECTURE.md` §16 + §20).
 **Predecessor:** M2 — M2-lite deck-outline call (shipped 2026-05-23; `M2_PUNCH_LIST.md`).
 **Successor:** M4 — tiered review cascade.
@@ -13,9 +21,9 @@
 | A — `phase0_tooling` stage + v0.4 stage re-sequencing | orchestrator | ✅ shipped 2026-05-23 |
 | B — parallel worker-pool + per-section composer brief | orchestrator | ✅ shipped 2026-05-23 |
 | C — post-merge reconciliation check | Python tool | ✅ shipped 2026-05-23 |
-| D — composer prompt: narrow + fuse speaker-notes + consume brief | prompt + Python | ⬜ not started |
-| E — end-to-end v0.4 smoke on `ibd_phage_targeting` | live | ⬜ not started |
-| F — closeout | paperwork | ⬜ not started |
+| D — composer prompt: narrow + fuse speaker-notes + consume brief | prompt + Python | 🔶 code-complete 2026-05-23 — `slide_compose.v2.md` awaiting review |
+| E — end-to-end v0.4 smoke on `ibd_phage_targeting` | live | ✅ structural gate passed 2026-05-23 — v0.4 path runs end-to-end; render debt → M4 |
+| F — closeout | paperwork | ✅ done 2026-05-23 |
 
 ## Key finding — the v0.4 path does not run end-to-end today
 
@@ -257,6 +265,32 @@ Prompt edits deferred to here per `feedback_punch_list_release_pattern` — prom
 expensive; wiring (A/B/C) is stabilised first. Couples a prompt change with its consumer
 (`merge_compose_fragments.py`) — pinned by a contract test (the intra-skill drift lesson).
 
+**Status — CODE-COMPLETE 2026-05-23; `slide_compose.v2.md` awaiting Adam's review before
+Tier E.** What landed: `slide_compose.v2.md` (1249 lines — built by `cp v1 v2` then a
+targeted delta so the ~900 lines of live-failure-earned discipline stay byte-identical;
+adds the advisory deck-outline brief section, fuses speaker-notes authoring as a
+200–400-word `speaker_notes` string per slide, emits `compose-fragment.v2`, drops
+`PRIOR_SUBSTORY_OUTPUTS` + the seed discipline; PA-15–PA-18 + self-review items 16–17 are
+the new notes checks). `merge_compose_fragments.py` is dual-mode — `strip_orchestrator_metadata`
+already keeps an inline `speaker_notes`, so a v2 fragment's notes survive into
+`slide_spec.json` untouched; the new `derive_speaker_notes_files()` writes
+`working/04_speaker_notes/{sid}_notes.json` in the `parse_speaker_notes.py`
+`notes_by_position` shape (the beril-adversarial contract, DQ3). `presentation_maker.sh`:
+`_compose_one_substory` repointed v1→v2, `slide_compose.v2.md` added to the startup
+prompt-existence check, `stage_speaker_notes` retired on the v0_4 dispatch path (v0_3
+keeps it). **`slide_spec.py` needed no change** — it already accepts an optional
+slide-level `speaker_notes` string; `compose-fragment.v2` is a prompt↔merge contract, not
+a validated schema file, so it is pinned by the test, not a schema doc. Reframe vs the D1
+sketch below: v2 is **not a narrowing** — under D-044 the composer still owns layout /
+headline / figure selection, so v2 is v1 + the brief + fused notes ≈ 1249 lines (bigger
+than v1). Validation: `bash -n` clean; `tests/unit/test_merge_fused_notes.py` — 8 contract
+tests (inline-notes survival, `derive_speaker_notes_files` v2-writes / v1-noop / dir-None,
+loader round-trip, empty-notes skip) all pass; full `tests/` suite **1049 passed**
+(1041 + 8 new), no regressions. **The notes-quality off-ramp (DQ3):** if Tier E shows
+fused notes underperform a dedicated pass, un-fuse — `speaker_notes` returns as its own
+stage parallelized through `wp_run_pool`. The Tier-E AC carries an explicit notes-quality
+check.
+
 **D1. New `slide_compose.v2.md` — the narrowed composer (advisory, D-044).** A versioned
 prompt bump, **not** an in-place edit of v1: `slide_compose.v1.md` stays as the v0_3
 composer (M6 archives v1 at cut-over, exactly as it will `substory_design.v1.md`). This
@@ -310,11 +344,145 @@ slide_compose (parallel) → qa_prep → merge → reconcile`.
 **AC for E:** the v0.4 path runs end-to-end and produces a valid `slide_spec.json` + `pptx`;
 `deck_outline` consumes real Phase-0 inputs (grounded headline slots, scoped figures); the
 parallel composers measurably overlap (stage wall-clock < sum of per-substory times);
-speaker notes are present in the deck and in `working/04_speaker_notes/`;
-`reconcile_deck.py` runs and writes its audit; cost recorded from envelopes;
-beril-adversarial `--type presentation` resolves `narrative/02_substories.md` +
-`working/04_speaker_notes/` against the v0_4 draft. Expect 1–3 patches in this phase
+speaker notes are present in the deck and in `working/04_speaker_notes/`; `reconcile_deck.py`
+runs and writes its audit; cost recorded from envelopes; beril-adversarial
+`--type presentation` resolves `narrative/02_substories.md` + `working/04_speaker_notes/`
+against the v0_4 draft. Expect 1–3 patches in this phase
 (`feedback_punch_list_release_pattern`).
+
+**Notes-quality gate (DQ3 — "make sure we check").** Tier E explicitly assesses the fused
+speaker notes: Adam reads a sample against the v2 notes anti-patterns (PA-15 marketing
+voice, PA-16 caveat erosion, PA-17 number paraphrase, PA-18 teleprompter) and confirms
+every ⚠/✗ caveat surfaced. The fusion bet (D-033) was made under the M0 "narrowed
+composer" premise that M2-lite did not deliver — so if fused notes show a clear quality
+drop vs a dedicated `speaker_notes` pass, the **un-fuse off-ramp** fires: `speaker_notes`
+returns as its own stage, parallelized through `wp_run_pool` (the worker-pool already
+supports it). A documented, low-regret reversal — not a Tier-E blocker.
+
+### Runbook (proposed 2026-05-23)
+
+Preconditions: `beril-presentation-maker` pipx-installed (the orchestrator reads its
+console-script shebang to find a Python with python-pptx / Pillow / nbformat);
+`ibd_phage_targeting` present under the BERIL fork with `papers/draft_2/` (phase0 +
+citation reuse make the run cheap); authenticated `claude` CLI. Runs on Adam's Mac —
+live LLM spend.
+
+Step 1 — the v0_4 pipeline (talk-30, est. ~$5–9 paper-exists; no `--max-cost-usd`):
+
+    cd ~/Documents/Claude/Projects/research-coscientist-dev/spike/beril-presentation-maker-skill-draft
+    bash src/beril_presentation_maker/skill/tools/presentation_maker.sh \
+      ibd_phage_targeting \
+      --beril-root ~/Documents/Claude/Projects/research-coscientist-dev/spike/beril-extended \
+      --architecture-pipeline v0_4 --mode talk-30 --tier STRONG \
+      --auto-advance --no-images --no-adversarial \
+      2>&1 | tee /tmp/m3-tier-e-smoke.log
+
+`--no-images` (image-gen is M5, orthogonal) and `--no-adversarial` (the adversarial
+cross-skill check is Step 2) keep the smoke on the M3 path.
+
+Step 2 — cross-skill check (DRAFT_DIR from Step 1's final banner):
+
+    beril-adversarial review --type presentation <DRAFT_DIR>
+
+Checks: (1) stage banners appear in v0_4 order — phase0_tooling → curate_figures →
+citation_pool → cross_tenant → deck_outline → intro → slide_compose ("v0.4 parallel
+composition") → qa_prep → `[skip] speaker_notes (v0.4 — fused…)` → merge → deck
+reconciliation; (2) `working/00_phase0/{claim_inventory.tsv,methods_provenance.md}` exist;
+(3) the `[worker-pool]` lines show N concurrent composers, slide_compose wall-clock < sum
+of per-composer times; (4) every content slide in `working/slide_spec.json` carries a
+`speaker_notes` string and `working/04_speaker_notes/{sid}_notes.json` were derived;
+(5) `audit/deck_reconciliation.{md,json}` written; (6) `deliverable/draft.pptx` produced;
+(7) Step 2 yields a real review, not "required input missing"; (8) the notes-quality
+gate above.
+
+### Patch log (E-phase)
+
+- **E-1 (2026-05-23) — `phase0_reuse.py` import context.** The first v0_4 run failed at
+  `phase0_tooling`: `phase0_reuse.py` used package-style imports
+  (`from beril_presentation_maker.skill.tools import extract_claims, …`) — the lone
+  orchestrator-run tool to do so. That resolves under `PYTHONPATH=src` (the test env —
+  which is why the suite was green) but not when the orchestrator runs the file as a
+  script under the pipx venv, where `beril_presentation_maker` is not an importable
+  package. Fixed: try the package import, fall back to a `__file__`-resolved bare sibling
+  import (the `merge_compose_fragments.py` pattern). Both contexts verified in the sandbox;
+  full suite still **1049 passed**. Re-run Step 1.
+- **E-2 (2026-05-23) — `slide_compose` parallel-stage telemetry.** The first full v0_4 run
+  produced a valid 27-slide deck ($9.74 all-in, talk-30; phase0/citation reused), but the
+  `slide_compose` stage printed no cost/timing banner — each parallel composer's
+  `stream_progress` output goes to its worker log, which `wp_run_pool` removes on success.
+  The data was captured (per-composer `.metadata.json` sidecars persist) but invisible on
+  the console — and the slide_compose wall-clock IS the M3 primary metric. Fixed:
+  `_slide_compose_v0_4` times the pool and prints a banner — per-composer cost/time read
+  from the sidecars + stage wall-clock vs cumulative LLM time (the parallelism win, side by
+  side). Telemetry-only, never fails the stage. `bash -n` clean; suite **1049 passed**.
+- **E-3 (2026-05-23) — `data_figure` title discipline (`slide_compose.v2.md`).** Smoke
+  deck Slide 13 carried a compound section-synthesis headline ("bile-acid dehydroxylation,
+  multi-omics synthesis, and partial serology corroboration…") on a `data_figure` slide
+  whose figure shows only the serology heatmap — a headline/body mismatch. The v2
+  `data_figure` rule already said "title states what the figure shows" but wasn't strong
+  enough. Strengthened: it now explicitly forbids a section-summary / compound-claim title
+  on a `data_figure` (those belong on a `section_divider` / `big_idea`), incl. a
+  substory's closing `data_figure` slide. Prompt-only; takes effect on the next
+  `slide_compose` run.
+- **E-4 (2026-05-23) — `qa_anticipated` render hotfix (`assemble_pptx.py`).** Smoke deck
+  slides 23–25 (the Q&A slides) rendered with the question overflowing the title band and
+  the answer tiny over a half-empty body. Root cause in `_fill_qa_anticipated`: the
+  question (an audience question, naturally long) went into the 1.3in title with no
+  autofit; the answer used a FIXED 60% fontScale (v0.2.2, sized for a worst-case
+  ~2000-char answer) applied unconditionally, so moderate answers rendered tiny. Fixed:
+  title autofit on the question (the `big_idea` long-claim treatment) + body fontScale now
+  **adaptive by content length** (≤700 chars → 100%, scaling to the 60% floor). General —
+  a function of length, not deck-specific. A pre-existing v0.3.x assembler bug surfaced by
+  the M3 smoke (assembly is outside M3's blast radius), fixed here at Adam's direction.
+  Suite **1049 passed**; focused check confirms short→100% / long→60% + title autofit.
+  Visual confirmation needs a re-render.
+- **E-5 (2026-05-23) — `qa_anticipated`: `answer_detail` off the slide face.** The E-4
+  re-render showed slides 23–25 still broken: E-4's adaptive autofit was necessary but
+  insufficient — each Q&A slide carried ~3.8K characters, ~2.2K of it `answer_detail`,
+  which `_fill_qa_anticipated` rendered on the slide *face*. But `answer_detail` is the
+  *speaker reference* by qa_prep's own contract (qa_prep stage prompt, line 1455:
+  "answer_summary (slide body) + answer_detail (speaker reference)") — rendering it on the
+  face was renderer/contract drift. Fixed: the slide face now carries `answer_summary` +
+  the evidence pointer only (~1.5K chars → 80% autofit, legible); `answer_detail` is routed
+  to the slide's notes pane via `_set_speaker_notes`. Companion robustness fix: the
+  assembly loop's `if "speaker_notes" in slide_data` → `if slide_data.get("speaker_notes")`
+  so a present-but-empty value can't clobber handler-set notes. Suite **1049 passed**;
+  focused check confirms face 3.8K→1.5K, `answer_detail` off the face + in the notes pane.
+  Residual: `answer_summary` is itself ~1.1K chars — a `qa_prep.v1.md` length cap would
+  make the slides genuinely tight (recommended follow-on, not done here — v0.3.x prompt,
+  needs a qa_prep re-run to verify).
+- **E-6 (2026-05-23) — assembler footer-safety + containment geometry fix.** A full
+  visual pass on the smoke deck (Adam, slides 6–21) found ~8 slides with gray secondary
+  text rendered into the bottom logo strip. Root cause: the slide is 10.0×5.62in, the
+  DOE/KBase logo strip occupies y≈5.00–5.55, and the band constants + ~6 layout fillers in
+  `assemble_pptx.py` placed secondary text at y≈5.0–5.5 — inside the strip. One coherent
+  fix: a documented `FOOTER_SAFE_BOTTOM = 4.92`; `CAPTION_BAND`/`CITATION_BAND`/
+  `AI_DISCLOSURE_BAND` moved above it; big_number's title placeholder shrunk (it was
+  3.59in tall, leaving only 0.40in for three sub-elements) so subtitle/sub_pointer/
+  source_footer fit above 4.92; methods_summary / claim_evidence(no-figure) /
+  qa_anticipated body placeholders trimmed clear of the strip (claim_evidence's no-figure
+  branch also gained the autofit it was missing — slide 8); workflow_diagram region
+  shrunk + step-caption/tool-footer raised; data_table bounded + caption/footnote moved
+  to fixed safe y's (the caption was placed off an *underestimated* table height —
+  python-pptx `add_table` height is a hint, rows grow to content). `diagram_render.py`:
+  node labels gained `word_wrap` + shrink-to-fit (slides 6/10/19 node-text overrun).
+  Also `revise_loop.py`: `f.get("slide_id","n/a")` → `... or "n/a"` (the present-but-null
+  `.get` bug — rendered "slide None"; flagged by the adversarial team). Validation: full
+  suite **1049 passed**; a synthetic 7-layout deck assembles clean and every text/table
+  shape ends ≤4.95in. Visual confirmation needs Adam's re-render. Deferred: the
+  workflow_diagram inter-box transition-label position (behind boxes on 10/19) — needs a
+  render to position precisely; next round. Note: E-6 is a pre-existing v0.3.x assembler
+  defect surfaced by the M3 smoke — not M3's blast radius — fixed here at Adam's direction.
+- **E-7 (2026-05-23) — regression fix: zero-width placeholders.** E-6's four placeholder
+  resizes set only `.top`/`.height`. On a placeholder that *inherits* its geometry from
+  the layout, python-pptx then writes a slide-level `xfrm` with `.left`/`.width` left at
+  0 — collapsing the body to a zero-width column (text rendered one character per line;
+  the big number stacked vertically at the left edge). Caught on Adam's `pngs3`
+  re-render. Fixed: all four resizes (big_number title; methods_summary /
+  claim_evidence-no-figure / qa_anticipated body) now set **all four** dims — `.left`,
+  `.top`, `.width`, `.height`. The E-6 geometry check measured only the bottom edge, so
+  it passed a zero-width box; the check now also asserts width. Suite **1049 passed**;
+  the widened scan is all-clear (text shapes full-width + above the footer).
 
 ## Tier F — closeout
 
