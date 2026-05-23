@@ -2,11 +2,15 @@
 # presentation_maker.sh — production orchestrator for the
 # beril-presentation-maker drafting pipeline.
 #
-# Drives the 14-stage flow:
+# Drives the staged flow. v0.3.x default:
 #   plan → throughline → substory_design → curate_figures →
 #   citation_pool → cross_tenant → intro → slide_compose →
 #   qa_prep → speaker_notes → image_gen → merge_and_assemble →
 #   adversarial_review → revise_slides
+# v0.4 (--architecture-pipeline v0_4, M3): the Phase-0 producers run
+# BEFORE the deck-clustering call so deck_outline sees its inputs —
+#   plan → throughline → phase0_tooling → curate_figures →
+#   citation_pool → cross_tenant → deck_outline → intro → … (rest as above)
 #
 # Each stage invokes a `claude -p` subagent against a per-stage
 # system prompt under prompts/<stage>.v1.md. Output is piped through
@@ -54,10 +58,13 @@
 #                            Requires --draft-dir.
 #   --draft-dir <path>       Existing draft_N directory to resume into.
 #                            Required when --resume-from is set.
-#   --architecture-pipeline <p>  v0_3 (default) | v0_4. v0_4 runs the
-#                            deck_outline (M2-lite) stage at the substory
-#                            slot instead of substory_design
-#                            (V0_4_ARCHITECTURE.md §20).
+#   --architecture-pipeline <p>  v0_3 (default) | v0_4. v0_4 (M2-lite +
+#                            M3) runs phase0_tooling, then the Phase-0
+#                            producers (curate_figures / citation_pool /
+#                            cross_tenant), then deck_outline — so the
+#                            outline call sees its inputs. v0_3 runs
+#                            substory_design at the clustering slot
+#                            (V0_4_ARCHITECTURE.md §20; M3_PUNCH_LIST.md).
 #   --no-images              Skip image_gen stage entirely (v0.3.3).
 #   --auto-approve-images    Bypass per-slide approval gate for image_gen
 #                            (CI / power users). Cost cap still enforced.
@@ -174,10 +181,10 @@ esac
 # (added in v0.3.0). v0.3.3: extended to include image_gen (between
 # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3).
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
+  ""|plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
+    echo "       valid stages: plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -228,6 +235,15 @@ for f in plan.v1.md throughline.v1.md substory_design.v1.md deck_outline.v1.md s
     exit 1
   fi
 done
+
+# v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
+# (tools/worker_pool.sh — defines functions only, no side effects).
+if [[ ! -f "$TOOLS_DIR/worker_pool.sh" ]]; then
+  echo "Error: worker_pool.sh missing at $TOOLS_DIR/worker_pool.sh" >&2
+  exit 1
+fi
+# shellcheck source=worker_pool.sh
+source "$TOOLS_DIR/worker_pool.sh"
 
 # --- Discover the pipx venv's Python interpreter ---
 # 2026-04-27 fix #67: bare `python3` in bash resolves differently than
@@ -359,6 +375,7 @@ init_draft_layout() {
     "$outdir/deliverable" \
     "$outdir/narrative" \
     "$outdir/working" \
+    "$outdir/working/00_phase0" \
     "$outdir/working/03_slides" \
     "$outdir/working/04_speaker_notes" \
     "$outdir/working/05_image_requests" \
@@ -398,6 +415,11 @@ set_draft_paths() {
   CROSS_TENANT_JSON="$WORKING_DIR/cross_tenant_signal.json"
   CURATED_FIGURES="$WORKING_DIR/curated_figures.md"
   FIGURES_INVENTORY="$WORKING_DIR/figures_inventory.md"
+  # v0.4 M1/M3: Phase-0 reuse/originate staging (phase0_reuse.py output).
+  # Mirrors draft_paths.py DraftPaths.phase0_dir / *_phase0.
+  PHASE0_DIR="$WORKING_DIR/00_phase0"
+  METHODS_PROVENANCE_PHASE0="$PHASE0_DIR/methods_provenance.md"
+  CLAIM_INVENTORY_PHASE0="$PHASE0_DIR/claim_inventory.tsv"
   DIAGRAM_REPAIR="$WORKING_DIR/diagram_repair_report.md"
   NEXT_ACTIONS="$WORKING_DIR/next_actions.md"
   SLIDE_SPEC="$WORKING_DIR/slide_spec.json"
@@ -461,6 +483,10 @@ validate_resume_prereqs() {
   case "$stage" in
     throughline)
       [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH") ;;
+    phase0_tooling)
+      # v0.4 M3: phase0_tooling runs after the throughline gate; its own
+      # inputs (REPORT.md / notebooks) are project-level and always present.
+      [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH") ;;
     substory_design)
       [[ -f "$PLAN_PATH" ]] || missing+=("$PLAN_PATH")
       [[ -f "$THROUGHLINE_PATH" ]] || missing+=("$THROUGHLINE_PATH") ;;
@@ -837,6 +863,40 @@ Write the result to OUT_PATH."
   invoke_claude_with_retry "$PROMPTS_DIR/substory_design.v1.md" "$user_prompt" "$out" "substory_design"
 }
 
+# v0.4 M3 (V0_4_ARCHITECTURE.md §16 M3 / §20.8; M3_PUNCH_LIST.md Tier A;
+# closes M1 Tier F1). Phase-0 tooling: invokes the M1 helper
+# phase0_reuse.py to reuse-or-originate the two v0.4 Phase-0 artifacts
+# (claim_inventory.tsv + methods_provenance.md) under working/00_phase0/.
+# Runs only on the v0.4 path, before deck_outline. Reuse from a sibling
+# papers/draft_*/ is the default; originate (via the vendored
+# extract_methods.py / extract_claims.py) is the no-paper fallback and is
+# the only path that spends LLM tokens (~$0.05-0.10). An unchanged-input
+# re-run is a no-op (hash cache in audit/phase0.jsonl). Fail-loud: a
+# non-zero exit fails the stage — claim_inventory feeds deck_outline's
+# grounded headline-slot assignment, the load-bearing v0.4 quality lever.
+stage_phase0_tooling() {
+  echo "" >&2
+  echo "[Stage 2.5/5] phase0_tooling (claim_inventory + methods_provenance)" >&2
+
+  local log="$STAGE_LOGS_DIR/phase0_tooling.log"
+  if "$PYTHON_BIN" "$TOOLS_DIR/phase0_reuse.py" \
+      --project-dir "$PROJECT_DIR" \
+      --talk-draft-dir "$OUTDIR" \
+      --artifact all \
+      > "$log" 2>&1; then
+    sed 's/^/    /' "$log" >&2
+    echo "  -> Phase-0 artifacts ready under $PHASE0_DIR" >&2
+    return 0
+  else
+    local rc=$?
+    sed 's/^/    /' "$log" >&2
+    echo "  ERROR: phase0_reuse.py exited $rc — Phase-0 artifacts not ready." >&2
+    echo "         claim_inventory.tsv / methods_provenance.md feed deck_outline;" >&2
+    echo "         full log: $log" >&2
+    return 1
+  fi
+}
+
 # v0.4 M2 (M2-lite — V0_4_ARCHITECTURE.md §20 / D-042). The deck-outline
 # call: substory clustering PLUS the cross-section coordination
 # prescriptions (per-section headline slot, transition-in/out, scoped
@@ -849,15 +909,13 @@ stage_deck_outline() {
   echo "" >&2
   echo "[Stage 3/5] deck_outline (v0.4 — M2-lite)" >&2
 
-  # Phase-0 artifacts. claim_inventory + methods_provenance live under
-  # working/00_phase0/ (M1 phase0_reuse.py output); curated_figures +
-  # citation_pool under working/. deck_outline.v1.md has escape hatches
-  # for any that are absent (full phase0_tooling wiring is M3).
-  local draft_dir
-  draft_dir="$(cd "$(dirname "$out")/.." && pwd)"
-  local claim_inv="$draft_dir/working/00_phase0/claim_inventory.tsv"
-  local methods_prov="$draft_dir/working/00_phase0/methods_provenance.md"
-  local cross_tenant="$draft_dir/working/cross_tenant_signal.md"
+  # Phase-0 artifacts (v0.4 M3: produced upstream by stage_phase0_tooling,
+  # stage_curate_figures, stage_citation_pool, stage_cross_tenant — the
+  # v0.4 dispatch runs all four before deck_outline). deck_outline.v1.md
+  # keeps escape hatches for any that are absent.
+  local claim_inv="$CLAIM_INVENTORY_PHASE0"
+  local methods_prov="$METHODS_PROVENANCE_PHASE0"
+  local cross_tenant="$CROSS_TENANT_MD"
 
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
@@ -1143,23 +1201,76 @@ marketing voice. Write the result to OUT_PATH."
   invoke_claude_with_retry "$PROMPTS_DIR/intro.v1.md" "$user_prompt" "$out" "intro"
 }
 
-stage_slide_compose() {
-  local substories="$SUBSTORIES_PATH"
-  echo "" >&2
-  echo "[Stage 5/5] slide_compose (per substory)" >&2
+# v0.4 M3 helpers — per-section composer brief extraction.
+# _m3_outline_field echoes a parse_deck_outline.py field (a per-section
+# "S{N}<TAB>value" block, or a deck-level single value); empty on any
+# parse failure — the brief is advisory, so a missing field is non-fatal.
+_m3_outline_field() {
+  "$PYTHON_BIN" "$TOOLS_DIR/parse_deck_outline.py" \
+    --path "$1" --field "$2" 2>/dev/null || true
+}
 
-  # Enumerate substory IDs from substory_design output
-  local substory_ids
-  substory_ids=$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
-    --path "$substories" --field substory_ids)
+# _m3_section_line pulls substory <sid>'s value out of a per-section
+# field block (tab-separated "S{N}<TAB>value" lines).
+_m3_section_line() {
+  printf '%s\n' "$1" | awk -F'\t' -v s="$2" '$1 == s {print $2; exit}'
+}
 
-  if [[ -z "$substory_ids" ]]; then
-    echo "Error: no substory IDs parsed from $substories" >&2
-    return 1
-  fi
+# Runner for ONE v0.4 substory composer — invoked by wp_run_pool in a
+# backgrounded subshell that inherits these globals. Its last command is
+# invoke_claude_with_retry, so the subshell exits with that rc (rc=2
+# Write-not-invoked / rc=4 API-transient are handled inside the wrapper).
+_compose_one_substory() {
+  local sid="$1"
+  local out="$SLIDES_DIR/${sid}_slides.json"
+  local ti to budget headline figs
+  ti=$(_m3_section_line "$_M3_BRIEF_TRANSITIONS_IN" "$sid")
+  to=$(_m3_section_line "$_M3_BRIEF_TRANSITIONS_OUT" "$sid")
+  budget=$(_m3_section_line "$_M3_BRIEF_BUDGETS" "$sid")
+  headline=$(_m3_section_line "$_M3_BRIEF_HEADLINE_SLOTS" "$sid")
+  figs=$(_m3_section_line "$_M3_BRIEF_SCOPED_FIGURES" "$sid")
 
-  local prior_outputs=""
-  for sid in $substory_ids; do
+  local user_prompt="OUT_PATH=$out
+PROJECT_DIR=$PROJECT_DIR
+SUBSTORY_PATH=$_M3_SUBSTORIES_PATH
+SUBSTORY_ID=$sid
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+PLAN_PATH=$PLAN_PATH
+CURATED_FIGURES_PATH=$CURATED_FIGURES
+CITATION_POOL_PATH=$CITATION_POOL_PATH
+MODE=$MODE
+TIER=$TIER
+PRIOR_SUBSTORY_OUTPUTS=
+TRANSITION_IN=$ti
+TRANSITION_OUT=$to
+SECTION_BUDGET=$budget
+HEADLINE_SLOT=$headline
+SCOPED_FIGURES=$figs
+DECK_REGISTER=$_M3_BRIEF_REGISTER
+DECK_ARC=$_M3_BRIEF_ARC
+
+Run the slide_compose stage for substory $sid. SUBSTORY_PATH is the \
+enriched whole-deck outline; compose ONLY substory $sid's section. The \
+per-section brief above (TRANSITION_IN / TRANSITION_OUT, SECTION_BUDGET, \
+HEADLINE_SLOT, SCOPED_FIGURES) and the deck-level DECK_REGISTER / \
+DECK_ARC are advisory cross-section coordination context — not a rigid \
+contract. Read REPORT.md sections cited by the analyses; verify any \
+quantitative claim before placing it on a slide. CURATED_FIGURES_PATH / \
+CITATION_POOL_PATH may not exist — emit slides without figures and \
+without citations[] entries in that case (the prompt's escape hatches \
+cover this). Write the result to OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/slide_compose.v1.md" \
+    "$user_prompt" "$out" "slide_compose-$sid"
+}
+
+# v0.3.x slide_compose: sequential per-substory composition with
+# PRIOR_SUBSTORY_OUTPUTS chaining — each composer sees the prior
+# substories' composed fragments. Unchanged from pre-M3.
+_slide_compose_v0_3() {
+  local substories="$1"; shift
+  local prior_outputs="" sid
+  for sid in "$@"; do
     echo "" >&2
     echo "  -> composing $sid" >&2
     local out="$SLIDES_DIR/${sid}_slides.json"
@@ -1194,6 +1305,63 @@ cover this). Write the result to OUT_PATH."
   done
 
   return 0
+}
+
+# v0.4 slide_compose: parallel per-substory composition against the
+# shared deck outline. Composers run concurrently (bounded by
+# SLIDE_COMPOSE_MAX_PARALLEL, default 5); the enriched 02_substories.md
+# outline replaces the v0.3.x PRIOR_SUBSTORY_OUTPUTS chaining as the
+# cross-section coordination layer (V0_4_ARCHITECTURE.md §20.3;
+# M3_PUNCH_LIST.md Tier B). The per-section brief injected below is
+# advisory — the composer-prompt narrowing that consumes it is Tier D.
+_slide_compose_v0_4() {
+  local substories="$1"; shift
+  local max="${SLIDE_COMPOSE_MAX_PARALLEL:-5}"
+  echo "  v0.4 parallel composition — $# substory composer(s), max $max concurrent" >&2
+
+  # Per-section coordination brief, extracted ONCE from the enriched
+  # 02_substories.md. A field that fails to parse yields an empty block;
+  # the brief is advisory, so empty is non-fatal. These globals are read
+  # by _compose_one_substory inside each worker subshell.
+  _M3_SUBSTORIES_PATH="$substories"
+  _M3_BRIEF_TRANSITIONS_IN="$(_m3_outline_field "$substories" transitions_in)"
+  _M3_BRIEF_TRANSITIONS_OUT="$(_m3_outline_field "$substories" transitions_out)"
+  _M3_BRIEF_BUDGETS="$(_m3_outline_field "$substories" budgets)"
+  _M3_BRIEF_HEADLINE_SLOTS="$(_m3_outline_field "$substories" headline_slots)"
+  _M3_BRIEF_SCOPED_FIGURES="$(_m3_outline_field "$substories" scoped_figures)"
+  _M3_BRIEF_REGISTER="$(_m3_outline_field "$substories" register)"
+  _M3_BRIEF_ARC="$(_m3_outline_field "$substories" arc)"
+
+  wp_run_pool "$max" "$STAGE_LOGS_DIR" "slide_compose" \
+    _compose_one_substory "$@" || {
+    echo "Error: one or more parallel slide_compose workers failed" >&2
+    return 1
+  }
+  return 0
+}
+
+stage_slide_compose() {
+  local substories="$SUBSTORIES_PATH"
+  echo "" >&2
+  echo "[Stage 5/5] slide_compose (per substory)" >&2
+
+  # Enumerate substory IDs from the clustering output (substory_design
+  # for v0.3.x; the enriched deck_outline for v0.4 — both keep the
+  # backward-compatible `### S{N} —` skeleton parse_substories.py reads).
+  local substory_ids
+  substory_ids=$("$PYTHON_BIN" "$TOOLS_DIR/parse_substories.py" \
+    --path "$substories" --field substory_ids)
+
+  if [[ -z "$substory_ids" ]]; then
+    echo "Error: no substory IDs parsed from $substories" >&2
+    return 1
+  fi
+
+  if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
+    _slide_compose_v0_4 "$substories" $substory_ids
+  else
+    _slide_compose_v0_3 "$substories" $substory_ids
+  fi
 }
 
 stage_qa_prep() {
@@ -1739,6 +1907,17 @@ stage_merge_and_assemble() {
   "$PYTHON_BIN" "$TOOLS_DIR/check_no_artifact_refs.py" \
     "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
 
+  # v0.4 M3 (V0_4_ARCHITECTURE.md §20.4): post-merge reconciliation —
+  # flag residual cross-section conflicts (a curated figure reused on
+  # two slides, the same big_number headline twice, AI-image count over
+  # the deck outline's image budget) that the parallel composers cannot
+  # detect alone. Advisory (rc=0 by design); writes
+  # audit/deck_reconciliation.{md,json}. Runs for both pipelines — the
+  # image-budget class no-ops on a v0.3.x draft (no Image-budget line).
+  echo "  running deck reconciliation check..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/reconcile_deck.py" \
+    "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
+
   echo "" >&2
   echo "==================================================================" >&2
   echo "ASSEMBLE COMPLETE" >&2
@@ -1904,8 +2083,12 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
 # Each stage runs unless RESUME_FROM names a later stage. Gates that
 # follow a skipped stage are also skipped (the user's prior choice
 # already wrote the canonical file). Order:
-#   plan → throughline → (gate) → substory_design → (gate)
-#         → intro → slide_compose → merge
+#   v0.3.x:  plan → throughline → (gate) → substory_design → (gate)
+#            → curate_figures → citation_pool → cross_tenant
+#            → intro → slide_compose → merge
+#   v0.4:    plan → throughline → (gate) → phase0_tooling
+#            → curate_figures → citation_pool → cross_tenant
+#            → deck_outline → (gate) → intro → slide_compose → merge
 
 # Compute "should we run stage X" for each stage.
 should_run() {
@@ -1924,7 +2107,16 @@ should_run() {
   # this codepath, hidden until then because most prior tests ran
   # without --resume-from and short-circuited out at the early check).
   local order_resume="" order_stage=""
-  for o in plan:1 throughline:2 substory_design:3 deck_outline:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14; do
+  # v0.4 M3: the v0_4 pipeline reorders the Phase-0 producers ahead of
+  # deck_outline, so its stage ordinals differ from the v0.3.x map. Pick
+  # the ordinal map by --architecture-pipeline.
+  local ordinals
+  if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
+    ordinals="plan:1 throughline:2 phase0_tooling:3 curate_figures:4 citation_pool:5 cross_tenant:6 deck_outline:7 intro:8 slide_compose:9 qa_prep:10 speaker_notes:11 image_gen:12 merge:13 adversarial_review:14 revise_slides:15"
+  else
+    ordinals="plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14"
+  fi
+  for o in $ordinals; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -1941,23 +2133,43 @@ if should_run throughline;      then stage_throughline     || { echo "FAIL at th
                                      gate_throughline_pick || { echo "FAIL at throughline pick gate" >&2; exit 1; }
                                 else echo "[skip] throughline + pick (resume from $RESUME_FROM)" >&2; fi
 
-if should_run substory_design;  then if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
-                                       stage_deck_outline    || { echo "FAIL at deck_outline" >&2; exit 1; }
-                                     else
-                                       stage_substory_design || { echo "FAIL at substory_design" >&2; exit 1; }
-                                     fi
-                                     audit_punchline_lengths
-                                     gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
-                                else echo "[skip] substory clustering + overflow gate (resume from $RESUME_FROM)" >&2; fi
+# v0.4 M3: the deck-clustering region is pipeline-conditional. v0.4 runs
+# phase0_tooling + the Phase-0 producers (curate_figures / citation_pool /
+# cross_tenant) BEFORE deck_outline, so the outline call sees its inputs.
+# v0.3.x is byte-unchanged: substory_design first, then the same three
+# enrichment stages. `intro` onward is common to both paths.
+if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
+  if should_run phase0_tooling; then stage_phase0_tooling  || { echo "FAIL at phase0_tooling" >&2; exit 1; }
+                                else echo "[skip] phase0_tooling (resume from $RESUME_FROM)" >&2; fi
 
-if should_run curate_figures;   then stage_curate_figures  || { echo "FAIL at curate_figures" >&2; exit 1; }
+  if should_run curate_figures; then stage_curate_figures  || { echo "FAIL at curate_figures" >&2; exit 1; }
                                 else echo "[skip] curate_figures (resume from $RESUME_FROM)" >&2; fi
 
-if should_run citation_pool;    then stage_citation_pool   || { echo "FAIL at citation_pool" >&2; exit 1; }
+  if should_run citation_pool;  then stage_citation_pool   || { echo "FAIL at citation_pool" >&2; exit 1; }
                                 else echo "[skip] citation_pool (resume from $RESUME_FROM)" >&2; fi
 
-if should_run cross_tenant;     then stage_cross_tenant    || { echo "FAIL at cross_tenant" >&2; exit 1; }
+  if should_run cross_tenant;   then stage_cross_tenant    || { echo "FAIL at cross_tenant" >&2; exit 1; }
                                 else echo "[skip] cross_tenant (resume from $RESUME_FROM)" >&2; fi
+
+  if should_run deck_outline;   then stage_deck_outline    || { echo "FAIL at deck_outline" >&2; exit 1; }
+                                     audit_punchline_lengths
+                                     gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
+                                else echo "[skip] deck_outline + overflow gate (resume from $RESUME_FROM)" >&2; fi
+else
+  if should_run substory_design; then stage_substory_design || { echo "FAIL at substory_design" >&2; exit 1; }
+                                      audit_punchline_lengths
+                                      gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
+                                 else echo "[skip] substory clustering + overflow gate (resume from $RESUME_FROM)" >&2; fi
+
+  if should_run curate_figures;  then stage_curate_figures || { echo "FAIL at curate_figures" >&2; exit 1; }
+                                 else echo "[skip] curate_figures (resume from $RESUME_FROM)" >&2; fi
+
+  if should_run citation_pool;   then stage_citation_pool  || { echo "FAIL at citation_pool" >&2; exit 1; }
+                                 else echo "[skip] citation_pool (resume from $RESUME_FROM)" >&2; fi
+
+  if should_run cross_tenant;    then stage_cross_tenant   || { echo "FAIL at cross_tenant" >&2; exit 1; }
+                                 else echo "[skip] cross_tenant (resume from $RESUME_FROM)" >&2; fi
+fi
 
 if should_run intro;            then stage_intro           || { echo "FAIL at intro" >&2; exit 1; }
                                 else echo "[skip] intro (resume from $RESUME_FROM)" >&2; fi
