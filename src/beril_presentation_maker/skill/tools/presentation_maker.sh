@@ -54,6 +54,10 @@
 #                            Requires --draft-dir.
 #   --draft-dir <path>       Existing draft_N directory to resume into.
 #                            Required when --resume-from is set.
+#   --architecture-pipeline <p>  v0_3 (default) | v0_4. v0_4 runs the
+#                            deck_outline (M2-lite) stage at the substory
+#                            slot instead of substory_design
+#                            (V0_4_ARCHITECTURE.md §20).
 #   --no-images              Skip image_gen stage entirely (v0.3.3).
 #   --auto-approve-images    Bypass per-slide approval gate for image_gen
 #                            (CI / power users). Cost cap still enforced.
@@ -117,6 +121,7 @@ while [[ $# -gt 0 ]]; do
     --model)             MODEL="$2"; shift 2 ;;
     --no-stream)         NO_STREAM=1; shift ;;
     --resume-from)       RESUME_FROM="$2"; shift 2 ;;
+    --architecture-pipeline) ARCH_PIPELINE="$2"; shift 2 ;;
     --draft-dir)         DRAFT_DIR_OVERRIDE="$2"; shift 2 ;;
     --no-adversarial)    NO_ADVERSARIAL=1; shift ;;
     --max-revise-cost-usd) MAX_REVISE_COST_USD="$2"; shift 2 ;;
@@ -155,15 +160,24 @@ case "$TIER" in
   *) echo "Error: invalid --tier '$TIER'" >&2; exit 1 ;;
 esac
 
+# v0.4 M2: which clustering stage runs at the substory slot.
+# v0_3 (default) → stage_substory_design; v0_4 → stage_deck_outline
+# (M2-lite — V0_4_ARCHITECTURE.md §20). v0.3.x default unchanged.
+ARCH_PIPELINE="${ARCH_PIPELINE:-v0_3}"
+case "$ARCH_PIPELINE" in
+  v0_3|v0_4) ;;
+  *) echo "Error: invalid --architecture-pipeline '$ARCH_PIPELINE' (v0_3|v0_4)" >&2; exit 1 ;;
+esac
+
 # Validate --resume-from + --draft-dir pairing.
 # v0.3.2.6: list extended to include adversarial_review + revise_slides
 # (added in v0.3.0). v0.3.3: extended to include image_gen (between
 # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3).
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
+  ""|plan|throughline|substory_design|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
+    echo "       valid stages: plan|throughline|substory_design|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -208,7 +222,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md slide_compose.v1.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md deck_outline.v1.md slide_compose.v1.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -821,6 +835,51 @@ mode-capacity verdict. If overflow, surface the three options and halt. \
 Write the result to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/substory_design.v1.md" "$user_prompt" "$out" "substory_design"
+}
+
+# v0.4 M2 (M2-lite — V0_4_ARCHITECTURE.md §20 / D-042). The deck-outline
+# call: substory clustering PLUS the cross-section coordination
+# prescriptions (per-section headline slot, transition-in/out, scoped
+# figures; deck-level register / arc / image budget). Engaged by
+# --architecture-pipeline v0_4; the v0.3.x default runs
+# stage_substory_design at this slot instead. Writes the same
+# 02_substories.md path (enriched, backward-compatible skeleton).
+stage_deck_outline() {
+  local out="$SUBSTORIES_PATH"
+  echo "" >&2
+  echo "[Stage 3/5] deck_outline (v0.4 — M2-lite)" >&2
+
+  # Phase-0 artifacts. claim_inventory + methods_provenance live under
+  # working/00_phase0/ (M1 phase0_reuse.py output); curated_figures +
+  # citation_pool under working/. deck_outline.v1.md has escape hatches
+  # for any that are absent (full phase0_tooling wiring is M3).
+  local draft_dir
+  draft_dir="$(cd "$(dirname "$out")/.." && pwd)"
+  local claim_inv="$draft_dir/working/00_phase0/claim_inventory.tsv"
+  local methods_prov="$draft_dir/working/00_phase0/methods_provenance.md"
+  local cross_tenant="$draft_dir/working/cross_tenant_signal.md"
+
+  local user_prompt="OUT_PATH=$out
+PROJECT_DIR=$PROJECT_DIR
+PLAN_PATH=$PLAN_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+CLAIM_INVENTORY_PATH=$claim_inv
+CURATED_FIGURES_PATH=$CURATED_FIGURES
+CITATION_POOL_PATH=$CITATION_POOL_PATH
+CROSS_TENANT_PATH=$cross_tenant
+METHODS_PROVENANCE_PATH=$methods_prov
+MODE=$MODE
+TIER=$TIER
+
+Run the deck_outline stage. Read the chosen throughline, the plan's \
+critical-analysis inventory, and the Phase-0 artifacts. Cluster analyses \
+into substories; for each section prescribe the slide budget, headline \
+slot, transition-in/out, and scoped figures; write the deck-level \
+register, arc, and image budget. Compute the mode-capacity verdict — if \
+overflow, surface the options and halt (D-027). Write the result to \
+OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/deck_outline.v1.md" "$user_prompt" "$out" "deck_outline"
 }
 
 # Audit divider punchline lengths against the soft 14-word cap.
@@ -1865,7 +1924,7 @@ should_run() {
   # this codepath, hidden until then because most prior tests ran
   # without --resume-from and short-circuited out at the early check).
   local order_resume="" order_stage=""
-  for o in plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14; do
+  for o in plan:1 throughline:2 substory_design:3 deck_outline:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14; do
     case "$o" in
       "$RESUME_FROM":*) order_resume="${o#*:}" ;;
       "$stage":*)       order_stage="${o#*:}" ;;
@@ -1882,10 +1941,14 @@ if should_run throughline;      then stage_throughline     || { echo "FAIL at th
                                      gate_throughline_pick || { echo "FAIL at throughline pick gate" >&2; exit 1; }
                                 else echo "[skip] throughline + pick (resume from $RESUME_FROM)" >&2; fi
 
-if should_run substory_design;  then stage_substory_design  || { echo "FAIL at substory_design" >&2; exit 1; }
+if should_run substory_design;  then if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
+                                       stage_deck_outline    || { echo "FAIL at deck_outline" >&2; exit 1; }
+                                     else
+                                       stage_substory_design || { echo "FAIL at substory_design" >&2; exit 1; }
+                                     fi
                                      audit_punchline_lengths
                                      gate_substory_overflow || { echo "FAIL at substory overflow gate" >&2; exit 1; }
-                                else echo "[skip] substory_design + overflow gate (resume from $RESUME_FROM)" >&2; fi
+                                else echo "[skip] substory clustering + overflow gate (resume from $RESUME_FROM)" >&2; fi
 
 if should_run curate_figures;   then stage_curate_figures  || { echo "FAIL at curate_figures" >&2; exit 1; }
                                 else echo "[skip] curate_figures (resume from $RESUME_FROM)" >&2; fi

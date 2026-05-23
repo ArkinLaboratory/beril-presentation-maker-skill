@@ -1,6 +1,6 @@
 # beril-presentation-maker — v0.4 Architecture Memo
 
-**Status:** SIGNED OFF — M0 complete 2026-05-12. **M1 shipped 2026-05-21. v0.4.1 revision 2026-05-23 — M2 reshaped to "M2-lite" (shared-outline call): see §20, which supersedes §6, §7.2, the §10.1 phase enum, and decisions D-031 / D-032.**
+**Status:** SIGNED OFF — M0 complete 2026-05-12. **M1 shipped 2026-05-21. v0.4.1 revision 2026-05-23 — M2 reshaped to "M2-lite" (shared-outline call): see §20, which supersedes §6, §7.2, the §10.1 phase enum, and decisions D-031 / D-032. M2-lite shipped 2026-05-23 (`deck_outline.v1` + `parse_deck_outline.py` + orchestrator wiring); M3 next.**
 **Scope:** architectural pivot from per-substory drafting to
 deck-architect-then-parallel-compose. Not a punch list; not code.
 **Relationship to existing docs:**
@@ -1055,7 +1055,7 @@ deferred it from active pipeline. The active path is `extract_claims.v1.md`
 and vendored byte-portable here. See `feedback_vendor_port_verify_active_path.md`
 for the cross-cutting lesson.
 
-**M2 — deck-outline call (M2-lite — REVISED 2026-05-23, see §20).**
+**M2 — deck-outline call (M2-lite) — SHIPPED 2026-05-23 (see §20 + §20.8).**
 Enrich `substory_design.v1` into a `deck_outline.v1` call that emits a
 terse, prescriptive whole-deck outline (per-section punchline + budget
 + headline-slot assignment + explicit transition-in/out sentences +
@@ -1179,6 +1179,15 @@ This section is authoritative for Phase 2 (M2). It supersedes §6, the
 §7.2 rigid deviation contract, and the §10.1 phase enum, and lands
 decisions D-042–D-045 (§17). §6/§7.2 are retained as the M0 design
 record.
+
+> **M2-lite SHIPPED 2026-05-23.** `deck_outline.v1.md` (the prompt),
+> `parse_deck_outline.py` (+ 15 tests), and the orchestrator wiring
+> (`--architecture-pipeline v0_4` → `stage_deck_outline`) are in tree.
+> Tier D smoke on `ibd_phage_targeting` produced a real enriched
+> `02_substories.md` — transitions chain, headline slots clean,
+> budgets within mode. Build log: `M2_PUNCH_LIST.md`; retrospective:
+> auto-memory `project_presentation_maker_v0_4_m2.md`. §20.8 records
+> the M3-carried dependency (`phase0_tooling` wiring).
 
 ### 20.1 What changed, and why
 
@@ -1327,9 +1336,36 @@ M2-lite) holds: parallelization without M2-lite drops to B-grade
 coordination; M2-lite restores A-grade coordination while keeping
 parallelism.
 
+### 20.8 M2-lite ship state (2026-05-23) and the M3-carried dependency
+
+M2-lite shipped 2026-05-23. In tree: `deck_outline.v1.md` (the prompt,
+an enrichment of `substory_design.v1`), `parse_deck_outline.py` (+ 15
+tests; `parse_substories.py` left untouched and still parsing the
+carried skeleton), and the orchestrator wiring — a `stage_deck_outline`
+function plus a `--architecture-pipeline {v0_3|v0_4}` flag that selects
+it over `stage_substory_design` at the clustering slot. The v0.3.x
+default path is unchanged. The Tier D smoke on `ibd_phage_targeting`
+produced a real enriched `02_substories.md` (transitions chain,
+headline slots clean, budgets within mode); one D-phase prompt patch
+landed — the headline-slot rule, corrected so a measured proportion is
+a valid headline, not only a hypothesis-test statistic. Build log +
+per-tier table: `M2_PUNCH_LIST.md`.
+
+**M3-carried dependency.** `deck_outline` reads the Phase-0 artifacts
+(`claim_inventory.tsv`, `methods_provenance.md`) from
+`working/00_phase0/` — produced by `phase0_reuse.py`, the M1 helper.
+`phase0_reuse.py` is not yet wired into `presentation_maker.sh` (M1
+Tier F1), so the v0.4 orchestrator path cannot run end-to-end until M3
+adds a `phase0_tooling` stage that invokes it. This did not block M2:
+the Tier D smoke ran `deck_outline` standalone with the Phase-0 inputs
+passed directly. M3 owns: `phase0_tooling` wiring, the per-section
+composer brief, the parallel worker-pool, and the post-merge
+reconciliation check.
+
 ---
 
 **End of memo.** M0 deliverable (signed off 2026-05-12): Adam's
 sign-off on Q1–Q12 in §17. **v0.4.1 revision (2026-05-23):** M2
 reshaped to M2-lite per §20 + D-042–D-045, after the outline probe.
-M1 shipped 2026-05-21; M2 (M2-lite) is the active milestone.
+M1 shipped 2026-05-21; **M2-lite shipped 2026-05-23 — M3 (parallel
+composition) is next.**

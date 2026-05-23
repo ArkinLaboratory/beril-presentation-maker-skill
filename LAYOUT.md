@@ -72,6 +72,8 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── validate_claim_inventory.py  v0.4 M1: source_notebook validator
 │       │   │                            (vendored; 0.2.0-stage3-tierI)
 │       │   ├── phase0_reuse.py          v0.4 M1: Phase-0 reuse/originate helper
+│       │   ├── parse_deck_outline.py    v0.4 M2: extract deck-outline fields
+│       │   │                            from the enriched 02_substories.md
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime)
 │       ├── prompts/
@@ -89,8 +91,10 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── ai_image_prompt.v1.md    Gen + critique prompts for Tier 3
 │       │   ├── fallback_reviewer.v1.md  Inline reviewer if beril-adversarial absent
 │       │   ├── rewrite.v1.md            Apply review-driven fixes to slides
-│       │   └── extract_claims.v1.md     v0.4 M1: claim extraction (vendored from
-│       │                                paper-writer; consumed by extract_claims.py)
+│       │   ├── extract_claims.v1.md     v0.4 M1: claim extraction (vendored from
+│       │   │                            paper-writer; consumed by extract_claims.py)
+│       │   └── deck_outline.v1.md       v0.4 M2: deck-outline call (enriched
+│       │                                substory clustering — V0_4_ARCHITECTURE §20)
 │       └── references/
 │           ├── presentation-checklist.md  P-tier validators in detail
 │           ├── kbase-brand-tokens.json    colors / fonts / sizes
