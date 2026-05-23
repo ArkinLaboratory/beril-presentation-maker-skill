@@ -823,6 +823,10 @@ REPORT-level numerics.
 
 ## D-031 — 2026-05-12 — Architect default model is Opus 4.6
 
+> **SUPERSEDED 2026-05-23 by D-043.** M2-lite's `deck_outline.v1` call
+> runs on Sonnet 4.6 — it emits an advisory outline, not a frozen
+> contract, so the Opus premium no longer buys a commensurate margin.
+
 **Decision:** `deck_architect.v1.md` defaults to `claude-opus-4-6`. `--architect-model claude-sonnet-4-6` is the cost-sensitive opt-in. Cost: $3.00–$5.00 per architect call vs Sonnet's $1.00–$2.00.
 
 **Rationale:** The architect is the load-bearing cross-cutting planning agent; arc quality at this layer determines whether the parallel composers produce a coherent deck or locally-good slides that miss the through-arc. Paper-writer v0.8's analogous Phase 2 (D-034 Q4) chose Opus for the same kind of integrative-judgment reasons. The cost premium (~$2.70–$4.70 per draft net of today's `plan.v1` + `substory_design.v1` ≈ $0.30) is accepted; partially offset by reduced rewrite cycles when Tier 1 review fails less often.
@@ -834,6 +838,10 @@ REPORT-level numerics.
 ---
 
 ## D-032 — 2026-05-12 — Composer-architect deviation contract: RIGID
+
+> **SUPERSEDED 2026-05-23 by D-044.** The M2-lite outline is advisory
+> context, not a contract; there is no rigid plan to "deviate" from
+> and no `architecture_conflict` halt.
 
 **Decision:** When per-substory `slide_compose` finds the architecture's plan doesn't fit the evidence, it halts with `phase=architecture_conflict`, logs the deviation in `audit/architecture_conflicts.jsonl`, and the orchestrator re-runs the architect with the composer's complaint as amendment input. No advisory mode; no deck-level reconcile pass; composer cannot deviate silently.
 
@@ -961,3 +969,51 @@ DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC re
 **Alternatives considered:** Cut-over passes if v0.4 dominates in either mode — rejected; allows silent regression in the harder workflow. Cut-over evaluated in paper-exists mode only — rejected; same reason.
 
 **Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §4.0, §15.
+
+---
+
+## D-042 — 2026-05-23 — M2 reshaped: heavyweight "deck architect" → M2-lite "deck-outline call"
+
+**Decision:** Phase 2 (M2) is no longer the heavyweight deck architect of V0_4_ARCHITECTURE §6. It becomes **M2-lite**: a single `deck_outline.v1` call — an enrichment of the existing `substory_design.v1` prompt — that emits a terse, *prescriptive* whole-deck outline (per-section punchline, slide budget, headline-number slot assignment, explicit transition-in/out sentences, scoped figures + claim_ids, deck register spec). The outline is advisory context fed to the parallel composers, not a machine-validated artifact. Dropped vs §6: `01_deck_architecture.json` as a rigid schema, `deck_architecture.py` (JSON-schema validator), `check_architecture_drift.py`, the six §8.3 architecture-time validators. A ~30-line post-merge reconciliation check (duplicate-figure / double-headline / image-budget) replaces the drift checker. Estimated effort ~12–18h.
+
+**Rationale:** The 2026-05-23 outline probe (`experiments/m2-outline-probe/`) composed 3 `ibd_phage_targeting` substories with and without a shared outline. The outline-fed composer won on transitions, headline-stat placement, slide-budget discipline, and structural consistency — but the gain was driven by terse explicit *prescriptions*, not by a rigid per-slide contract, and not by "seeing the whole" (the composer already sees the whole via `00_throughline.md` + `02_substories.md`). A rigid `01_deck_architecture.json` + drift-checker is over-engineering for the gain on offer.
+
+**Alternatives considered:** Heavyweight architect as specced at M0 — rejected; the probe showed the rigid-contract machinery does not earn its build cost. Naive parallelization with no outline — rejected; the probe showed the outline-fed composer measurably beats it. Build M2-lite without a probe — rejected; a ~$3 probe de-risked a 12–18h build.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §20; `experiments/m2-outline-probe/`; supersedes the §6 design.
+
+---
+
+## D-043 — 2026-05-23 — Outline-call model: Sonnet 4.6 (supersedes D-031)
+
+**Decision:** The `deck_outline.v1` call runs on Sonnet 4.6, not Opus 4.6. **Supersedes D-031** (which set the deck architect default to Opus 4.6 with a `--architect-model` Sonnet opt-in).
+
+**Rationale:** D-031 chose Opus because the heavyweight architect emitted a frozen, downstream-load-bearing contract where arc-quality margin justified the ~3× cost ($3–5/call). M2-lite emits an *outline* — a prescription sheet — not a frozen contract; its load-bearing content is structured directives (slot assignments, budgets, one-sentence transitions) that Sonnet emits reliably. The Opus premium no longer buys a commensurate margin. Revisit only if coherence testing on real M2-lite output shows Opus materially helps.
+
+**Alternatives considered:** Keep Opus per D-031 — rejected; pays a ~3× premium for a contract that no longer exists. Haiku — rejected; the outline still requires whole-deck arc judgment.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §20.2; supersedes D-031.
+
+---
+
+## D-044 — 2026-05-23 — Composer–outline contract: advisory, not rigid (supersedes D-032)
+
+**Decision:** The per-section composer treats the outline as **advisory context**, not a rigid contract. **Supersedes D-032** (the RIGID halt-and-re-architect deviation contract). Dropped: the `architecture_conflict` halt state, the re-architect-with-amendment loop, `audit/architecture_conflicts.jsonl`, and the `architecture_blocked` halt state. Composers free-hand all local composition; the outline pre-assigns only scarce/conflict-prone resources (figures, headline `big_number` slots, image budget, transition placement), and the post-merge reconciliation check (D-042) catches residual conflicts.
+
+**Rationale:** D-032's rigid contract existed to police a rigid `01_deck_architecture.json` that D-042 has eliminated. With an advisory outline there is nothing to "deviate" from in the contractual sense — a composer that judges a scoped claim doesn't fit simply composes the best section it can, and the post-merge check + Tier-1 review catch real problems. Rigid blame-attribution was D-032's stated benefit; it is not worth a halt-and-re-run loop when the outline is advisory.
+
+**Alternatives considered:** Keep the rigid contract — rejected; it polices a contract that no longer exists. Two-pass advisory mode with a formal composer-complaint channel — rejected as over-built for v0.4; the post-merge check is sufficient.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §20.3, §7.2 (superseded); supersedes D-032.
+
+---
+
+## D-045 — 2026-05-23 — `deck_architecture_pick` user gate removed
+
+**Decision:** The `deck_architecture_pick` human-approval gate (V0_4_ARCHITECTURE §6.7) is removed. The throughline-pick gate is the single load-bearing human gate in the v0.4 pipeline; the deck outline is computed and flows straight through to the parallel composers. Dropped with it: the `--amend-architecture` amendment loop, the 3-cycle amendment cap, the `--candidates`/`--pick` alternative-architecture selection, and the `architecture_blocked` halt state. The phase enum becomes `… → throughline_pick → deck_outline → composition (parallel) → …`.
+
+**Rationale:** Adam's call (2026-05-23): the throughline-pick gate already secures the load-bearing user decision (which meta-arc the talk takes). An advisory outline derived from an already-approved throughline does not warrant a second gate — it adds a halt/resume round-trip for a low-stakes artifact the user can adjust later via the revise verb. One gate, not two.
+
+**Alternatives considered:** Keep the architecture-approval gate — rejected; a second gate on an advisory artifact is friction without a commensurate decision at stake. Make the gate opt-in via a flag — rejected; an unused gate is dead code.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §20.2, §10.1; supersedes §6.7.

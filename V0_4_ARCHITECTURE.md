@@ -1,6 +1,6 @@
 # beril-presentation-maker — v0.4 Architecture Memo
 
-**Status:** SIGNED OFF — M0 complete 2026-05-12. **M1 shipped 2026-05-21.** M2 unblocked.
+**Status:** SIGNED OFF — M0 complete 2026-05-12. **M1 shipped 2026-05-21. v0.4.1 revision 2026-05-23 — M2 reshaped to "M2-lite" (shared-outline call): see §20, which supersedes §6, §7.2, the §10.1 phase enum, and decisions D-031 / D-032.**
 **Scope:** architectural pivot from per-substory drafting to
 deck-architect-then-parallel-compose. Not a punch list; not code.
 **Relationship to existing docs:**
@@ -406,6 +406,18 @@ density candidate.
 
 ## 6. Phase 2 — Deck architect (NEW)
 
+> **SUPERSEDED 2026-05-23 (v0.4.1 revision — see §20).** The
+> heavyweight "deck architect" in this section — the rigid
+> `01_deck_architecture.json` contract, the `deck_architecture.py`
+> schema validator, `check_architecture_drift.py`, the six
+> architecture-time validators (§8.3), the Opus model (D-031), and the
+> `deck_architecture_pick` user gate (§6.7) — is replaced by the
+> lighter **M2-lite "deck-outline call"** defined in §20. The
+> 2026-05-23 outline probe (`experiments/m2-outline-probe/`) showed
+> the coordination gains come from terse explicit *prescriptions*, not
+> from a rigid per-slide contract. §6 is retained as the M0 design
+> record; §20 is authoritative for M2.
+
 ### 6.1 What this phase does
 
 One LLM call. Input: all Phase-0 artifacts + the approved
@@ -611,6 +623,11 @@ citation token wording in prose, speaker-notes seed.
 
 ### 7.2 Deviation contract — rigid for v0.4 pilot
 
+> **SUPERSEDED 2026-05-23 (v0.4.1 — see §20, D-044).** The rigid
+> halt-and-re-architect contract below is dropped. The M2-lite outline
+> is advisory context, not a contract: composers free-hand local
+> composition and there is no `architecture_conflict` halt.
+
 If a composer finds the architecture's plan doesn't fit the evidence
 (e.g., the assigned claim_id and figure don't actually support the
 intended punchline), the contract is: **halt with `phase=architecture_conflict`,
@@ -743,14 +760,21 @@ a replacement for it.
 ### 10.1 New phase enum
 
 ```
-plan → phase0_tooling → throughline_pick → deck_architect
-     → deck_architecture_pick → composition (parallel) → review_tier1
+plan → phase0_tooling → throughline_pick → deck_outline
+     → composition (parallel) → review_tier1
      → review_tier2 → review_tier3 → assembled
 ```
 
-Halt states: `tier{1,2,3}_blocked`, `architecture_blocked`,
-`architecture_conflict`, `compliance_blocked`, plus the existing
-v0.3.x states preserved (`throughline_pick_blocked`, etc.).
+> **Revised 2026-05-23 (v0.4.1 — §20).** The enum above is the M2-lite
+> form: `deck_architect` → `deck_outline`, and the
+> `deck_architecture_pick` gate is removed (throughline-pick is the
+> single human gate; the outline flows straight through). The M0 form
+> was `deck_architect → deck_architecture_pick → composition`.
+
+Halt states: `tier{1,2,3}_blocked`, `compliance_blocked`, plus the
+existing v0.3.x states preserved (`throughline_pick_blocked`, etc.).
+`architecture_blocked` and `architecture_conflict` are dropped with
+the rigid contract (D-044).
 
 State schema bumps to `"version": "0.4"`. Migration script from v0.3.x
 state.json is M6 deliverable; v0.4 runs don't back-migrate v0.3.x
@@ -1019,8 +1043,9 @@ passed on Adam's Mac. Per-tier ship tables in `M1_PUNCH_LIST.md`; M1
 retrospective + M2 watchpoints in auto-memory
 `project_presentation_maker_v0_4_m1.md`.
 
-**M2 unblocked:** `deck_architect.v1.md` prompt + `01_deck_architecture.json`
-schema + `check_architecture_drift.py`.
+**M2 unblocked** (reshaped to M2-lite 2026-05-23 — see §20): the
+`deck_outline.v1` call (enrich `substory_design.v1`) + per-section
+composer briefing + a post-merge reconciliation check.
 
 **M1 dependency note (resolved 2026-05-12):** paper-writer M1 §B1 had
 shipped `claim_inventory.py` (per memory `project_paper_writer_v0_8_m1_a1.md`),
@@ -1030,13 +1055,17 @@ deferred it from active pipeline. The active path is `extract_claims.v1.md`
 and vendored byte-portable here. See `feedback_vendor_port_verify_active_path.md`
 for the cross-cutting lesson.
 
-**M2 — `deck_architect.v1.md` + architecture validator.** Author the
-architect prompt (~400 lines), the `01_deck_architecture.json`
-schema (`tools/deck_architecture.py` Python schema validator,
-modeled on `slide_spec.py`), and `check_architecture_drift.py`.
-Produces an architecture on `ibd_phage_targeting` end-to-end (no
-composition yet). The opt-in flag `--architecture-pipeline v0_4`
-enables; v0.3.x default unchanged.
+**M2 — deck-outline call (M2-lite — REVISED 2026-05-23, see §20).**
+Enrich `substory_design.v1` into a `deck_outline.v1` call that emits a
+terse, prescriptive whole-deck outline (per-section punchline + budget
++ headline-slot assignment + explicit transition-in/out sentences +
+scoped figures/claims + deck register spec). Sonnet, not Opus. The
+outline is advisory context fed to the parallel composers — NOT a
+rigid `01_deck_architecture.json` contract. Dropped vs the M0 §6
+design: `deck_architecture.py`, `check_architecture_drift.py`, the six
+architecture-time validators, the `deck_architecture_pick` gate.
+Validated by the 2026-05-23 outline probe (§20.7). Opt-in
+`--architecture-pipeline v0_4`; v0.3.x default unchanged. Est. ~12–18h.
 
 **M3 — Per-substory parallel composition.** Worker-pool
 implementation in `presentation_maker.sh` (or Python wrapper).
@@ -1083,9 +1112,19 @@ in `DECISIONS.md`.
 | Q11 | Vendor `extract_methods.py` from paper-writer at M1: **YES** | §4.5 + §16 M1 | D-040 |
 | Q12 | Cut-over A/B in both work modes: **YES** — must dominate v0.3.8 on `ibd_phage_targeting` (paper-exists) AND `functional_dark_matter` (no-paper) | §15 | D-041 |
 
-M0 is complete on these decisions. M1 (vendor `extract_methods.py` +
-`claim_inventory.py` + tests + smoke against `ibd_phage_targeting`
-in both work modes) is unblocked.
+M0 is complete on these decisions.
+
+### v0.4.1 revision decisions (2026-05-23)
+
+Layered on top of M0 after the outline probe; see §20 for the full
+rationale. Also mirrored in `DECISIONS.md`.
+
+| Decision | Where | D-N |
+|---|---|---|
+| M2 reshaped: heavyweight "deck architect" → lightweight **M2-lite "deck-outline call"** (enrich `substory_design.v1`; terse prescriptive outline; no rigid JSON contract, no `check_architecture_drift.py`, no architecture-time validators) | §20 | D-042 |
+| Outline-call model: **Sonnet 4.6**, not Opus 4.6 — supersedes **D-031** (it emits an outline, not a frozen contract) | §20 | D-043 |
+| Composer–outline contract: **advisory**, not rigid — supersedes **D-032** (drop the halt-and-re-architect loop, `architecture_conflict`, `architecture_blocked`) | §20 / §7.2 | D-044 |
+| `deck_architecture_pick` user gate **removed** — throughline-pick is the single human gate; the outline flows through — supersedes **§6.7** | §20 / §10.1 | D-045 |
 
 ---
 
@@ -1134,5 +1173,141 @@ in both work modes) is unblocked.
 
 ---
 
-**End of memo.** M0 deliverable: Adam's sign-off on Q1–Q10 in §17.
-M1 (claim_inventory port) is unblocked on sign-off.
+## 20. v0.4.1 revision — M2-lite (2026-05-23)
+
+This section is authoritative for Phase 2 (M2). It supersedes §6, the
+§7.2 rigid deviation contract, and the §10.1 phase enum, and lands
+decisions D-042–D-045 (§17). §6/§7.2 are retained as the M0 design
+record.
+
+### 20.1 What changed, and why
+
+The M0 design made Phase 2 a heavyweight **deck architect**: one Opus
+call emitting a rigid `01_deck_architecture.json` that pre-assigns
+every slide field, policed by `check_architecture_drift.py` + six
+architecture-time validators, behind a `deck_architecture_pick` user
+gate. v0.4.1 replaces that with **M2-lite: a shared-outline call**.
+
+Two findings drove the change:
+
+1. **Parallelization and coordination are separable.** §1.3 bundled
+   them ("don't pay the parallelism cost without paying the
+   architecture cost"). Re-examination (2026-05-22) found the bundling
+   has a hole: today's deck is *already* composed by uncoordinated
+   per-substory composers — just sequentially. Running them in
+   parallel is no *less* coherent than today's shipped output, just
+   faster. So parallelization (M3) is the safe wall-clock win and can
+   be banked independently; the architect is a *separate* bet on
+   coherence.
+
+2. **The coordination gain comes from prescriptions, not a contract.**
+   The outline probe (§20.7) showed a composer given a shared outline
+   beats one without — but the gain is driven by terse explicit
+   *prescriptions* (headline-slot assignments, per-section transition
+   sentences, budgets, register spec), not by a rigid per-slide
+   contract and not by "seeing the whole" (the composer already sees
+   the whole via `00_throughline.md` + `02_substories.md`). A rigid
+   `01_deck_architecture.json` + drift-checker is over-engineering for
+   the gain actually on offer.
+
+### 20.2 M2-lite — the deck-outline call
+
+Phase 2 is a single `deck_outline.v1` call that emits a **prescription
+sheet**, not a contract. Implementation: enrich the existing
+`substory_design.v1` (substory clustering) into `deck_outline.v1` — an
+evolution of an existing prompt, not a new heavyweight agent. Sonnet
+4.6 (D-043). Per section the outline carries: punchline, slide budget,
+headline-number slot assignment, explicit transition-in / transition-
+out sentences, scoped figures + claim_ids, and a deck-level register
+spec. It pre-assigns only the **scarce / conflict-prone** resources
+(figures, the headline `big_number` slots, the deck image budget,
+transition placement) and leaves all local composition (bullet
+wording, punchline phrasing, speaker-notes seed, which in-scope claim
+to foreground) to the composer.
+
+**Dropped vs §6:** `01_deck_architecture.json` as a rigid schema;
+`deck_architecture.py` (the JSON-schema validator);
+`check_architecture_drift.py`; the six §8.3 architecture-time
+validators; the Opus model (D-031 → D-043); the §6.7
+`deck_architecture_pick` user gate (D-045 — throughline-pick is the
+single human gate; the outline flows straight to the composers).
+
+### 20.3 Per-section composer brief
+
+Each parallel composer (M3) receives: (1) the whole outline +
+throughline, structured as a cacheable shared prefix so the N parallel
+calls share prompt cache; (2) its boundaries — section punchline +
+budget, what the prior section closes on (transition-in) and what the
+next opens (hand-off); (3) its scoped content — the slice of
+`claim_inventory.tsv` + the figures the outline assigns it (a scope
+hint, not a forbidden-to-deviate contract); (4) its visual brief —
+`diagram_design` for data/procedural diagrams, `ai_image_prompt` for
+concept illustrations, plus this section's image budget. The §7.1
+composer narrowing still applies; the §7.2 rigid deviation contract
+does not (D-044).
+
+### 20.4 Post-merge reconciliation
+
+Parallel composers cannot see each other's in-flight output, so the
+outline pre-assigns the scarce resources above AND a ~30-line
+post-merge reconciliation checker flags residual conflicts (duplicate
+figure use, two headline `big_number` slides, total image count vs the
+deck budget). This replaces `check_architecture_drift.py`: it checks
+for *conflicts*, not *contract adherence*.
+
+### 20.5 Effort + sequencing
+
+M2-lite is **~12–18h** — the low end of the original M2 estimate; the
+dropped schema/validator/drift-checker machinery was the bulk of the
+heavyweight cost. M3 (parallelization) is separable and may be banked
+first as the wall-clock win. M4 / M6 are unchanged from §16. M5 is
+unchanged but note its §14 AI Studio image-gen provider is **confirmed
+not yet implemented** (verified 2026-05-22 — `image_client.py` is
+CBORG-only) and remains real M5 work.
+
+### 20.6 Risk note
+
+The outline probe tested whether an *ideal* (hand-written) outline
+helps the composer — Risk 1. It did not test whether the
+`deck_outline.v1` LLM call can reliably *generate* a good outline —
+Risk 2. Risk 2 looks manageable precisely because the load-bearing
+elements are structured prescriptions (slot assignments, budgets,
+one-sentence transitions), which an LLM emits reliably — far more so
+than subtle prose coordination. If M2-lite composition quality
+disappoints, the first place to look is outline-generation quality,
+not the composer.
+
+### 20.7 Probe evidence
+
+The outline probe (`experiments/m2-outline-probe/` — README has the
+full method) composed 3 `ibd_phage_targeting` substories under two
+conditions: **B** naive parallel (no prior fragments, no outline) and
+**C** with the hand-written outline. 6 `claude -p` calls, $2.93 total.
+
+C beat B on every dimension M2-lite targets, with none favoring B:
+
+- **Transitions** — C/S2 produced an explicit "Bridge from S1" tee-up;
+  B/S2 opened cold. (S2→S3: both bridged; C more specific.)
+- **Headline-stat placement** — C promoted the outline's prescribed
+  numbers (8,489 sample count, 88.2% replication) to `big_number`
+  slides; B buried them in `claim_evidence` / `two_column` titles.
+- **Slide-budget discipline** — C hit the 5-slide S3 budget; B overran
+  to 6.
+- **Structural consistency** — C used a uniform section-opening layout
+  + `big_number` headline treatment across all three sections; B
+  varied.
+
+Hedge discipline was *not* a differentiator — both arms handled
+partial-evidence claims well. Caveat: n=1, LLM non-determinism — this
+is a directional read, not statistical; its weight comes from being
+consistent across four independent dimensions. A condition-A
+regression reference (today's sequential pipeline, `PRIOR_SUBSTORY_-
+OUTPUTS` chained) was run separately to confirm M2-lite does not
+regress vs today's coherence; result recorded with the probe.
+
+---
+
+**End of memo.** M0 deliverable (signed off 2026-05-12): Adam's
+sign-off on Q1–Q12 in §17. **v0.4.1 revision (2026-05-23):** M2
+reshaped to M2-lite per §20 + D-042–D-045, after the outline probe.
+M1 shipped 2026-05-21; M2 (M2-lite) is the active milestone.
