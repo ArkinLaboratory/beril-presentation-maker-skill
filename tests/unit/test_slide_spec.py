@@ -941,3 +941,73 @@ def test_validator_issue_format_marks_soft_warnings(ss):
     soft = ss.ValidatorIssue("$.bar", "advisory", severity="soft-warning")
     assert not err.format().startswith("[soft-warning]")
     assert soft.format().startswith("[soft-warning]")
+
+
+def test_cli_validate_rc0_on_soft_warnings_only(ss, tmp_path, capsys):
+    """M4a Tier B/E: the CLI must NOT fail validation on soft-warnings
+    alone (advisory; renderer absorbs). Live-failure pin: pre-fix logic
+    counted all issues regardless of severity, halting the orchestrator
+    when 19 soft-warnings + 0 errors fired on the Tier E recompose."""
+    # Build a spec with a single soft-warning trigger (big_number subtitle
+    # past 80 chars) and zero hard errors.
+    long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 50)
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None, "layout": "big_number",
+                    "content": {"headline": "42", "subtitle": long_subtitle}}],
+    }
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(spec))
+    rc = ss.main(["validate", str(p)])
+    assert rc == 0, "CLI must rc=0 on a spec with only soft-warnings"
+    out = capsys.readouterr()
+    # Soft-warning printed to stdout (operator sees it)
+    assert "soft-warning" in out.out or "soft-warning" in out.err
+
+
+def test_cli_validate_rc1_on_hard_errors(ss, tmp_path, capsys):
+    """The CLI must still rc=1 on hard errors (data_figure caption
+    overflow is the load-bearing hard cap; DQ4 didn't touch it)."""
+    long_caption = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None, "layout": "data_figure",
+                    "content": {"title": "t", "figure": "figures/x.png",
+                                "caption": long_caption}}],
+    }
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(spec))
+    rc = ss.main(["validate", str(p)])
+    assert rc == 1
+
+
+def test_cli_validate_rc1_when_errors_and_soft_warnings_mixed(ss, tmp_path):
+    """If both severities fire, rc=1 (the errors are still load-bearing)."""
+    long_caption = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)   # hard
+    long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 50)   # soft
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [
+            {"id": 1, "substory_id": None, "layout": "data_figure",
+             "content": {"title": "t", "figure": "figures/x.png",
+                         "caption": long_caption}},
+            {"id": 2, "substory_id": None, "layout": "big_number",
+             "content": {"headline": "42", "subtitle": long_subtitle}},
+        ],
+    }
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(spec))
+    rc = ss.main(["validate", str(p)])
+    assert rc == 1

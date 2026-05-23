@@ -1530,15 +1530,47 @@ def example_slide_spec() -> dict:
 # ---------------------------------------------------------------------------
 
 def _cli_validate(args: argparse.Namespace) -> int:
+    """Validate a slide_spec.json file via the CLI.
+
+    M4a Tier B/E (DQ4): severity-aware exit code. Soft-warnings DO NOT
+    fail the validation — the renderer's shrink-to-fit absorbs slightly-
+    long content, so a soft-warning is advisory, not a contract
+    violation. Hard errors still rc=1.
+
+    Live failure mid-Tier-E (2026-05-23): the pre-fix logic counted all
+    issues regardless of severity; orchestrator's `slide_spec.py
+    validate` call returned 1 on a spec with 19 soft-warnings and zero
+    errors, halting stage_merge_and_assemble. The in-process assembler
+    consumer was correctly severity-aware (Tier B commit f7581af); the
+    standalone CLI was the missing piece.
+    """
     spec = json.loads(Path(args.path).read_text(encoding="utf-8"))
     issues = validate_slide_spec(spec)
     if not issues:
         print("OK", file=sys.stderr)
         return 0
+    errors = [i for i in issues if getattr(i, "severity", "error") == "error"]
+    soft = [i for i in issues if getattr(i, "severity", "error") == "soft-warning"]
+    # Print all issues so the operator sees them (the format() helper
+    # prefixes soft-warnings with "[soft-warning] ").
     for issue in issues:
         print(issue.format())
-    print(f"\n{len(issues)} issue(s)", file=sys.stderr)
-    return 1
+    if errors:
+        print(
+            f"\n{len(errors)} error(s)"
+            + (f" + {len(soft)} soft-warning(s)" if soft else ""),
+            file=sys.stderr,
+        )
+        return 1
+    # Soft-warnings only: advisory, the renderer absorbs them; rc=0 so
+    # the orchestrator proceeds to assemble. The assembler will surface
+    # the same soft-warnings through AssemblyResult.warnings.
+    print(
+        f"\nOK ({len(soft)} soft-warning(s) — advisory; "
+        f"renderer shrink-to-fit absorbs)",
+        file=sys.stderr,
+    )
+    return 0
 
 
 def _cli_schema_json(args: argparse.Namespace) -> int:
