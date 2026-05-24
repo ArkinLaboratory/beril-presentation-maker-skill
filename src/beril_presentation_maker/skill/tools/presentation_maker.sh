@@ -75,6 +75,10 @@
 #                            ~30 images at $0.014 / gemini-3-pro-image).
 #   --image-style <style>    Force style override across all images this run
 #                            (e.g., scientific_illustration / metaphor).
+#   --image-provider <p>     Force image-gen provider (M5b/D-062):
+#                            cborg | google_ai_studio. Default: precedence —
+#                            GOOGLE_AI_STUDIO_API_KEY env present → AI Studio;
+#                            else CBORG_API_KEY → CBORG; else fail.
 #   --visual-qa              Run the visual-QA pass after assembly (v0.4 M4a
 #                            Tier C). Renders the deck to per-slide PNGs and
 #                            runs a vision claude -p over them to flag
@@ -118,6 +122,12 @@ AUTO_APPROVE_IMAGES=0         # bypass per-slide approval gate (CI / power users
 IMAGE_ALLOW_EXPLORATORY=0     # allow concept_illustration on EXPLORATORY tier
 MAX_IMAGE_COST_USD="0.50"     # cumulative cap; default ~30 images at $0.014/each
 IMAGE_STYLE=""                # optional style override forwarded to ai_image_prompt
+
+# M5b/D-062: image-gen provider selection. Empty default = auto-resolve
+# via env-var precedence (GOOGLE_AI_STUDIO_API_KEY > CBORG_API_KEY).
+# CLI --image-provider overrides; downstream image_client.py CLI uses
+# snake_case provider names (cborg | google_ai_studio).
+IMAGE_PROVIDER=""
 
 # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1 — Adam 2026-05-23).
 # Off by default; vision-LLM call + LibreOffice render adds cost per
@@ -168,6 +178,8 @@ while [[ $# -gt 0 ]]; do
     --image-allow-exploratory) IMAGE_ALLOW_EXPLORATORY=1; shift ;;
     --max-image-cost-usd)    MAX_IMAGE_COST_USD="$2"; shift 2 ;;
     --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
+    # M5b/D-062: image-gen provider selection (auto-resolved when empty)
+    --image-provider)        IMAGE_PROVIDER="$2"; shift 2 ;;
     # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
     --visual-qa)         VISUAL_QA=1; shift ;;
     # v0.4 M4b Tier A — review cascade is auto-run; opt out with this flag
@@ -353,31 +365,92 @@ if missing:
 fi
 echo "[pre-flight] OK" >&2
 
-# --- v0.3.3 image-gen: resolve CBORG_API_KEY ---
+# --- v0.3.3 + M5b image-gen: resolve provider API keys ---
 # Mirrors image_gen_calibration.py's _resolve_api_key precedence: shell
 # env wins; otherwise read from BERIL_ROOT/.env (the standard BERIL
 # secret location, matches what atlas + adversarial use). Never echoes
 # the value. Per memory feedback_secret_file_handling.md, we extract
-# the single variable we need rather than `source`-ing the whole file.
-if [[ -z "${CBORG_API_KEY:-}" ]] && [[ -f "$BERIL_ROOT/.env" ]]; then
-  CBORG_API_KEY=$("$PYTHON_BIN" -c "
+# the specific variables we need rather than `source`-ing the whole file.
+#
+# M5b/D-062: we now resolve BOTH CBORG_API_KEY and
+# GOOGLE_AI_STUDIO_API_KEY in one pass. Provider precedence is
+# computed below (after both keys are resolved).
+if [[ -f "$BERIL_ROOT/.env" ]]; then
+  if [[ -z "${CBORG_API_KEY:-}" ]] || [[ -z "${GOOGLE_AI_STUDIO_API_KEY:-}" ]]; then
+    _env_dump=$("$PYTHON_BIN" -c "
 import re, sys
 from pathlib import Path
+WANTED = ('CBORG_API_KEY', 'GOOGLE_AI_STUDIO_API_KEY')
 env_file = Path('$BERIL_ROOT/.env')
 for line in env_file.read_text(encoding='utf-8').splitlines():
-    m = re.match(r'^CBORG_API_KEY=(.*)$', line.strip())
-    if m:
-        v = m.group(1).strip()
-        if (v.startswith('\"') and v.endswith('\"')) or (v.startswith(\"'\") and v.endswith(\"'\")):
-            v = v[1:-1]
-        sys.stdout.write(v)
-        break
+    for name in WANTED:
+        m = re.match(rf'^{name}=(.*)\$', line.strip())
+        if m:
+            v = m.group(1).strip()
+            if (v.startswith('\"') and v.endswith('\"')) or (v.startswith(\"'\") and v.endswith(\"'\")):
+                v = v[1:-1]
+            # Output as NAME=value lines; consumer parses.
+            sys.stdout.write(f'{name}={v}\n')
+            break
 " 2>/dev/null) || true
-  if [[ -n "$CBORG_API_KEY" ]]; then
-    export CBORG_API_KEY
-    echo "[orchestrator] CBORG_API_KEY loaded from BERIL_ROOT/.env" >&2
+    while IFS='=' read -r _k _v; do
+      case "$_k" in
+        CBORG_API_KEY)
+          if [[ -z "${CBORG_API_KEY:-}" ]] && [[ -n "$_v" ]]; then
+            CBORG_API_KEY="$_v"
+            export CBORG_API_KEY
+            echo "[orchestrator] CBORG_API_KEY loaded from BERIL_ROOT/.env" >&2
+          fi
+          ;;
+        GOOGLE_AI_STUDIO_API_KEY)
+          if [[ -z "${GOOGLE_AI_STUDIO_API_KEY:-}" ]] && [[ -n "$_v" ]]; then
+            GOOGLE_AI_STUDIO_API_KEY="$_v"
+            export GOOGLE_AI_STUDIO_API_KEY
+            echo "[orchestrator] GOOGLE_AI_STUDIO_API_KEY loaded from BERIL_ROOT/.env" >&2
+          fi
+          ;;
+      esac
+    done <<< "$_env_dump"
+    unset _env_dump _k _v
   fi
 fi
+
+# --- M5b/D-062: image-gen provider precedence ---
+# Explicit --image-provider arg wins. Otherwise: GOOGLE_AI_STUDIO_API_KEY
+# present → AI Studio (matches Adam's stated intent: "use the user's
+# Gemini Studio license if available" — §14.1). Else CBORG_API_KEY →
+# CBORG. Else leave IMAGE_PROVIDER empty; the image-gen stage will
+# disable itself with a clear diagnostic (image_gen_decision.py /
+# stage_image_gen handle the no-provider case as if --no-images was set).
+if [[ -z "$IMAGE_PROVIDER" ]]; then
+  if [[ -n "${GOOGLE_AI_STUDIO_API_KEY:-}" ]]; then
+    IMAGE_PROVIDER="google_ai_studio"
+    echo "[orchestrator] image-gen provider: google_ai_studio (GOOGLE_AI_STUDIO_API_KEY present)" >&2
+  elif [[ -n "${CBORG_API_KEY:-}" ]]; then
+    IMAGE_PROVIDER="cborg"
+    echo "[orchestrator] image-gen provider: cborg (CBORG_API_KEY present)" >&2
+  fi
+else
+  # --image-provider explicit: validate the corresponding env var
+  case "$IMAGE_PROVIDER" in
+    cborg)
+      if [[ -z "${CBORG_API_KEY:-}" ]]; then
+        echo "[orchestrator] WARNING: --image-provider cborg but CBORG_API_KEY not set" >&2
+      fi
+      ;;
+    google_ai_studio)
+      if [[ -z "${GOOGLE_AI_STUDIO_API_KEY:-}" ]]; then
+        echo "[orchestrator] WARNING: --image-provider google_ai_studio but GOOGLE_AI_STUDIO_API_KEY not set" >&2
+      fi
+      ;;
+    *)
+      echo "[orchestrator] ERROR: --image-provider must be 'cborg' or 'google_ai_studio', got: $IMAGE_PROVIDER" >&2
+      exit 2
+      ;;
+  esac
+  echo "[orchestrator] image-gen provider: $IMAGE_PROVIDER (via --image-provider)" >&2
+fi
+export IMAGE_PROVIDER
 
 # --- Output dir setup ---
 DRAFTS_DIR="$PROJECT_DIR/talks"
@@ -1806,7 +1879,12 @@ with open('$request_path') as f:
     budget-remaining --draft-dir "$OUTDIR" --cap-usd "$MAX_IMAGE_COST_USD")
 
   echo "    generating image (worst-case \$$cost_ceil; remaining \$$budget_remaining)" >&2
+  # M5b/D-062: pass resolved --provider. Empty IMAGE_PROVIDER (no key
+  # resolved) defaults to cborg downstream, which then exits 3 with
+  # "CBORG_API_KEY not set" — surfaces the misconfiguration loudly.
+  local provider_arg="${IMAGE_PROVIDER:-cborg}"
   if ! "$PYTHON_BIN" "$TOOLS_DIR/image_client.py" generate \
+      --provider "$provider_arg" \
       --prompt "$image_prompt" \
       --out "$image_path" \
       --budget "$budget_remaining" \
