@@ -611,17 +611,155 @@ def run_tier2(
     )
 
 
-def run_tier3(draft_dir: Path) -> TierResult:
-    """Tier 3 — canonical adversarial (wraps beril-adversarial).
+def _invoke_beril_adversarial(
+    draft_dir: Path,
+    adversarial_bin: str = "beril-adversarial",
+) -> tuple[int, str, str, float]:
+    """Invoke `beril-adversarial review --type presentation <draft_dir>`.
 
-    M4b Tier A SCAFFOLDING: returns 'not-implemented'. Tier D wraps
-    the existing stage_adversarial_review invocation.
+    Returns (exit_status, stdout_tail, stderr_tail, duration_sec).
+    Does NOT raise — caller decides escalation based on the tuple.
+    Extracted as a separate function so unit tests can monkey-patch
+    it without subprocess wrangling.
     """
+    import subprocess
+    t0 = datetime.now(timezone.utc)
+    try:
+        proc = subprocess.run(
+            [adversarial_bin, "review",
+             "--type", "presentation", str(draft_dir)],
+            capture_output=True, text=True,
+            timeout=900,   # 15 min max for a 27-slide adversarial pass
+        )
+        duration = (datetime.now(timezone.utc) - t0).total_seconds()
+        return (proc.returncode,
+                (proc.stdout or "")[-1000:],
+                (proc.stderr or "")[-1000:],
+                duration)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        duration = (datetime.now(timezone.utc) - t0).total_seconds()
+        return (1, "", f"subprocess exception: {exc}", duration)
+
+
+def _adversarial_cli_available(adversarial_bin: str = "beril-adversarial") -> bool:
+    """Probe for beril-adversarial CLI on PATH. Returns True if found."""
+    import shutil
+    return shutil.which(adversarial_bin) is not None
+
+
+def run_tier3(
+    draft_dir: Path,
+    *,
+    adversarial_bin: str = "beril-adversarial",
+) -> TierResult:
+    """Tier 3 — canonical adversarial (M4b Tier D).
+
+    Invokes `beril-adversarial review --type presentation <draft_dir>`
+    — same call stage_adversarial_review makes today. Parses the v3
+    output at audit/adversarial_review.json into cascade findings.
+    Cascade is the load-bearing caller now; orchestrator's standalone
+    stage_adversarial_review elides when cascade Tier 3 ran (the
+    orchestrator reads audit/review_cascade.json's tier3.status to
+    decide).
+
+    DQ4: Tier 3 has full editorial authority — its v3 findings
+    (including central_objection) are lifted as P1 (cascade severity)
+    but never short-circuit. The revise loop owns the response;
+    cascade just surfaces.
+
+    Status mapping:
+      adversarial CLI missing  → "skipped" (note: install hint)
+      adversarial rc=0 + JSON  → "pass" / "advisory" based on findings
+      adversarial rc != 0      → "error" (note: stderr tail)
+      JSON missing post-run    → "error" (note: invocation succeeded
+                                  but contract violation)
+    """
+    t0 = datetime.now(timezone.utc)
+    if not _adversarial_cli_available(adversarial_bin):
+        duration = (datetime.now(timezone.utc) - t0).total_seconds()
+        return TierResult(
+            name="tier3",
+            status="skipped",
+            note=("beril-adversarial CLI not on PATH; install via "
+                  "pipx (see HUB_INSTALL.md) to enable canonical Tier 3."),
+            duration_sec=duration,
+        )
+
+    rc, stdout_tail, stderr_tail, sub_duration = _invoke_beril_adversarial(
+        draft_dir, adversarial_bin=adversarial_bin,
+    )
+
+    review_path = draft_dir / "audit" / "adversarial_review.json"
+    duration = (datetime.now(timezone.utc) - t0).total_seconds()
+
+    if rc != 0:
+        return TierResult(
+            name="tier3",
+            status="error",
+            note=(f"beril-adversarial review failed (rc={rc}); "
+                  f"stderr tail: {stderr_tail[:200]}"),
+            duration_sec=duration,
+        )
+
+    if not review_path.is_file():
+        return TierResult(
+            name="tier3",
+            status="error",
+            note=(f"beril-adversarial review exited rc=0 but did not "
+                  f"produce {review_path} — contract violation."),
+            duration_sec=duration,
+        )
+
+    payload = _load_json_safe(review_path)
+    if payload is None:
+        return TierResult(
+            name="tier3",
+            status="error",
+            note=(f"beril-adversarial review wrote unreadable JSON at "
+                  f"{review_path}."),
+            duration_sec=duration,
+        )
+
+    # Lift v3 findings into cascade findings. beril-adversarial v3
+    # schema (per CONTRACT.md) names findings under top-level
+    # `findings` and a separate `central_objection` (singular, may be
+    # absent). Both are surfaced as P1 (advisory) — Tier 3 has full
+    # editorial authority but the cascade doesn't gate Tier 3's
+    # findings beyond surfacing them (the revise loop owns response).
+    findings: list[CascadeFinding] = []
+    for f in payload.get("findings", []) or []:
+        # v3 finding shape (per CONTRACT.md): {id, slide_id?, kind,
+        # severity?, summary, evidence?, recommendation?, ...}
+        findings.append(CascadeFinding(
+            tier="tier3",
+            kind=f.get("kind", "adversarial"),
+            severity="P1",
+            slide_id=f.get("slide_id"),
+            detail=f.get("summary", "<no summary>"),
+            evidence={"id": f.get("id"),
+                      "input_severity": f.get("severity"),
+                      "recommendation": f.get("recommendation")},
+        ))
+    central = payload.get("central_objection")
+    if isinstance(central, dict):
+        findings.append(CascadeFinding(
+            tier="tier3",
+            kind="central_objection",
+            severity="P1",
+            slide_id=central.get("slide_id"),
+            detail=central.get("summary", "<no summary>"),
+            evidence={"id": central.get("id"),
+                      "recommendation": central.get("recommendation"),
+                      "kind": "central_objection"},
+        ))
+
     return TierResult(
         name="tier3",
-        status="not-implemented",
-        note="Tier A scaffolding — Tier D will wrap "
-             "beril-adversarial review --type presentation.",
+        status="advisory" if findings else "pass",
+        findings=findings,
+        cost_usd=0.0,        # beril-adversarial's own cost log is the
+                              # source of truth; cascade doesn't double-count
+        duration_sec=duration,
     )
 
 

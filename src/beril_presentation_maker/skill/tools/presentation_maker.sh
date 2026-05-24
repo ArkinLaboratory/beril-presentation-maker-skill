@@ -2301,11 +2301,10 @@ fi
 # merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
 
-# v0.4 M4b Tier A: review cascade orchestrator. Auto-runs by default
-# (DQ1); opt out with --no-review-cascade. Tier A is scaffolding —
-# per-tier dispatchers return 'not-implemented'; Tiers B/C/D fill in.
-# The standalone stage_adversarial_review below still runs as today
-# (cascade Tier 3 is not yet wired to elide it; that's Tier D).
+# v0.4 M4b: review cascade orchestrator. Auto-runs by default (DQ1);
+# opt out with --no-review-cascade. Tier B aggregates the deterministic
+# checks + opt-in visual-QA; Tier C runs Haiku narrative-light; Tier D
+# runs the canonical adversarial review. Always advisory rc=0.
 if [[ $NO_REVIEW_CASCADE -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
   stage_review_cascade
 else
@@ -2314,8 +2313,36 @@ else
   fi
 fi
 
+# v0.4 M4b Tier D: when the cascade ran its Tier 3 (canonical
+# adversarial), the standalone stage_adversarial_review elides — both
+# call `beril-adversarial review --type presentation` and write the
+# same audit/adversarial_review.json; running both is double-spend.
+# Read cascade's tier3.status: 'pass'/'advisory'/'fail' → cascade ran
+# Tier 3 (skip standalone); 'skipped'/'error'/'not-implemented' →
+# cascade did NOT produce adversarial output (standalone runs).
+CASCADE_RAN_TIER3=0
+CASCADE_JSON="$OUTDIR/audit/review_cascade.json"
+if [[ -f "$CASCADE_JSON" ]]; then
+  # Read tiers[2].status via a tiny python one-liner (jq isn't a
+  # guaranteed runtime dep on the hub; python is).
+  TIER3_STATUS="$("$PYTHON_BIN" -c "
+import json, sys
+try:
+    d = json.load(open('$CASCADE_JSON'))
+    tiers = d.get('tiers') or []
+    print(tiers[2].get('status', '') if len(tiers) >= 3 else '')
+except Exception:
+    print('')
+" 2>/dev/null)"
+  case "$TIER3_STATUS" in
+    pass|advisory|fail)
+      CASCADE_RAN_TIER3=1 ;;
+  esac
+fi
+
 # v0.3.0: adversarial review-rewrite loop (after assembly, before final summary).
-# Skip when --no-adversarial OR when --skip-assembly (no spec to review).
+# Skip when --no-adversarial OR when --skip-assembly (no spec to review)
+# OR when the cascade already ran Tier 3 (M4b Tier D de-dup).
 #
 # v0.3.2.7: control-flow restructure. Previously, the revise_slides
 # dispatch was nested INSIDE the should_run adversarial_review branch —
@@ -2325,7 +2352,9 @@ fi
 # top-level should_run gate.
 if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
   # Adversarial review stage
-  if should_run adversarial_review; then
+  if [[ $CASCADE_RAN_TIER3 -eq 1 ]]; then
+    echo "[skip] adversarial_review (cascade Tier 3 already ran; audit/adversarial_review.json populated)" >&2
+  elif should_run adversarial_review; then
     stage_adversarial_review || {
       echo "[warn] adversarial_review failed — revise loop will use whatever JSON exists" >&2
       echo "       Inspect: $ADVERSARIAL_REVIEW_JSON (if any)" >&2

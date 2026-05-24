@@ -234,12 +234,106 @@ def test_tier2_dispatcher_error_status_when_audit_missing(rc, tmp_path, monkeypa
     assert "did not produce" in result.note
 
 
-def test_tier3_scaffolding_not_implemented(rc, tmp_path):
-    """Tier D will wrap stage_adversarial_review under the cascade
-    contract."""
+def test_tier3_returns_skipped_when_adversarial_cli_missing(rc, tmp_path, monkeypatch):
+    """Tier D: cascade's run_tier3 probes for beril-adversarial on
+    PATH. If absent → status='skipped' + install-hint note. Never
+    raises (advisory)."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": False)
     result = rc.run_tier3(tmp_path)
     assert result.name == "tier3"
-    assert result.status == "not-implemented"
+    assert result.status == "skipped"
+    assert "PATH" in result.note or "install" in result.note.lower()
+
+
+def test_tier3_returns_error_when_adversarial_subprocess_fails(rc, tmp_path, monkeypatch):
+    """beril-adversarial rc != 0 → status='error' (distinct from
+    'skipped' which means cli missing). Cascade still completes."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial":
+                            (2, "", "model rate-limited", 1.0))
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "error"
+    assert "rate-limited" in result.note
+
+
+def test_tier3_returns_error_when_no_audit_json_post_invoke(rc, tmp_path, monkeypatch):
+    """beril-adversarial rc=0 but no audit/adversarial_review.json
+    written → status='error' (contract violation; the adversarial CLI
+    must always produce the JSON on rc=0)."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial":
+                            (0, "ok", "", 2.0))
+    # No audit/adversarial_review.json pre-written
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "error"
+    assert "did not produce" in result.note
+
+
+def test_tier3_lifts_v3_findings_into_cascade_findings(rc, tmp_path, monkeypatch):
+    """Happy path: adversarial v3 JSON present → cascade lifts each
+    finding as CascadeFinding(tier='tier3'); central_objection also
+    lifted. All P1 per D2 (Tier 3 has full editorial authority but
+    cascade doesn't gate on it — the revise loop owns the response)."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial":
+                            (0, "ok", "", 25.0))
+
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "adversarial_review.json").write_text(json.dumps({
+        "schema_version": "presentation-adversarial.v3",
+        "findings": [
+            {"id": "F001", "slide_id": 7, "kind": "evidence_gap",
+             "severity": "major", "summary": "94.7% lacks per-cohort breakdown",
+             "recommendation": "add cohort qualifier to subtitle"},
+            {"id": "F002", "slide_id": 13, "kind": "register_drift",
+             "severity": "minor", "summary": "passive voice on STRONG claim",
+             "recommendation": "rewrite active"},
+        ],
+        "central_objection": {
+            "id": "CO1", "slide_id": None,
+            "summary": "deck pivots on PhageFoundry coverage without "
+                       "naming the per-patient diagnostic gap",
+            "recommendation": "add a slide on the AIEC strain-resolution gap",
+        },
+    }))
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "advisory"
+    # 2 findings + 1 central_objection = 3 total
+    assert len(result.findings) == 3
+    assert all(f.tier == "tier3" for f in result.findings)
+    assert all(f.severity == "P1" for f in result.findings)
+    assert result.has_p0 is False   # Tier 3 doesn't short-circuit either
+    kinds = {f.kind for f in result.findings}
+    assert "evidence_gap" in kinds
+    assert "register_drift" in kinds
+    assert "central_objection" in kinds
+
+
+def test_tier3_skipped_finding_status_pass_when_no_findings(rc, tmp_path, monkeypatch):
+    """v3 JSON with empty findings → status='pass' (the deck cleared
+    Tier 3; no advisory findings to surface)."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial":
+                            (0, "ok", "", 25.0))
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "adversarial_review.json").write_text(json.dumps({
+        "schema_version": "presentation-adversarial.v3",
+        "findings": [],
+    }))
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "pass"
+    assert result.findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -350,34 +444,37 @@ def test_run_cascade_no_tier3_flag_skips_tier3(rc, tmp_path, monkeypatch):
     assert "--no-tier3" in report.tiers[2].note
 
 
-def test_run_cascade_end_to_end_tier1_2_real_tier3_stub(rc, tmp_path, monkeypatch):
+def test_run_cascade_end_to_end_all_tiers_wired(rc, tmp_path, monkeypatch):
     """Cascade end-to-end on an empty draft (no slide_spec.json):
-    Tier 1 runs real aggregation (lands 'pass' — nothing to check);
-    Tier 2 invokes review_tier2 (stubbed in tests — must NEVER hit
-    live LLM); Tier 3 still 'not-implemented' (Tier D will replace).
+    Tier 1 runs real aggregation (lands 'pass'); Tier 2 invokes
+    review_tier2 (stubbed in tests); Tier 3 invokes beril-adversarial
+    (stubbed-absent in tests).
 
+    All three tiers are wired (no scaffolding stubs remain).
     short_circuited_at stays null because Tier 1 doesn't emit P0
     on an empty draft."""
-    # Defensively stub Tier 2's claude invocation — tests must never
-    # hit live LLM even if claude is on PATH in the dev env.
-    def _stub_invoke(draft_dir, claude_bin="claude"):
+    # Defensively stub Tier 2 (claude may be on PATH) — tests must
+    # never hit live LLM.
+    def _stub_invoke_t2(draft_dir, claude_bin="claude"):
         audit = draft_dir / "audit"
         audit.mkdir(parents=True, exist_ok=True)
         (audit / "review_tier2.json").write_text(json.dumps({
             "schema_version": "review-tier2.v1",
             "n_slides_reviewed": 0, "findings": [],
-            "note": "stubbed by test_run_cascade_end_to_end_tier1_2_real_tier3_stub",
+            "note": "stubbed by test",
         }))
         return 0
-    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke)
+    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke_t2)
+    # Defensively stub Tier 3 (beril-adversarial may be on PATH).
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": False)
 
     report = rc.run_cascade(tmp_path)
     assert report.tiers[0].status == "pass"
-    # Tier 2 is wired (not the scaffolding stub) — exact status
-    # depends on what the stub above wrote; 'skipped' for our stub.
     assert report.tiers[1].status != "not-implemented", \
-        "Tier C wired run_tier2; cascade should no longer return scaffolding stub"
-    assert report.tiers[2].status == "not-implemented"   # Tier D will replace
+        "Tier C wired run_tier2"
+    assert report.tiers[2].status != "not-implemented", \
+        "Tier D wired run_tier3"
     assert report.short_circuited_at is None
 
 
@@ -456,10 +553,9 @@ def test_cli_returns_0_on_empty_spec(rc, tmp_path, monkeypatch):
     Tier 1 runs real aggregation but finds nothing (validators skipped
     structurally-invalid spec); Tier 2 lifts a 'skipped' stub (mocked
     via _invoke_review_tier2 — tests must NEVER hit live LLM); Tier 3
-    still 'not-implemented' (Tier D will replace). rc=0 always."""
-    # Defensively stub Tier 2's claude invocation — even if claude is
-    # on PATH in the dev env, the test must not make a real LLM call.
-    def _stub_invoke(draft_dir, claude_bin="claude"):
+    lifts 'skipped' (mocked adversarial-CLI-missing — tests must NEVER
+    hit live LLM). rc=0 always."""
+    def _stub_invoke_t2(draft_dir, claude_bin="claude"):
         audit = draft_dir / "audit"
         audit.mkdir(parents=True, exist_ok=True)
         (audit / "review_tier2.json").write_text(json.dumps({
@@ -468,7 +564,9 @@ def test_cli_returns_0_on_empty_spec(rc, tmp_path, monkeypatch):
             "note": "stubbed by test_cli_returns_0_on_empty_spec",
         }))
         return 0
-    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke)
+    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke_t2)
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": False)
 
     spec_dir = tmp_path / "working"
     spec_dir.mkdir()
@@ -478,8 +576,8 @@ def test_cli_returns_0_on_empty_spec(rc, tmp_path, monkeypatch):
     j = tmp_path / "audit" / "review_cascade.json"
     payload = json.loads(j.read_text())
     assert payload["tiers"][0]["status"] == "pass"
-    assert payload["tiers"][1]["status"] == "skipped"   # stubbed
-    assert payload["tiers"][2]["status"] == "not-implemented"
+    assert payload["tiers"][1]["status"] == "skipped"   # T2 stubbed
+    assert payload["tiers"][2]["status"] == "skipped"   # T3 stubbed
     assert payload["short_circuited_at"] is None
 
 
