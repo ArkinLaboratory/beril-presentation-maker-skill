@@ -1020,6 +1020,15 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
             ph.width = Inches(4.86)  # ends at 5.20; figure starts at 5.30 (0.10 gap)
             ph.height = Inches(3.50)
         _set_placeholder_bullets(slide, 1, bullets)
+        # M4a Tier E round 5 (2026-05-24): with-figure branch was
+        # missing the normAutofit the no-figure branch already has
+        # (line below). Live failure on ibd_phage_targeting/draft_1
+        # slide 13: ~620 chars of bullets in a 4.86 x 3.50 box at
+        # 18pt overflowed the placeholder bottom into the figure-
+        # caption row + the logo strip. _enable_normautofit at the
+        # 80% default + 20% line-spacing reduction is sufficient on
+        # this content; the no-figure branch uses the same defaults.
+        _enable_normautofit(slide, 1)
         path = _resolve_asset_path(content["figure"], draft_dir, warnings,
                                     "claim_evidence.figure")
         if path:

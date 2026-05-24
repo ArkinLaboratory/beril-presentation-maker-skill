@@ -478,21 +478,33 @@ def _render_edge_label(
         # row at the connector midpoint with a 1.1in width — clears
         # the node-tops cleanly (y = mid_y - 0.40 = above node-top y =
         # cy - 0.45 by ~0.05in) and reads as one line.
+        # Compute node-top y from src geometry (src.cy is center; src.h
+        # is height). Both endpoints share y for horizontal edges, so
+        # src_top == dst_top.
+        node_top = src.cy - src.h / 2
         if gap >= 1.0:
             label_w = max(0.6, gap - 0.10)   # margin: 0.05in each side
             # x: center the textbox in the gap
             label_x = src_right + (gap - label_w) / 2
-            # y: above the connector line
-            label_y = mid_y - 0.40
+            # y: just above the node-top edge (the label sits in the
+            # gap horizontally so the node-row vertical position is OK,
+            # but go slightly above so the connector arrow head is
+            # visible underneath).
+            label_y = max(0.10, node_top - label_h - 0.05)
         else:
-            # Narrow gap — sit the label above the node row, sized to
-            # one line. Clears the node-tops (label-bottom at mid_y -
-            # 0.15 ≈ cy - 0.15 vs node-top cy - 0.45, so 0.30in of
-            # clearance). Label paints on top anyway per Tier A3
-            # third-pass z-order if any vertical overlap remains.
+            # Narrow gap — sit the label fully ABOVE the node row so
+            # horizontal overlap with the nodes does not matter (the
+            # label is in the empty space above the workflow row).
+            # M4a Tier E round 5 (2026-05-24): round-4's mid_y - 0.40
+            # was INSIDE the node-row vertical extent on slides 6/10/19
+            # (nodes h=0.9 → node_top=cy-0.45 → label_y=mid_y-0.40 is
+            # only 0.05in above node_top, and label-bottom mid_y-0.15
+            # falls inside the node — text rendered ON the node fill,
+            # narrowly visible between adjacent nodes as the vertical
+            # strip the visual-QA model reported).
             label_w = 1.10
             label_x = mid_x - label_w / 2
-            label_y = mid_y - 0.40
+            label_y = max(0.10, node_top - label_h - 0.05)
     elif dx < 0.3 and src.h > 0 and dst.h > 0:
         # Vertical edge — place label in the inter-node gap to the right.
         if src.cy < dst.cy:

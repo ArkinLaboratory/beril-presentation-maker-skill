@@ -354,10 +354,17 @@ def test_edge_label_horizontal_narrow_gap_overflows_above_nodes(dr, blank_slide)
         "narrow-gap label must have word_wrap=False to avoid char-by-char "
         "wrap when the box is wider than the gap"
     )
-    # Vertical position: label-bottom must clear node-top (cy - h/2 = 1.60)
-    assert top_in + height_in <= 1.85, (
+    # Vertical position: label-bottom MUST clear node-top entirely
+    # (Tier E round 5 — round-4 had label_y = mid_y - 0.40, which on
+    # h=0.8 nodes at cy=2.0 put label-bottom at 1.85 vs node-top 1.60,
+    # i.e., label was INSIDE the node-row vertical extent and the
+    # text rendered ON the node fill. Round 5 anchors label_y to
+    # node_top - label_h - 0.05 so the label is fully above the row).
+    node_top = 2.0 - 0.8 / 2   # 1.60 for the test fixture
+    assert top_in + height_in <= node_top + 0.001, (
         f"narrow-gap label bottom {top_in + height_in:.3f} must clear "
-        f"node-top at 1.60 (plus small margin for paint-order overlap)"
+        f"node-top at {node_top:.3f} entirely (label belongs in the empty "
+        f"space ABOVE the node row, not inside it)"
     )
 
 
