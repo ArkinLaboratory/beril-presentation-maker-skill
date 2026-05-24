@@ -1150,10 +1150,79 @@ detection-class calibration moved to M4b (D-049). Detail: `M3_PUNCH_LIST.md`.
     on text rendered at 80–100% scale); portable visual-QA path for
     end-user revise loops (auto-memory task; revisit during M4b
     cascade design).
-- **M4b — tiered review cascade.** The original §16 M4: `review_cascade.py`
-  orchestrator; Tier 1 deterministic P-validators; Tier 2 Haiku with
-  empirical detection-class calibration; Tier 3 canonical adversarial;
-  fail-fast short-circuiting at every tier boundary.
+- **M4b — tiered review cascade — SHIPPED 2026-05-24.**
+  Six tiers, three live Tier-E rounds, suite 1174 passed. Per-tier
+  ship table in `M4b_PUNCH_LIST.md`; DQ1–DQ4 resolutions land as
+  D-054..D-057 in `DECISIONS.md`; live P3 contract-mismatch fix
+  lands as D-058; M4b retrospective in auto-memory
+  `project_presentation_maker_v0_4_m4b.md`.
+  - **Tier A — orchestrator scaffolding** (commit `80139a5`):
+    `tools/review_cascade.py` ships the cascade contract
+    (`review-cascade.v1`); `TierResult` / `CascadeFinding` /
+    `CascadeReport` dataclasses; `run_cascade` with DQ4
+    operator-gated short-circuit (Tier-1 P0 → skip Tier 2+3; Tier 2
+    advisory only; Tier 3 unconditional unless `--no-tier3`); CLI
+    + orchestrator `--no-review-cascade` opt-out (D-054 auto-run
+    default).
+  - **Tier B — Tier 1 aggregation** (commit `60795b1`): five sources
+    in fail-fast cost order — `validate_presentation` P1–P10
+    (Tier B runs it directly + persists
+    `audit/presentation_validation.json` as side-effect; pre-flighted
+    via `slide_spec.validate_slide_spec` to skip cleanly on
+    structurally-invalid specs), `quantitative_grounding.json`,
+    `no_artifact_refs.json`, `deck_reconciliation.json`, and
+    `audit/visual_qa.json` (DQ2 / D-055: read-if-present; never
+    invoke `visual_qa.py`). DQ4 / D-057 P0 set: `_P0_VALIDATORS =
+    {"P3", "P4", "P5"}` (D-058 later removes P3).
+  - **Tier C — Tier 2 narrative-light** (commit `1812813`): new
+    `tools/review_tier2.py` + `prompts/review_tier2.v1.md` (D-056
+    ship-as-v1 with the §8.1 candidate-four classes —
+    `register_drift`, `qa_softball`, `unbacked_quantitative`,
+    `substory_arc`). Pinned `claude-haiku-4-5-20251001` (~$0.05/run
+    target). Cascade dispatcher with DQ4 invariant: even a rogue
+    Tier-2 P0 is demoted to P1 (cascade short-circuit reads
+    `TierResult.has_p0`; Tier 2 must never trigger).
+  - **Tier D — Tier 3 wrapper** (commit `5bfea4b`): cascade `run_tier3`
+    invokes `beril-adversarial review --type presentation` directly
+    + lifts v3 findings into cascade findings. Orchestrator de-dup:
+    reads `audit/review_cascade.json`'s `tiers[2].status`; if in
+    {pass, advisory, fail}, standalone `stage_adversarial_review`
+    skips (no double-spend on adversarial; revise loop still
+    consumes the cascade-produced `audit/adversarial_review.json`).
+  - **Tier E — live cascade smoke** (3 rounds, commits `8fab2fa`,
+    `da3112e`, `b774e66`; plus offline integration tests `b2ae7f5`):
+    convergence gate on `ibd_phage_targeting/draft_1`. Round 1 hit
+    P3 v0.3-era contract mismatch (282 P0s on numbers; v0.4
+    composer doesn't emit `speaker_notes_provenance`) — fixed via
+    D-058 P3 demote + M5 schedule. Round 2 hit missing
+    `--beril-root` in cascade Tier-3 subprocess (orchestrator
+    preamble sets `BERIL_ROOT` env; standalone cascade doesn't) —
+    fixed with explicit-arg → env-var → walk-up-4-parents
+    resolution. Round 3 hit real v3 schema (`class`/`issue`/
+    central_objection-as-finding, not `kind`/`summary`/top-level) —
+    fixed lifter. Final round 3: T1 advisory 586 findings, T2
+    advisory 6 findings (all 4 classes; 121.7s; ~$0.05), T3
+    advisory 14 findings (8 classes; 5 P0; 9.3 min). Calibration
+    captured at `audit/review_tier2_calibration.md` (DQ3
+    ship-then-iterate ratified; v2 expansion candidates documented:
+    `claim_evidence`, `throughline_drift`, `unbacked_citation`,
+    tighten `qa_softball`).
+  - **Tier F — closeout**: this section; `LAYOUT.md` updated for
+    `review_cascade.py` + `review_tier2.py` + `review_tier2.v1.md`;
+    `DECISIONS.md` D-054..D-058; `M4b_PUNCH_LIST.md` status table
+    closed; auto-memory updated.
+  - **Carried out of M4b** (deferred per the M4b posture):
+    - P3 retirement (replace `validate_p3_numeric_provenance` with
+      a wrapper around `check_quantitative_grounding.py`) — scheduled
+      for M5 per D-058.
+    - Tier 2 prompt v2 expansion (add `claim_evidence`,
+      `throughline_drift`, `unbacked_citation` classes; tighten
+      `qa_softball`) — captured in
+      `audit/review_tier2_calibration.md`; ship-then-iterate per
+      DQ3 / D-056.
+    - Persist Tier-2 cost into `audit/review_tier2.json`
+      (currently goes to stderr via the diagnostic envelope; future
+      consumers want it in the JSON).
 
 **M5 — Image-gen multi-provider + revise invariance + P3 retirement.**
 AI Studio provider in `image_client.py`; auth discovery; model probe;

@@ -85,6 +85,23 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            advisory audit/visual_qa.{md,json};
 │       │   │                            graceful no-op stub when deps absent
 │       │   │                            (D-050, D-051)
+│       │   ├── review_cascade.py         v0.4 M4b: tiered review cascade
+│       │   │                            orchestrator. Auto-runs by default
+│       │   │                            (D-054); opt-out via
+│       │   │                            --no-review-cascade. Aggregates Tier 1
+│       │   │                            (deterministic + opt-in visual-QA),
+│       │   │                            Tier 2 (Haiku narrative-light), Tier 3
+│       │   │                            (canonical adversarial wrapper).
+│       │   │                            DQ4 / D-057: Tier-1 P0 (P4/P5; P3
+│       │   │                            demoted per D-058) short-circuits.
+│       │   │                            Writes audit/review_cascade.{md,json}.
+│       │   ├── review_tier2.py           v0.4 M4b Tier C: cascade Tier-2
+│       │   │                            invoker. Pinned claude-haiku-4-5
+│       │   │                            (~$0.05/run target); Read+Write tools
+│       │   │                            only. Writes
+│       │   │                            audit/review_tier2.{md,json}; same
+│       │   │                            stub-report fallback pattern as
+│       │   │                            visual_qa.py.
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime; M4a Tier E
 │       │                                round 2 added the watermark-strip pass)
@@ -109,12 +126,22 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            paper-writer; consumed by extract_claims.py)
 │       │   ├── deck_outline.v1.md       v0.4 M2: deck-outline call (enriched
 │       │   │                            substory clustering — V0_4_ARCHITECTURE §20)
-│       │   └── visual_qa.v1.md          v0.4 M4a: vision-reviewer system prompt
-│       │                                for tools/visual_qa.py — five defect
-│       │                                classes (container_breach, element_overlap,
-│       │                                footer_or_title_collision, illegible_scale,
-│       │                                headline_body_mismatch); structured JSON
-│       │                                output; advisory severity
+│       │   ├── visual_qa.v1.md          v0.4 M4a: vision-reviewer system prompt
+│       │   │                            for tools/visual_qa.py — five defect
+│       │   │                            classes (container_breach, element_overlap,
+│       │   │                            footer_or_title_collision, illegible_scale,
+│       │   │                            headline_body_mismatch); structured JSON
+│       │   │                            output; advisory severity
+│       │   └── review_tier2.v1.md       v0.4 M4b Tier C: Tier-2 reviewer system
+│       │                                prompt — four detection classes per
+│       │                                §8.1 (register_drift, qa_softball,
+│       │                                unbacked_quantitative, substory_arc).
+│       │                                Severities P1/P2 only (DQ4 / D-057:
+│       │                                Tier 2 never gates Tier 3). v1 ships
+│       │                                per DQ3 / D-056 ship-then-iterate;
+│       │                                v2 expansion candidates documented at
+│       │                                draft/audit/review_tier2_calibration.md
+│       │                                after the M4b Tier-E live probe.
 │       └── references/
 │           ├── presentation-checklist.md  P-tier validators in detail
 │           ├── kbase-brand-tokens.json    colors / fonts / sizes
@@ -158,8 +185,10 @@ ArkinLaboratory/beril-presentation-maker-skill/
 - Shell orchestrator `tools/presentation_maker.sh`
 - Python helpers under `tools/` (extract_cross_tenant, curate_figures,
   citation_pool, diagram_render, image_client, poster_fill,
-  validate_presentation, assemble_pptx, stream_progress, build_master)
-- 13 versioned `.v1.md` system prompts under `prompts/`
+  validate_presentation, assemble_pptx, stream_progress, build_master,
+  reconcile_deck, visual_qa, review_cascade, review_tier2)
+- 15 versioned `.v1.md` system prompts under `prompts/`
+  (incl. M4a `visual_qa.v1.md` + M4b `review_tier2.v1.md`)
 - Reference rubric `references/presentation-checklist.md`
 - Brand tokens `references/kbase-brand-tokens.json`
 - Master + poster templates under `references/templates/`
@@ -169,7 +198,8 @@ ArkinLaboratory/beril-presentation-maker-skill/
 
 - `claude -p` subprocess for each per-stage agent (Plan, Throughline,
   Substory, Slide-Compose, Speaker-Notes, Q&A-Prep, Cross-Tenant,
-  Citation-Pool, Reframer, Diagram-Design, AI-Image-Prompt)
+  Citation-Pool, Reframer, Diagram-Design, AI-Image-Prompt,
+  Visual-QA opt-in, Tier-2 review)
 - `python3` helper invocations for:
   - cross-tenant signal extraction
   - figure curation by mode budget
@@ -178,6 +208,14 @@ ArkinLaboratory/beril-presentation-maker-skill/
   - AI image gen (CBORG-Gemini, opt-in)
   - P1–P10 validators
   - hash-diff against `state.json` on `continue`
+  - **M4b review cascade** (auto-runs by default per D-054; opt out
+    via `--no-review-cascade`): orchestrates Tier 1 (deterministic
+    + opt-in visual-QA) + Tier 2 (Haiku, ~$0.05) + Tier 3
+    (canonical adversarial wrapper, ~$0.50–$1.50). Fail-fast on
+    Tier-1 P0 (P4/P5; P3 demoted per D-058). The cascade replaces
+    the standalone `stage_adversarial_review` invocation when
+    cascade Tier 3 runs (de-dup via cascade JSON `tiers[2].status`
+    read).
 - `python-pptx` for slide_spec → .pptx (only at `assemble` step). Pure
   Python, no system pandoc / LibreOffice binary needed for .pptx.
 - `LibreOffice` (system binary, optional) for `--format pdf` AND for

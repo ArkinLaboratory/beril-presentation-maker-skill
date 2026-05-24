@@ -152,6 +152,27 @@ Requires both system binaries above. Without them the flag is a
 no-op with a stub report explaining what's missing. Skill ships
 portable; the deps are host-only and don't affect any other verb.
 
+### Review cascade (M4b, auto-runs by default)
+
+After assembly, the orchestrator auto-runs a **tiered review cascade**
+(`tools/review_cascade.py`) that orchestrates the existing review
+checks under one fail-fast contract. Opt out via `--no-review-cascade`.
+
+| Tier | Cost | What it does |
+|---|---|---|
+| Tier 1 | ~$0 | P1–P10 + advisory checkers + opt-in visual-QA. A Tier-1 P0 (P4 / P5; P3 demoted per D-058) short-circuits Tier 2 + Tier 3 — saves ~$0.50+ of adversarial spend on a deck with a known mechanical fail. |
+| Tier 2 | ~$0.05 | Claude Haiku 4.5 narrative-light review. Always advisory; never gates Tier 3. |
+| Tier 3 | ~$0.50–$1.50 | Wraps the existing `beril-adversarial review --type presentation` call. Standalone `stage_adversarial_review` elides when cascade Tier 3 ran (de-dup). |
+
+Output: `audit/review_cascade.{md,json}`. The revise loop continues
+to read `audit/adversarial_review.json` (which IS the cascade's
+Tier-3 output) — no breaking change for existing v0.3.x consumers.
+
+**Cross-tier `--visual-qa` integration:** the cascade Tier 1 reads
+`audit/visual_qa.json` if it exists (per D-055), lifting visual-QA
+findings into the cascade JSON. To enrich the cascade with visual
+findings, pass both `--visual-qa` AND (default) `--review-cascade`.
+
 ## First-run validation
 
 Pick a small project for the first hub run. The recommended smoke:

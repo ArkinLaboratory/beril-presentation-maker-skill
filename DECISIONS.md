@@ -1112,6 +1112,72 @@ DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC re
 
 ---
 
+## D-054 — 2026-05-24 — M4b: review cascade auto-runs by default (DQ1)
+
+**Decision:** The Tier-B/C/D review cascade (`tools/review_cascade.py`) auto-runs by default after `stage_merge_and_assemble` in `presentation_maker.sh`. Opt out via `--no-review-cascade`. Distinct from M4a's `--visual-qa` (which is opt-in per D-050) because the cascade's value proposition IS fail-fast: making it opt-in defeats the cost-savings it's supposed to deliver.
+
+**Rationale:** Tier 1 is ~free (deterministic + audit-file reads). Tier 2 is ~$0.05 (Haiku narrative-light). Tier 3 is the existing canonical adversarial (~$0.50–$1.50) that ALREADY runs by default; the cascade just orchestrates around it with fail-fast guards. So the marginal cost of cascade auto-run vs status quo is the ~$0.05 Tier 2 layer — well below the ~$0.50+ savings on every Tier-1-P0 draft. Opt-in posture would have asymmetric value (~$0.05 cost to opt in; ~$0.50+ saved when Tier 1 catches a real defect).
+
+**Alternatives considered:**
+- **Opt-in via `--review-cascade`** — rejected; defeats the fail-fast value prop. Operators who don't know the flag exists never get the cascade.
+- **Opt-out per-tier (`--no-tier2`, `--no-tier3`)** — kept these for surgical use (e.g., re-running cascade after a code change without re-spending Tier 3). The CLI flags exist; the orchestrator just doesn't expose them.
+
+**Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) DQ1; `tools/review_cascade.py`; `tools/presentation_maker.sh` `NO_REVIEW_CASCADE` flag + `stage_review_cascade` dispatch.
+
+---
+
+## D-055 — 2026-05-24 — M4b: cascade reads `audit/visual_qa.json` if present; never invokes `visual_qa.py` (DQ2)
+
+**Decision:** Cascade Tier 1 reads `audit/visual_qa.json` if it exists and lifts findings into cascade findings (confidence=high → P1; medium/low → P2). The cascade NEVER invokes `tools/visual_qa.py` itself. Operators opt in to visual-QA via the existing `--visual-qa` flag (per D-050); the cascade just consumes whatever the operator chose to produce.
+
+**Rationale:** D-050's portability posture is load-bearing — the skill ships without LibreOffice or Poppler as hard deps. If the cascade invoked `visual_qa.py`, then every cascade run would either spend the vision-LLM cost or write a stub-report; either way, the M4a opt-in semantic is broken. Reading the file if-present preserves both contracts: operators who passed `--visual-qa` get visual findings in the cascade JSON; operators who didn't see no change. Adam emphasized: **the `--visual-qa` option needs prominent documentation** (Tier F deliverable in HUB_INSTALL.md + README.md) so operators discover the integration.
+
+**Stub-report handling:** the M4a stub-report posture writes `audit/visual_qa.json` with `findings: []` + a `note` (toolchain missing, spec missing, etc.). The cascade's `_read_visual_qa` ignores stubs (zero findings → no lift) so cascade JSON doesn't surface phantom "toolchain missing" noise.
+
+**Alternatives considered:**
+- **Auto-invoke visual-QA from cascade** — rejected; breaks D-050 + the portability posture.
+- **Cascade flag to opt in to visual-QA-on-cascade-run** — rejected as duplicate of `--visual-qa`; one opt-in flag is cleaner.
+
+**Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) DQ2; D-050 (visual-QA opt-in); `tools/review_cascade.py` `_read_visual_qa`.
+
+---
+
+## D-056 — 2026-05-24 — M4b: Tier 2 ships §8.1 candidate-four classes as v1; calibration is one-off + ship-then-iterate (DQ3)
+
+**Decision:** Tier-2 reviewer (`prompts/review_tier2.v1.md`) ships the four detection classes from `V0_4_ARCHITECTURE.md` §8.1 — `register_drift`, `qa_softball`, `unbacked_quantitative`, `substory_arc` — as v1. Empirical calibration (per D-049, deferred from M3) is a single Tier-E live probe against Tier-3 adversarial output on `ibd_phage_targeting/draft_1`; results captured at `audit/review_tier2_calibration.md` in the live draft. Fine-grained calibration (prompt iteration based on more drafts' worth of data) is deferred to post-ship — DQ3-(c) ship-then-iterate, matching M4a's posture.
+
+**Rationale:** Calibration before Tier 2 ships is premature — the 4-class scope is well-motivated from §8.1's design analysis; whether the classes are tuned correctly is empirically answerable only by running Tier 2 against real decks AND a Tier 3 ground truth. The Tier-E probe validates that Tier 2 (a) doesn't hallucinate findings (0 of 6 findings on the calibration deck were hallucinations) and (b) catches real defects that Tier 3 would otherwise find more expensively. v2 expansion candidates (additional classes: `claim_evidence`, `throughline_drift`, `unbacked_citation`; tighten `qa_softball`) are documented in the calibration artifact for the next prompt iteration.
+
+**Live probe data** (Tier-E commit `b774e66`, `ibd_phage_targeting/draft_1`):
+- T2 found 6 findings across all 4 classes; T3 found 14 findings (8 classes).
+- Slide-level overlap: 0 (T2 + T3 catch different slides even within the same class — Tier 2 catches cheap/narrow wins, Tier 3 catches the rest).
+- Substory-level overlap: 1/1 (both T2 and T3 flagged substory S4's arc).
+- T2 false-positive rate: 0% (all 6 findings are real defects).
+
+**Alternatives considered:**
+- **Calibrate-before-ship via paper-writer's calibration data** — rejected; presentation-maker's defect classes differ from paper-writer's; cross-skill calibration is a poor proxy.
+- **Ship Tier 2 with NO detection-class spec; let the model decide** — rejected; the structured prompt is what keeps Tier 2 cheap and focused vs Tier 3.
+
+**Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) DQ3; D-049 (Tier-2 calibration deferred from M3); `prompts/review_tier2.v1.md`; live calibration artifact at `<draft_dir>/audit/review_tier2_calibration.md`.
+
+---
+
+## D-057 — 2026-05-24 — M4b: operator-gated fail-fast (Tier 1 P0 short-circuits Tier 2+3; Tier 2 never gates; Tier 3 runs unconditionally per scope) (DQ4)
+
+**Decision:** Cascade short-circuit semantics: a Tier-1 P0 finding (P3/P4/P5 fail per `_P0_VALIDATORS`; D-058 later removes P3) causes Tier 2 + Tier 3 to SKIP with a `note: "short-circuited at tier1"`. Tier 2 findings are ALWAYS advisory (P1 or P2; the cascade dispatcher demotes a rogue Tier-2 P0 to P1 as an invariant guard); they NEVER trigger short-circuit; Tier 3 always runs after Tier 2 (unless explicitly `--no-tier3` or the standalone `--no-adversarial`). Tier 3 has full editorial authority and lifts v3 P0/P1/info findings as cascade P0/P1/P2, but Tier 3 is the bottom tier — its P0s do not short-circuit anything (nothing below to short-circuit).
+
+**Rationale:** Tier-1 short-circuit is where the cascade earns its keep — Tier-3 adversarial costs ~$0.50–$1.50 per run, and running it on a deck with a mechanical fail (a number that contradicts REPORT, a citation that doesn't exist in the pool, a brand-color violation) is wasted spend. Tier 2 is a NEW pass with NO calibration history (D-049 deferred; D-056 ship-then-iterate); giving Tier-2 findings short-circuit authority before we have precision data would risk new false-positive short-circuits that defeat the cost-savings the cascade is supposed to deliver. Tier 3's authority is unchanged — it's still the canonical reviewer.
+
+**DQ4 invariant enforcement:** the cascade dispatcher in `run_tier2` reads the model's emitted severity and demotes any P0 to P1. Pinned by `test_tier2_dispatcher_demotes_rogue_p0_to_p1`. If a future Tier-2 prompt iteration legitimately needs P0 authority (e.g., catches a never-Tier-3-misses defect type), this decision revisits.
+
+**Alternatives considered:**
+- **Strict P0 only** (only validator-emitted P0s short-circuit; Tier 2 + Tier 3 always run regardless of Tier 2 findings) — equivalent to current behaviour for the Tier-2-doesn't-gate part; differs only in how the cascade names the short-circuit semantic. Kept the "operator-gated" framing for clarity.
+- **Inclusive P0** (Tier 2 + Tier 3 high-severity findings short-circuit later tiers) — rejected; Tier 2 has no calibration, Tier 3 IS the last tier.
+
+**Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) DQ4; `tools/review_cascade.py` `run_cascade` short-circuit logic + `run_tier2` P0-demote invariant; tests `test_run_cascade_tier1_p0_short_circuits_2_and_3` + `test_tier2_dispatcher_demotes_rogue_p0_to_p1`.
+
+---
+
 ## D-058 — 2026-05-24 — M4b: demote P3 from P0 to P1 on the v0.4 cascade; retire P3 in M5
 
 **Decision:** The Tier-1 cascade's `_P0_VALIDATORS` set (`tools/review_cascade.py`) drops `"P3"`; only `"P4"` (citation pool) and `"P5"` (brand color) remain as P0 short-circuit triggers. P3's findings still appear in the cascade as advisory `P1` (so the operator sees them) but no longer block Tiers 2 + 3.

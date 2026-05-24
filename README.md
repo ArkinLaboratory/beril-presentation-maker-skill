@@ -167,6 +167,7 @@ PEP-668 system interpreter that lacks the project's deps, and `source
                           [--image-style <style>]
                           [--max-revise-cost-usd <n>] [--max-revisions <n>]
                           [--visual-qa]
+                          [--no-review-cascade]
                           [--skip-assembly]
                           [--model <model_id>] [--no-stream]
 
@@ -220,18 +221,73 @@ projects/<project_id>/talks/draft_N/
     ├── image_provenance.json   ← v0.3.3 image-gen append-log
     ├── visual_qa.{json,md}     ← v0.4 M4a (opt-in --visual-qa); advisory
     │                             render-quality findings (5 defect classes)
+    ├── review_cascade.{json,md} ← v0.4 M4b (auto-runs by default); tiered
+    │                             review report (T1 deterministic + T2 Haiku
+    │                             + T3 canonical adversarial)
+    ├── review_tier2.{json,md}  ← v0.4 M4b Tier C output (read by cascade)
+    ├── presentation_validation.json ← v0.4 M4b Tier B side-effect (P1-P10)
     └── revise_loop_metadata.json
 ```
 
-**`--visual-qa` (v0.4 M4a Tier C, opt-in):** renders the assembled deck
-to per-slide PNGs via `soffice` + `pdftoppm`, runs a vision-capable
-`claude -p` over them, writes advisory `audit/visual_qa.{md,json}` with
-findings across five defect classes (text overflow / container breach,
-element overlap, footer or title-band collision, illegible scale,
-headline↔body coherence). Always rc=0; never blocks assembly. Adds
-~$0.6–0.8 (Sonnet 4.6 vision) + ~30s LibreOffice render. Requires
-LibreOffice + Poppler on the host; without them the flag is a no-op
-with a stub report explaining what's missing.
+### `--visual-qa` (v0.4 M4a Tier C, opt-in) — **read this section**
+
+The visual-QA pass is **off by default** because it requires two
+host-only deps (LibreOffice + Poppler) and adds ~$0.6–0.8 of vision-LLM
+spend per run. You opt in because the renderer can ship a deck that
+*validates* but renders poorly (a long subtitle that shrinks past the
+60% floor, a diagram label that the shrink-to-fit can't save, a figure
+caption that collides with the logo strip). Visual-QA catches that.
+
+**When to use it:** before sharing the assembled deck with a real
+audience. Run after assembly:
+
+```bash
+beril-presentation-maker draft <project_id> --visual-qa
+# or, post-hoc on an existing draft:
+.venv/bin/python <skill_path>/tools/visual_qa.py <draft_dir> --keep-pngs
+```
+
+**What it does:** renders the deck to per-slide PNGs via `soffice`
+(`--headless --convert-to pdf`) → `pdftoppm` (`-png`), runs a
+vision-capable `claude -p` (Sonnet 4.6) over them, writes advisory
+`audit/visual_qa.{md,json}` with findings across **five defect classes**:
+
+| Class | Catches |
+|---|---|
+| `container_breach` | text overflowing its box bounds |
+| `element_overlap` | elements visibly colliding |
+| `footer_or_title_collision` | body content into the logo strip / title band |
+| `illegible_scale` | text too small to read at projection distance |
+| `headline_body_mismatch` | title promises more/different than body delivers |
+
+**Always rc=0; never blocks assembly.** Findings are advisory; the
+revise loop and hand-edit pass own response. The M4b cascade reads
+`audit/visual_qa.json` if present (per D-055) — opt in to visual-QA
+to enrich the cascade's Tier-1 findings list.
+
+**Requires** LibreOffice + Poppler on the host. Without them the
+flag is a no-op with a stub report explaining what's missing —
+**the skill ships portable** (no hard dep on either binary). Install
+on macOS: `brew install --cask libreoffice && brew install poppler`.
+Install on Linux: distro-appropriate `libreoffice` + `poppler-utils`
+packages.
+
+### Review cascade (v0.4 M4b, auto-runs)
+
+After assembly, a three-tier review cascade orchestrates the
+existing checks under one fail-fast contract. **Auto-runs by default**
+(per D-054); opt out via `--no-review-cascade`.
+
+| Tier | Cost | What it does |
+|---|---|---|
+| Tier 1 — deterministic | ~$0 | Aggregates P1–P10 validators + the three advisory checkers (`quantitative_grounding`, `no_artifact_refs`, `deck_reconciliation`) + `audit/visual_qa.json` if present (per D-055). Fail-fast: a P0 (P4 citation-pool or P5 brand-color violation; P3 is advisory per D-058) short-circuits Tier 2+3, saving ~$0.50+ of adversarial spend. |
+| Tier 2 — Haiku narrative-light | ~$0.05 | Claude Haiku 4.5 reviews `slide_spec.json` + the narrative artifacts for four classes: `register_drift`, `qa_softball`, `unbacked_quantitative`, `substory_arc`. Always advisory (DQ4 / D-057); never gates Tier 3. |
+| Tier 3 — canonical adversarial | ~$0.50–$1.50 | Wraps the existing `beril-adversarial review --type presentation` call. Lifts v3 findings + central_objection into the cascade JSON. Standalone `stage_adversarial_review` elides when cascade Tier 3 ran (de-dup; no double-spend). |
+
+Output: `audit/review_cascade.{md,json}` with per-tier status,
+findings, and `short_circuited_at`. The revise loop continues to read
+`audit/adversarial_review.json` (which IS the cascade's Tier-3 output)
+— no breaking change.
 
 Each invocation creates a new numbered draft directory. Decks are
 versioned, not edited in place. v0.3.1+ 4-zone layout is stable
