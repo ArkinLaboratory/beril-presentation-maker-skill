@@ -797,7 +797,67 @@ def _resolve_asset_path(rel_or_abs: str, draft_dir: Path,
 # placeholders beyond what build_master.py guarantees (TITLE on every
 # layout; BODY idx 1 on most; BODY idx 2 only on two_column_compare).
 
+# M4a Tier E round 3 (2026-05-23): acronym-aware title-case fix-up.
+# The compose pipeline derives the title-slide `content.title` from
+# `project_id.replace("_", " ").title()`. Python's `.title()` lower-
+# cases every letter after the first in each word, so "ibd_phage_
+# targeting" → "Ibd Phage Targeting" (instead of "IBD Phage
+# Targeting"). Caught by the round-2 visual-QA pass on slide 1.
+#
+# Restoring the right case at compose time would require teaching
+# `slide_compose.v2` / `intro.v1` (and any downstream stage that
+# title-cases) about acronyms — multiple prompts, multiple drift
+# surfaces. Doing it once at the assembler keeps the prompts simple
+# and fixes the issue even on already-composed specs. The acronym
+# list is short, BERDL-domain-specific, and easy to extend.
+#
+# Heuristic: any whitespace-separated token whose *uppercase* form is
+# in the acronym set gets uppercased. Tokens are matched
+# case-insensitively against the set.
+_KNOWN_ACRONYMS: frozenset[str] = frozenset({
+    # Disease + clinical
+    "IBD", "CD", "UC", "DNA", "RNA", "AIEC", "CCA", "ARI",
+    # KBase / BERDL platform
+    "KBASE", "BERDL", "CBORG", "DOE", "API", "CLI", "JSON", "TSV",
+    "PDF", "PPTX", "MD", "URL", "CSV", "YAML", "OK",
+    # Bioinformatics tools / standards
+    "GTDB", "HMP", "HMP2", "LDA", "GMM", "RAST", "DRAM", "CMD",
+    "MAG", "BGC", "BLAST", "PCA", "CLR", "ARI", "FDR",
+})
+
+
+def _fix_acronyms_in_title(text: str) -> str:
+    """Uppercase tokens whose uppercase form matches _KNOWN_ACRONYMS.
+
+    Operates on whitespace-separated tokens only (preserves punctuation
+    inside tokens — "BERDL/DOE" → "BERDL/DOE" since we only fix the
+    full token if its upper() form matches). Safe for compose-style
+    titles; not appropriate for arbitrary prose (acronyms inside body
+    text should come through the composer correctly).
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    tokens = text.split()
+    fixed = []
+    for tok in tokens:
+        # Strip leading/trailing punctuation for the lookup, preserve
+        # original punctuation in the output.
+        bare = tok.strip(".,;:!?()[]{}\"'")
+        if bare.upper() in _KNOWN_ACRONYMS and bare != bare.upper():
+            # Replace the bare token with its uppercase form, keeping
+            # any surrounding punctuation.
+            fixed.append(tok.replace(bare, bare.upper()))
+        else:
+            fixed.append(tok)
+    return " ".join(fixed)
+
+
 def _fill_title(slide, content, draft_dir, warnings):
+    # Tier E round 3: acronym-fix the title before setting. The
+    # compose pipeline's `.title()` call produces "Ibd Phage Targeting"
+    # from project_id "ibd_phage_targeting"; restore "IBD" + any other
+    # KBase/BERDL/clinical acronym in _KNOWN_ACRONYMS.
+    content["title"] = _fix_acronyms_in_title(content.get("title", ""))
     _set_title(slide, content["title"])
     parts: list[str] = []
     if content.get("subtitle"):

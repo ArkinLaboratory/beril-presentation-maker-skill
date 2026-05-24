@@ -113,11 +113,18 @@ _FALLBACK_HEX = {
 @dataclass
 class _RenderedShape:
     """Internal — the python-pptx shape we created for a node, plus its
-    intended center coordinates. Used to compute connector endpoints."""
+    geometry. Used to compute connector endpoints + the gap-based
+    edge-label placement (M4a Tier E round 3, 2026-05-23: the round-2
+    visual-QA found edge labels at center-to-center midpoints land ON
+    the next node box when inter-node gap is < ~0.7in; the label pass
+    now uses gap midpoints + node widths to size the textbox to fit
+    the gap)."""
     node_id: str
     shape: Any                     # python-pptx shape object
     cx: float                      # center x (inches)
     cy: float                      # center y (inches)
+    w: float = 0.0                 # node width (inches); 0 means unknown
+    h: float = 0.0                 # node height (inches); 0 means unknown
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +350,8 @@ def _render_node(
         shape=sp,
         cx=x + w / 2,
         cy=y + h / 2,
+        w=w,
+        h=h,
     )
 
 
@@ -409,9 +418,22 @@ def _render_edge_label(
     so node fills occlude edge endpoints (clean visual) BUT labels still
     appear on top of the diagram instead of behind it (M4a Tier A3).
 
-    Geometry inherits the 2026-04-27 fix #54 heuristic: offset the label
-    above (horizontal edges), right (vertical edges), or above-and-right
-    (diagonal) so it sits clear of the connector AND the inter-node gap.
+    M4a Tier E round 3 (2026-05-23): geometry now uses NODE-EDGE
+    midpoint (not center-to-center) + node widths to size the textbox
+    to fit the inter-node GAP. Round-2 visual-QA found the pre-round-3
+    heuristic (0.7in label width centered on a center-to-center
+    midpoint) put labels ON the next node box when the gap was
+    < ~0.7in (slide 6 LDA→K=4 edge — label `max ARI at K=4`
+    fragmented as `max AR` / `at K=4` because half of it spilled
+    behind the K=4 box). The gap-based placement keeps the label
+    inside the gap.
+
+    For horizontal edges:  label spans the gap between src.right and
+                            dst.left; width = max(0.4, gap - 0.10);
+                            placed above the line (label_y < mid_y).
+    For vertical edges:    same idea on Y axis.
+    For diagonal edges:    fall back to the prior heuristic (the
+                            label sits in open space anyway).
     """
     src_id = edge.get("from")
     dst_id = edge.get("to")
@@ -427,20 +449,64 @@ def _render_edge_label(
     mid_y = (src.cy + dst.cy) / 2
     dy = abs(dst.cy - src.cy)
     dx = abs(dst.cx - src.cx)
-    if dy < 0.3:
-        label_x = mid_x - 0.35
-        label_y = mid_y - 0.40   # above the line
-    elif dx < 0.3:
-        label_x = mid_x + 0.10   # right of the line
-        label_y = mid_y - 0.15
+
+    # Default textbox geometry (fallback when node widths unknown).
+    label_w = 0.70
+    label_h = 0.25
+
+    if dy < 0.3 and src.w > 0 and dst.w > 0:
+        # Horizontal edge — place label in the inter-node gap.
+        # Compute gap edges from node half-widths around their centers.
+        if src.cx < dst.cx:
+            src_right = src.cx + src.w / 2
+            dst_left = dst.cx - dst.w / 2
+        else:
+            src_right = dst.cx + dst.w / 2
+            dst_left = src.cx - src.w / 2
+        gap = max(0.0, dst_left - src_right)
+        # If the gap is too narrow for a meaningful label, fall back
+        # to the prior offset heuristic but at minimum width.
+        if gap >= 0.4:
+            label_w = max(0.4, gap - 0.10)   # margin: 0.05in each side
+            # x: center the textbox in the gap
+            label_x = src_right + (gap - label_w) / 2
+            # y: above the connector line
+            label_y = mid_y - 0.40
+        else:
+            # Tight gap — sit the label above the connector midpoint,
+            # accept overlap with the nearest node box (label paints
+            # on top anyway per Tier A3 third-pass z-order).
+            label_w = 0.50
+            label_x = mid_x - label_w / 2
+            label_y = mid_y - 0.40
+    elif dx < 0.3 and src.h > 0 and dst.h > 0:
+        # Vertical edge — place label in the inter-node gap to the right.
+        if src.cy < dst.cy:
+            src_bottom = src.cy + src.h / 2
+            dst_top = dst.cy - dst.h / 2
+        else:
+            src_bottom = dst.cy + dst.h / 2
+            dst_top = src.cy - src.h / 2
+        gap_y = max(0.0, dst_top - src_bottom)
+        if gap_y >= 0.3:
+            label_h = max(0.20, min(0.40, gap_y - 0.05))
+            label_x = mid_x + 0.10
+            label_y = src_bottom + (gap_y - label_h) / 2
+        else:
+            label_x = mid_x + 0.10
+            label_y = mid_y - 0.15
     else:
+        # Diagonal edge (or w/h unknown) — prior offset heuristic.
         label_x = mid_x - 0.20
         label_y = mid_y - 0.30
     tb = slide.shapes.add_textbox(
         Inches(label_x), Inches(label_y),
-        Inches(0.70), Inches(0.25),
+        Inches(label_w), Inches(label_h),
     )
     tb.text_frame.text = label
+    # Tier E round 3: word_wrap so multi-word labels wrap inside the
+    # gap-sized box instead of clipping at the right edge.
+    tb.text_frame.word_wrap = True
     for paragraph in tb.text_frame.paragraphs:
         for run in paragraph.runs:
             run.font.size = Pt(9)
@@ -496,19 +562,24 @@ def render_diagram(
     nodes = diagram.get("nodes", []) or []
     edges = diagram.get("edges", []) or []
 
-    # Pre-compute centers (no slide mutation yet)
-    centers_by_id: dict[str, tuple[float, float]] = {}
+    # Pre-compute geometry (no slide mutation yet). Carries width + height
+    # alongside centers so the line pass can build _RenderedShape proxies
+    # with the same w/h that the actual nodes will have — the third pass
+    # (edge labels) needs node widths to size the label textbox to the
+    # inter-node gap (M4a Tier E round 3).
+    geom_by_id: dict[str, tuple[float, float, float, float]] = {}
     for node in nodes:
         node_id = node.get("id", "")
         x, y = _transform_coords(float(node["x"]), float(node["y"]), region)
         w = float(node["w"])
         h = float(node["h"])
-        centers_by_id[node_id] = (x + w / 2, y + h / 2)
+        geom_by_id[node_id] = (x + w / 2, y + h / 2, w, h)
 
     # Pass 1: render edge LINES using computed centers
     edge_proxy: dict[str, _RenderedShape] = {
-        nid: _RenderedShape(node_id=nid, shape=None, cx=cx, cy=cy)
-        for nid, (cx, cy) in centers_by_id.items()
+        nid: _RenderedShape(node_id=nid, shape=None,
+                            cx=cx, cy=cy, w=w, h=h)
+        for nid, (cx, cy, w, h) in geom_by_id.items()
     }
     for edge in edges:
         _render_edge_line(slide, edge, edge_proxy, brand_tokens)

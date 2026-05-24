@@ -734,6 +734,38 @@ def test_layout_handlers_dispatch_covers_full_vocabulary(ss, asm):
     assert set(asm.LAYOUT_HANDLERS.keys()) == set(ss.LAYOUTS)
 
 
+def test_fix_acronyms_in_title_uppercases_known(asm):
+    """M4a Tier E round 3 (2026-05-23): "Ibd Phage Targeting" from
+    project_id "ibd_phage_targeting" via .title() must restore "IBD"."""
+    assert asm._fix_acronyms_in_title("Ibd Phage Targeting") == "IBD Phage Targeting"
+    assert asm._fix_acronyms_in_title("Kbase Berdl Demo") == "KBASE BERDL Demo"
+
+
+def test_fix_acronyms_in_title_preserves_unknown(asm):
+    """Unknown tokens stay as the composer wrote them. The acronym set
+    is small and BERDL-domain-specific; non-acronyms pass through."""
+    assert asm._fix_acronyms_in_title("Phage Cocktail Strategy") == "Phage Cocktail Strategy"
+    # All-lowercase real word is not in the acronym set
+    assert asm._fix_acronyms_in_title("microbiome diversity") == "microbiome diversity"
+
+
+def test_fix_acronyms_in_title_already_uppercase_unchanged(asm):
+    """If the composer already wrote the acronym correctly, no change."""
+    assert asm._fix_acronyms_in_title("IBD Phage Targeting") == "IBD Phage Targeting"
+
+
+def test_fix_acronyms_in_title_handles_punctuation(asm):
+    """Punctuation around acronyms preserved."""
+    assert asm._fix_acronyms_in_title("(Ibd) Cohort") == "(IBD) Cohort"
+    assert asm._fix_acronyms_in_title("Topic: Cca Study") == "Topic: CCA Study"
+
+
+def test_fix_acronyms_in_title_handles_empty(asm):
+    """Empty / None / non-string inputs pass through."""
+    assert asm._fix_acronyms_in_title("") == ""
+    assert asm._fix_acronyms_in_title(None) is None
+
+
 def test_graphite_gray_is_slate_dark(asm):
     """M4a Tier E round 2 (2026-05-23): GRAPHITE_GRAY_RGB is the
     secondary-text color used by step_captions, source_footers,

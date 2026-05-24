@@ -282,6 +282,76 @@ def test_connector_color_is_slate_dark(dr):
     assert dr.DEFAULT_SWIMLANE_BORDER == "graphite_gray"
 
 
+def test_edge_label_horizontal_uses_gap_geometry(dr, blank_slide):
+    """M4a Tier E round 3 (2026-05-23): horizontal edge labels now place
+    inside the inter-node GAP (not center-to-center midpoint) and size
+    the textbox to gap-width minus margin, so a 0.7in-wide label can no
+    longer spill onto the adjacent node when the gap is < 0.7in. Round-2
+    visual-QA found this on ibd_phage_targeting/draft_1 slides 6/10/19
+    (label `max ARI at K=4` fragmented as `max AR` / `at K=4`)."""
+    # Two horizontal nodes with a known gap (1.0in apart, each 1.5in wide,
+    # so gap between right-edge-of-src and left-edge-of-dst = 0.5in)
+    src = dr._RenderedShape(node_id="src", shape=None,
+                            cx=1.5, cy=2.0, w=1.5, h=0.8)
+    dst = dr._RenderedShape(node_id="dst", shape=None,
+                            cx=3.5, cy=2.0, w=1.5, h=0.8)
+    rendered = {"src": src, "dst": dst}
+    n_before = len(blank_slide.shapes)
+    dr._render_edge_label(
+        blank_slide,
+        {"from": "src", "to": "dst", "kind": "straight", "label": "test"},
+        rendered, brand_tokens=None,
+    )
+    assert len(blank_slide.shapes) == n_before + 1
+    # The newly-added textbox should be the last shape
+    label_shape = blank_slide.shapes[-1]
+    # Read its position via the underlying EMU values (914400 EMU = 1in)
+    EMU = 914400
+    left_in = label_shape.left / EMU
+    width_in = label_shape.width / EMU
+    # src right edge = 1.5 + 0.75 = 2.25; dst left edge = 3.5 - 0.75 = 2.75
+    # Label must fit in [2.25, 2.75] — i.e. left >= 2.25 and right <= 2.75
+    assert 2.20 <= left_in, (
+        f"label left {left_in:.3f} must be at-or-right-of src right edge 2.25"
+    )
+    assert (left_in + width_in) <= 2.80, (
+        f"label right {left_in + width_in:.3f} must be at-or-left-of dst left edge 2.75"
+    )
+
+
+def test_edge_label_falls_back_when_w_unknown(dr, blank_slide):
+    """If _RenderedShape carries w=0 (the proxy form used by the
+    line-pass before node geometry is read), the label uses the prior
+    offset heuristic — the diagram still renders, just less optimally.
+    Guards against a regression that would crash on a proxy."""
+    # Proxies created without w/h (default 0.0)
+    src = dr._RenderedShape(node_id="src", shape=None, cx=1.0, cy=2.0)
+    dst = dr._RenderedShape(node_id="dst", shape=None, cx=5.0, cy=2.0)
+    rendered = {"src": src, "dst": dst}
+    n_before = len(blank_slide.shapes)
+    # Must not crash; should add exactly one textbox
+    dr._render_edge_label(
+        blank_slide,
+        {"from": "src", "to": "dst", "kind": "straight", "label": "fallback"},
+        rendered, brand_tokens=None,
+    )
+    assert len(blank_slide.shapes) == n_before + 1
+
+
+def test_rendered_shape_has_width_height_fields(dr):
+    """_RenderedShape MUST carry w + h (added in Tier E round 3 so the
+    third-pass edge labels can size to the inter-node gap). Pin so a
+    future refactor doesn't drop the fields silently."""
+    rs = dr._RenderedShape(node_id="x", shape=None,
+                           cx=1.0, cy=2.0, w=1.5, h=0.8)
+    assert rs.w == 1.5
+    assert rs.h == 0.8
+    # Defaults must be 0 so proxies created without w/h are detectable
+    proxy = dr._RenderedShape(node_id="x", shape=None, cx=1.0, cy=2.0)
+    assert proxy.w == 0.0
+    assert proxy.h == 0.0
+
+
 def test_render_diagram_edge_labels_paint_after_nodes(dr, blank_slide):
     """M4a Tier A3: label textboxes render AFTER node shapes in
     document/paint order — z-order = paint order in python-pptx, so a
