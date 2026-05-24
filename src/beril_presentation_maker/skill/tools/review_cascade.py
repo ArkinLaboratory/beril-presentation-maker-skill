@@ -68,24 +68,37 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "review-cascade.v1"
-VERSION = "0.4.0-m4b-tierB"
+VERSION = "0.4.0-m4b-tierE"
 
 _THIS_DIR = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
-# Tier-B P0/P1/P2 severity map for P-validators (DQ4)
+# Tier-B P0/P1/P2 severity map for P-validators (DQ4 + D-058)
 # ---------------------------------------------------------------------------
 #
 # Per M4b_PUNCH_LIST.md DQ4 + SPEC §13's tier classification: only the
-# load-bearing mechanical validators short-circuit (P3 numeric-provenance
-# fail, P4 citation-pool fail, P5 brand-color fail). Every other
-# validator fail is P1 (advisory, no short-circuit), and the advisory
-# checkers (check_quantitative_grounding, check_no_artifact_refs,
-# reconcile_deck) + visual-QA findings are P1 (high-confidence) / P2
-# (medium-low).
+# load-bearing mechanical validators short-circuit. Every other
+# validator fail is P1 (advisory, no short-circuit).
+#
+# **P3 demoted from P0 to P1 (M4b Tier E, 2026-05-24 — see D-058):**
+# P3 validates a `speaker_notes_provenance` index that v0.3 composers
+# emitted but v0.4 composer (`slide_compose.v2.md`, M3) does not.
+# On the M4a-closed `ibd_phage_targeting/draft_1` deck, the Tier E
+# probe found P3 fires on 282 numbers (every number on every slide,
+# because the index is empty) — Tier 1 short-circuits before Tier 2
+# + Tier 3 can run, defeating the cascade's value prop on EVERY v0.4
+# draft. The REPORT-walking `quantitative_grounding.json` (already
+# read by Tier 1) is the v0.4 authoritative numeric-provenance check
+# (273/278 grounded on the same deck = 98.2% pass rate). P3
+# retirement / rewrite-to-wrap-quantitative_grounding is scheduled
+# for M5; until then, P3 is advisory-P1 on the v0.4 cascade.
+#
+# P4 (citation pool) and P5 (brand color) remain P0 — they're
+# orthogonal to v0.3/v0.4 composer differences and their contracts
+# hold across both paths.
 
-_P0_VALIDATORS: frozenset[str] = frozenset({"P3", "P4", "P5"})
+_P0_VALIDATORS: frozenset[str] = frozenset({"P4", "P5"})
 
 
 # ---------------------------------------------------------------------------

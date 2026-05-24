@@ -1155,10 +1155,16 @@ detection-class calibration moved to M4b (D-049). Detail: `M3_PUNCH_LIST.md`.
   empirical detection-class calibration; Tier 3 canonical adversarial;
   fail-fast short-circuiting at every tier boundary.
 
-**M5 — Image-gen multi-provider + revise invariance.** AI Studio
-provider in `image_client.py`; auth discovery; model probe;
+**M5 — Image-gen multi-provider + revise invariance + P3 retirement.**
+AI Studio provider in `image_client.py`; auth discovery; model probe;
 calibration re-run. `revise_invariance.py` post-check on the revise
-verb path.
+verb path. **P3 retirement** (per D-058): replace `validate_p3_numeric_provenance`
+with a wrapper around `check_quantitative_grounding.py` (the v0.4
+REPORT-walking authoritative check; v0.3's `speaker_notes_provenance`
+contract is dead on v0.4). Update SPEC.md §13.1; once retired, P3
+rejoins `_P0_VALIDATORS` in `review_cascade.py` and Tier 1 fail-fast
+saves the full ~$0.50–$1.50 of Tier-3 adversarial spend on real
+numeric defects.
 
 **M6 — A/B test + cut-over decision.** Score sheet on
 `ibd_phage_targeting`; sanity check on `functional_dark_matter`;

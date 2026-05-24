@@ -607,12 +607,24 @@ def _write_audit_json(draft_dir: Path, filename: str, payload: dict) -> None:
     (audit / filename).write_text(json.dumps(payload))
 
 
-def test_tier1_p0_validators_pinned_to_p3_p4_p5(rc):
-    """DQ4: only P3 (numeric provenance), P4 (citation pool), and P5
-    (brand color) short-circuit. Pin the set so a future refactor that
-    bumps P10 to P0 (for example) breaks the test, not the cascade
+def test_tier1_p0_validators_pinned_to_p4_p5(rc):
+    """DQ4 + D-058: only P4 (citation pool) and P5 (brand color)
+    short-circuit on the v0.4 cascade.
+
+    P3 (numeric provenance) was P0 in v0.3 but is DEMOTED to P1 on
+    v0.4 — its `speaker_notes_provenance` contract pre-dates the v0.4
+    composer which doesn't emit the index. Tier E probe on
+    ibd_phage_targeting/draft_1 (2026-05-24) found P3 fires on 282
+    numbers (every number on every slide), short-circuiting Tier 2 +
+    Tier 3 on EVERY v0.4 draft. The REPORT-walking
+    quantitative_grounding.json check (already read by Tier 1) is
+    the v0.4 authoritative numeric-provenance check; P3 retirement /
+    rewrite is scheduled for M5. See D-058.
+
+    Pin the set so a future refactor that re-promotes P3 OR bumps
+    another validator to P0 breaks the test, not the cascade
     contract."""
-    assert rc._P0_VALIDATORS == frozenset({"P3", "P4", "P5"})
+    assert rc._P0_VALIDATORS == frozenset({"P4", "P5"})
 
 
 def test_tier1_reads_quantitative_grounding_artifact(rc, tmp_path):

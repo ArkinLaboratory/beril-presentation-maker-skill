@@ -1109,3 +1109,32 @@ DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC re
 **Alternatives considered:** Hard-reject parity with `DATA_FIGURE_CAPTION_MAX_CHARS` — rejected; the four new caps are aesthetic (renderer absorbs), not load-bearing. New `severity="info"` tier for "just track it" — rejected as premature; two severities cover the current cases.
 
 **Related:** [M4_PUNCH_LIST.md](M4_PUNCH_LIST.md) DQ4; `tools/slide_spec.py` `ValidatorIssue.severity` + `_check_advisory_max_chars`; `tools/assemble_pptx.py` `assemble()` issue-split; M4a Tier E round-1 CLI hotpatch (commit `53dfaf5`); `feedback_prompt_discipline_needs_post_check`.
+
+---
+
+## D-058 — 2026-05-24 — M4b: demote P3 from P0 to P1 on the v0.4 cascade; retire P3 in M5
+
+**Decision:** The Tier-1 cascade's `_P0_VALIDATORS` set (`tools/review_cascade.py`) drops `"P3"`; only `"P4"` (citation pool) and `"P5"` (brand color) remain as P0 short-circuit triggers. P3's findings still appear in the cascade as advisory `P1` (so the operator sees them) but no longer block Tiers 2 + 3.
+
+**Rationale:** P3 validates a `speaker_notes_provenance` index that the v0.3 composer + `speaker_notes.v1` stage emitted as a structured field. The v0.4 composer (`slide_compose.v2.md`, M3 fused-notes path per D-033 / D-044) writes `speaker_notes` as a single string and does NOT emit the structured provenance index. So P3 sees zero entries on every v0.4 deck and emits a fail for every number on every slide — 282 P0 findings on `ibd_phage_targeting/draft_1` (M4b Tier E probe, 2026-05-24), short-circuiting Tiers 2 + 3 on EVERY v0.4 draft. The cascade's value prop (skip ~$0.50–$1.50 of adversarial when Tier 1 finds a real mechanical fail) is destroyed if Tier 1 always short-circuits on a v0.3-era contract mismatch.
+
+The v0.4 authoritative numeric-provenance check is `check_quantitative_grounding.py` (already wired into `stage_merge_and_assemble`; already read by Tier 1's `_read_quantitative_grounding` aggregator): it walks slide content, extracts numbers, greps `REPORT.md` for each. On the same `ibd_phage_targeting/draft_1` deck, it reports 273/278 grounded (98.2% pass rate, 3 ungrounded all advisory) — the deck IS well-grounded; P3 was wrong about every fail.
+
+**Implementation:** `_P0_VALIDATORS` constant in `review_cascade.py` updated; new test `test_tier1_p0_validators_pinned_to_p4_p5` pins the v0.4 cascade contract; comment + commit message capture the rationale.
+
+**Retirement schedule (M5):** P3 itself stays in `validate_presentation.py` for the v0.3 audit trail (specs from before D-044 may still have the `speaker_notes_provenance` field; P3 still validates them correctly). The M5 retirement deletes P3 OR rewrites it to wrap `quantitative_grounding.py` (the v0.4 authoritative check). M5 also updates `SPEC.md §13.1` (the P3 documentation) to point at the new check. Until M5 lands, P3 stays in the validator set as advisory-only on the cascade path; `validate_presentation` CLI users (if any) still see P3 fail as a hard error per its original v0.3 contract.
+
+**Alternatives considered:**
+- **Skip P3 entirely on v0.4** — rejected; preserves the audit trail (P3 findings still appear in `audit/presentation_validation.json` and cascade JSON as advisory), and v0.3-style specs (if anyone re-runs old specs) still benefit from the check.
+- **Spend new compose iteration to teach v0.4 composer to emit `speaker_notes_provenance`** — rejected; ~$5 of compose spend per probe, and `quantitative_grounding.py` already implements the same intent more correctly (greps REPORT.md directly rather than maintaining a parallel structured index).
+- **Make P3 conditional on presence of `speaker_notes_provenance` in any slide** — rejected; cleaner to drop P3 from cascade P0 outright and let M5 handle the proper retirement; conditional logic in `_P0_VALIDATORS` adds complexity without unlocking value.
+
+**Live failure pin:** M4b Tier E live cascade probe on `ibd_phage_targeting/draft_1` (2026-05-24, log at the time of this decision):
+```
+review-cascade: 586 finding(s) across 3 tier(s) ($0.0000, short-circuited at tier1)
+  ! tier1: fail (586 finding(s))     # 282 P0 P3 + 285 P2 no_artifact_refs + 16 P1 quant/visual_qa + 3 P1 visual_qa
+  · tier2: skipped
+  · tier3: skipped
+```
+
+**Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) Tier E; [SPEC.md](SPEC.md) §13.1 (P3 documentation — M5 update target); D-033 + D-044 (v0.4 fused-notes composer); `tools/review_cascade.py` `_P0_VALIDATORS`; `tools/check_quantitative_grounding.py` (the v0.4 authoritative numeric check); `tools/validate_presentation.py` (P3 stays for v0.3 audit trail until M5).
