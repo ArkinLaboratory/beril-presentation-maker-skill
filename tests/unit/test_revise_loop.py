@@ -541,3 +541,198 @@ def test_render_next_actions_minimal(rl):
     assert "**Revised:** 1 (F001)" in md
     assert "Cost:** ~$0.50" in md
     assert "Fixed by the loop" in md
+
+
+# ---------------------------------------------------------------------------
+# M5a Tier B — revise-invariance gate
+# ---------------------------------------------------------------------------
+
+def _write_slide_json(path: Path, slide: dict) -> None:
+    """Helper: dump a slide dict to JSON at `path`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(slide), encoding="utf-8")
+
+
+def test_check_revise_invariance_returns_true_on_clean_revise(rl, tmp_path):
+    """Tier B happy path: pre/post pair satisfies all invariants;
+    helper returns (True, audit_path) + writes the audit JSON."""
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    revisions_dir = audit_dir / "revisions"
+    revisions_dir.mkdir(parents=True, exist_ok=True)
+    pre_path = revisions_dir / "F001.slide.json"
+    post_path = revisions_dir / "F001.revised_slide.json"
+    pre = {"id": 1, "layout": "claim_evidence",
+           "content": {"title": "T", "bullets": ["evidence from [Smith2024]"]}}
+    post = {"id": 1, "layout": "claim_evidence",
+            "content": {"title": "T", "bullets": ["rephrased [Smith2024]"]}}
+    _write_slide_json(pre_path, pre)
+    _write_slide_json(post_path, post)
+
+    # tools_dir is the directory containing the skill's tools (where
+    # revise_invariance.py lives).
+    repo_root = Path(__file__).resolve().parents[2]
+    tools_dir = (repo_root / "src" / "beril_presentation_maker" / "skill"
+                 / "tools")
+
+    ok, audit_path = rl._check_revise_invariance(
+        pre_slide_path=pre_path,
+        post_slide_path=post_path,
+        finding_id="F001",
+        audit_dir=audit_dir,
+        tools_dir=tools_dir,
+    )
+    assert ok is True
+    assert audit_path == audit_dir / "revise_invariance" / "F001.json"
+    assert audit_path.is_file()
+    payload = json.loads(audit_path.read_text())
+    assert payload["verdict"] == "pass"
+
+
+def test_check_revise_invariance_returns_false_on_citation_drop(rl, tmp_path):
+    """Tier B failure path (DQ3 hard reject): pre/post pair drops a
+    citation token; helper returns (False, audit_path) + audit JSON
+    carries the violation."""
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    revisions_dir = audit_dir / "revisions"
+    revisions_dir.mkdir(parents=True, exist_ok=True)
+    pre_path = revisions_dir / "F002.slide.json"
+    post_path = revisions_dir / "F002.revised_slide.json"
+    pre = {"id": 1, "layout": "claim_evidence",
+           "content": {"title": "T", "bullets": ["evidence from [Smith2024]"]}}
+    post = {"id": 1, "layout": "claim_evidence",
+            # citation dropped — invariant 2 fails
+            "content": {"title": "T", "bullets": ["evidence from prior work"]}}
+    _write_slide_json(pre_path, pre)
+    _write_slide_json(post_path, post)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    tools_dir = (repo_root / "src" / "beril_presentation_maker" / "skill"
+                 / "tools")
+
+    ok, audit_path = rl._check_revise_invariance(
+        pre_slide_path=pre_path,
+        post_slide_path=post_path,
+        finding_id="F002",
+        audit_dir=audit_dir,
+        tools_dir=tools_dir,
+    )
+    assert ok is False
+    payload = json.loads(audit_path.read_text())
+    assert payload["verdict"] == "fail"
+    assert any(v["invariant"] == "citation_preservation"
+               for v in payload["violations"])
+
+
+def test_check_revise_invariance_skipped_when_tool_missing(rl, tmp_path, capsys):
+    """If revise_invariance.py isn't found in tools_dir (skill
+    partially installed / dev-only build), the gate returns
+    (True, advisory) so revise loop doesn't halt; a warning is logged
+    to stderr."""
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    pre_path = tmp_path / "pre.json"
+    post_path = tmp_path / "post.json"
+    _write_slide_json(pre_path, {"id": 1, "layout": "title", "content": {}})
+    _write_slide_json(post_path, {"id": 1, "layout": "title", "content": {}})
+
+    # Point tools_dir at an empty directory (no revise_invariance.py)
+    empty_tools = tmp_path / "no_tools"
+    empty_tools.mkdir()
+
+    ok, _ = rl._check_revise_invariance(
+        pre_slide_path=pre_path,
+        post_slide_path=post_path,
+        finding_id="F003",
+        audit_dir=audit_dir,
+        tools_dir=empty_tools,
+    )
+    assert ok is True       # advisory pass — don't halt revise
+    captured = capsys.readouterr()
+    assert "revise_invariance.py not found" in captured.err
+    assert "F003" in captured.err
+
+
+def test_loop_state_tracks_invariance_violations_separately(rl):
+    """M5a Tier B: LoopState.findings_invariance_violated is a
+    distinct field from findings_failed so operator + downstream
+    consumers can tell semantic-violation failures from
+    LLM/validator errors. (Both lists are populated when an
+    invariance fail happens — backward compat with consumers
+    aggregating findings_failed.)"""
+    state = rl.LoopState(
+        findings_revised=["F001"],
+        findings_failed=["F002"],
+        findings_invariance_violated=["F002"],   # F002 is invariance-fail
+    )
+    d = state.to_dict()
+    assert d["findings_invariance_violated"] == ["F002"]
+    assert d["findings_failed"] == ["F002"]    # in both lists
+
+
+def test_next_actions_surfaces_invariance_violations(rl):
+    """next_actions.md gets a distinct line for invariance violations
+    so the operator sees the breakdown without parsing the JSON."""
+    review = {
+        "reviewer_model": "test-model",
+        "reviewed_at": "2026-04-29T13:00:00Z",
+        "findings": [
+            {"id": "F042", "class": "register_drift", "severity": "P0",
+             "slide_id": 12, "issue": "x"},
+        ],
+    }
+    state = rl.LoopState(
+        findings_revised=[],
+        findings_failed=["F042"],
+        findings_invariance_violated=["F042"],
+        cost_usd_cumulative=0.12,
+        started_at="2026-04-29T13:00:00Z",
+        finished_at="2026-04-29T13:05:00Z",
+    )
+    paths = {"draft_dir": Path("/tmp/draft")}
+    md = rl._render_next_actions(review, state, paths)
+    assert "Revise-invariance violations:" in md
+    assert "F042" in md
+    assert "audit/revise_invariance/*.json" in md
+
+
+def test_check_revise_invariance_uses_claim_inventory_when_present(rl, tmp_path):
+    """If claim_inventory.tsv exists at the M1 standard location
+    (<draft_dir>/working/00_phase0/claim_inventory.tsv), the gate
+    threads --claim-inventory through to revise_invariance.py so
+    invariant 1 (claim_id cross-walk) runs."""
+    audit_dir = tmp_path / "audit"
+    working_dir = tmp_path / "working" / "00_phase0"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    working_dir.mkdir(parents=True, exist_ok=True)
+    (working_dir / "claim_inventory.tsv").write_text(
+        "claim_id\tclaim_text\nC-alpha\tsynthetic\n",
+        encoding="utf-8",
+    )
+    pre_path = tmp_path / "pre.json"
+    post_path = tmp_path / "post.json"
+    pre = {"id": 1, "layout": "claim_evidence",
+           "content": {"title": "T", "bullets": ["evidence for C-alpha"]}}
+    post = {"id": 1, "layout": "claim_evidence",
+            # C-alpha mention dropped — invariant 1 fails
+            "content": {"title": "T", "bullets": ["evidence for the claim"]}}
+    _write_slide_json(pre_path, pre)
+    _write_slide_json(post_path, post)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    tools_dir = (repo_root / "src" / "beril_presentation_maker" / "skill"
+                 / "tools")
+
+    ok, audit_path = rl._check_revise_invariance(
+        pre_slide_path=pre_path,
+        post_slide_path=post_path,
+        finding_id="F004",
+        audit_dir=audit_dir,
+        tools_dir=tools_dir,
+    )
+    assert ok is False    # invariant 1 fails (claim_id removed)
+    payload = json.loads(audit_path.read_text())
+    assert "claim_id_cross_walk" in payload["checked_invariants"]
+    assert any(v["invariant"] == "claim_id_cross_walk"
+               for v in payload["violations"])

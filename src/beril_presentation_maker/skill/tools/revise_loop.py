@@ -168,6 +168,13 @@ class LoopState:
     findings_added: list[str] = field(default_factory=list)
     findings_skipped: list[str] = field(default_factory=list)  # surface-only
     findings_failed: list[str] = field(default_factory=list)   # revise/add error
+    # M5a Tier B: findings rejected by the revise-invariance gate
+    # (semantic post-check per V0_4_ARCHITECTURE §13). Distinct from
+    # findings_failed (which covers LLM errors, retry exhaustion,
+    # validator fails) so the operator can see WHY a finding wasn't
+    # revised — invariance violations are addressed manually per
+    # DQ3, no retry.
+    findings_invariance_violated: list[str] = field(default_factory=list)
     retries_per_slide: dict[int, int] = field(default_factory=dict)
     cost_usd_cumulative: float = 0.0
     started_at: str = ""
@@ -179,6 +186,7 @@ class LoopState:
             "findings_added": self.findings_added,
             "findings_skipped": self.findings_skipped,
             "findings_failed": self.findings_failed,
+            "findings_invariance_violated": self.findings_invariance_violated,
             "retries_per_slide": {str(k): v for k, v in self.retries_per_slide.items()},
             "cost_usd_cumulative": round(self.cost_usd_cumulative, 4),
             "started_at": self.started_at,
@@ -637,6 +645,31 @@ def _process_finding(finding: Finding,
             state.findings_failed.append(finding.id)
             state.retries_per_slide[slide_id] = retries + 1
             return "failed"
+        # M5a Tier B: revise-invariance gate (per V0_4_ARCHITECTURE §13).
+        # Run the 5-invariant semantic post-check on (pre-edit, post-edit)
+        # before merging into the spec. Per DQ3 (Adam 2026-05-24): hard
+        # reject on any failed invariant; no retry counter increment
+        # (semantic failure unlikely to fix on naive retry — operator
+        # addresses manually). Audit JSON per finding lands in
+        # audit/revise_invariance/<finding.id>.json so the operator +
+        # next_actions.md surface the violations.
+        invariance_ok, invariance_path = _check_revise_invariance(
+            pre_slide_path=slide_path,
+            post_slide_path=out_path,
+            finding_id=finding.id,
+            audit_dir=paths["audit_dir"],
+            tools_dir=tools_dir,
+        )
+        if not invariance_ok:
+            # Track in BOTH lists: findings_invariance_violated for
+            # operator visibility (next_actions.md surfaces it as a
+            # distinct class), findings_failed for backward-compat with
+            # downstream consumers that aggregate "not-revised" findings.
+            state.findings_invariance_violated.append(finding.id)
+            state.findings_failed.append(finding.id)
+            # Do NOT increment retry counter — DQ3 hard reject.
+            return "revise_invariance_violated"
+
         if not _replace_slide_in_spec(spec, slide_id, new_slide):  # type: ignore[arg-type]
             state.findings_failed.append(finding.id)
             return "failed"
@@ -667,6 +700,86 @@ def _validate_spec(spec_path: Path, tools_dir: Path) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Revise-invariance gate (M5a Tier B)
+# ---------------------------------------------------------------------------
+
+def _check_revise_invariance(
+    pre_slide_path: Path,
+    post_slide_path: Path,
+    finding_id: str,
+    audit_dir: Path,
+    tools_dir: Path,
+) -> tuple[bool, Path]:
+    """Run the 5-invariant revise-invariance post-check on
+    (pre, post) slide JSONs. Writes the per-finding audit JSON to
+    audit/revise_invariance/<finding_id>.json. Returns (ok, audit_path).
+
+    Per V0_4_ARCHITECTURE §13 + DQ3 (M5a, Adam 2026-05-24): hard
+    reject — `ok=False` means the post-edit slide MUST NOT be merged
+    into the spec; the caller marks the finding failed without
+    incrementing the retry counter.
+
+    claim_inventory.tsv is resolved from the standard M1 location
+    (`<draft_dir>/working/00_phase0/claim_inventory.tsv`). If absent
+    (v0.3-style draft or Phase-0 not run), invariant 1 (claim_id
+    cross-walk) is skipped per DQ1 — the audit JSON records it.
+
+    Invocation goes through subprocess (matching `_validate_spec`'s
+    pattern) so the same Python interpreter used by other revise-loop
+    subprocesses runs the check. Avoids importlib-style sibling-module
+    coupling between revise_loop.py and revise_invariance.py.
+    """
+    py = _resolve_python_bin()
+    tool = tools_dir / "revise_invariance.py"
+    if not tool.is_file():
+        # Operator error — skill is partially installed. Treat as a
+        # pass with a clear log, so the revise loop doesn't halt on a
+        # missing tool; the operator will see the warning.
+        msg = (f"revise_invariance.py not found at {tool}; "
+               f"invariance gate SKIPPED for finding {finding_id} — "
+               f"revise will proceed without semantic post-check.")
+        print(f"  [revise_loop] WARN: {msg}", file=sys.stderr)
+        return True, audit_dir   # advisory pass
+
+    invariance_dir = audit_dir / "revise_invariance"
+    invariance_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = invariance_dir / f"{finding_id}.json"
+
+    # Resolve claim_inventory.tsv (M1 standard location).
+    # audit_dir = <draft_dir>/audit; sibling = <draft_dir>/working
+    draft_dir = audit_dir.parent
+    claim_inventory_path = (
+        draft_dir / "working" / "00_phase0" / "claim_inventory.tsv"
+    )
+
+    cmd = [
+        str(py), str(tool),
+        str(pre_slide_path), str(post_slide_path),
+        "--finding-id", finding_id,
+        "--out", str(audit_path),
+        "--quiet",
+    ]
+    if claim_inventory_path.is_file():
+        cmd += ["--claim-inventory", str(claim_inventory_path)]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    # rc=0 → all invariants pass; rc=1 → at least one fail (DQ3 hard
+    # reject); rc=2 → operator error (missing file etc.) — treat as
+    # a fail since we can't trust the post-edit slide without the
+    # check having run.
+    ok = (result.returncode == 0)
+    if not ok and result.returncode == 2:
+        # Surface the operator error to stderr — invariance couldn't
+        # run, so the revise is conservatively rejected.
+        print(
+            f"  [revise_loop] revise_invariance error on finding "
+            f"{finding_id}: {result.stderr.strip()[:200]}",
+            file=sys.stderr,
+        )
+    return ok, audit_path
+
+
+# ---------------------------------------------------------------------------
 # next_actions.md
 # ---------------------------------------------------------------------------
 
@@ -691,6 +804,18 @@ def _render_next_actions(review: dict[str, Any],
                  f"({', '.join(state.findings_added) or 'none'})")
     lines.append(f"**Skipped (surface-only):** {len(state.findings_skipped)}")
     lines.append(f"**Failed (manual fix needed):** {len(state.findings_failed)}")
+    # M5a Tier B: surface invariance violations as a distinct line so
+    # the operator knows WHICH failures came from the semantic
+    # post-check vs LLM / validator errors. Invariance violations are
+    # ALSO counted in findings_failed (backward-compat); this line
+    # surfaces the breakdown.
+    if state.findings_invariance_violated:
+        lines.append(
+            f"**Revise-invariance violations:** "
+            f"{len(state.findings_invariance_violated)} "
+            f"({', '.join(state.findings_invariance_violated)}) — see "
+            f"audit/revise_invariance/*.json for per-finding violations"
+        )
     lines.append(f"**Cost:** ~${state.cost_usd_cumulative:.2f}")
     lines.append("")
 
