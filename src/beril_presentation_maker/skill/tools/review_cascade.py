@@ -68,37 +68,33 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "review-cascade.v1"
-VERSION = "0.4.0-m4b-tierE"
+VERSION = "0.4.0-m5a-tierC"
 
 _THIS_DIR = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
-# Tier-B P0/P1/P2 severity map for P-validators (DQ4 + D-058)
+# Tier-B P0/P1/P2 severity map for P-validators (DQ4)
 # ---------------------------------------------------------------------------
 #
 # Per M4b_PUNCH_LIST.md DQ4 + SPEC §13's tier classification: only the
 # load-bearing mechanical validators short-circuit. Every other
 # validator fail is P1 (advisory, no short-circuit).
 #
-# **P3 demoted from P0 to P1 (M4b Tier E, 2026-05-24 — see D-058):**
-# P3 validates a `speaker_notes_provenance` index that v0.3 composers
-# emitted but v0.4 composer (`slide_compose.v2.md`, M3) does not.
-# On the M4a-closed `ibd_phage_targeting/draft_1` deck, the Tier E
-# probe found P3 fires on 282 numbers (every number on every slide,
-# because the index is empty) — Tier 1 short-circuits before Tier 2
-# + Tier 3 can run, defeating the cascade's value prop on EVERY v0.4
-# draft. The REPORT-walking `quantitative_grounding.json` (already
-# read by Tier 1) is the v0.4 authoritative numeric-provenance check
-# (273/278 grounded on the same deck = 98.2% pass rate). P3
-# retirement / rewrite-to-wrap-quantitative_grounding is scheduled
-# for M5; until then, P3 is advisory-P1 on the v0.4 cascade.
-#
-# P4 (citation pool) and P5 (brand color) remain P0 — they're
-# orthogonal to v0.3/v0.4 composer differences and their contracts
-# hold across both paths.
+# **P3 history:**
+# - M4b Tier B initially set `_P0_VALIDATORS = {"P3", "P4", "P5"}`.
+# - M4b Tier E live probe found the v0.3-era `validate_p3_numeric_provenance`
+#   walked a `speaker_notes_provenance` index that v0.4's fused-notes
+#   composer (per D-033/D-044) doesn't emit; P3 fired on 282 numbers
+#   per deck, defeating the cascade. D-058 demoted P3 to advisory
+#   pending the M5 retirement.
+# - M5a Tier C (this commit) rewrote P3 in-place as a wrapper around
+#   `check_quantitative_grounding` (the v0.4 REPORT-walking
+#   authority). The new P3 is correct on v0.4 specs → re-added to
+#   `_P0_VALIDATORS`. D-058's demote is obsolete; cascade fail-fast
+#   on numeric defects is restored.
 
-_P0_VALIDATORS: frozenset[str] = frozenset({"P4", "P5"})
+_P0_VALIDATORS: frozenset[str] = frozenset({"P3", "P4", "P5"})
 
 
 # ---------------------------------------------------------------------------

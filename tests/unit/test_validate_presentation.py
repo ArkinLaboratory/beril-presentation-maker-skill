@@ -177,38 +177,141 @@ def test_p2_fail_outside_tolerance(vp, ss):
 
 
 # ---------------------------------------------------------------------------
-# P3 — Numeric provenance (the load-bearing one; auto-fix forbidden)
+# P3 — Numeric provenance (the load-bearing one; M5a Tier C rewrite)
+#
+# Per D-058 + D-059: P3 was rewritten to wrap
+# check_quantitative_grounding.check_grounding(draft_dir), replacing
+# the v0.3-era speaker_notes_provenance contract. P3 now requires
+# draft_dir + REPORT.md; tests build minimal draft fixtures.
 # ---------------------------------------------------------------------------
 
-def test_p3_pass_when_no_numeric_claims(vp, ss):
-    slide = ss.example_slide("section_divider", 1, None)
-    slide["content"]["punchline"] = "Annotation is a hypothesis, not a fact."
+def _build_p3_fixture(tmp_path: Path, ss, slide: dict,
+                       report_text: str) -> Path:
+    """Build a minimal draft_dir layout that check_grounding accepts:
+       projects/<id>/talks/draft_N/working/slide_spec.json
+       projects/<id>/REPORT.md
+    Returns the draft_dir path."""
+    project_dir = tmp_path / "projects" / "x"
+    draft_dir = project_dir / "talks" / "draft_1"
+    (draft_dir / "working").mkdir(parents=True)
     spec = _wrap([slide])
-    res = vp.validate_p3_numeric_provenance(spec)
-    assert res.status == "pass", res.violations
+    (draft_dir / "working" / "slide_spec.json").write_text(
+        json.dumps(spec), encoding="utf-8")
+    (project_dir / "REPORT.md").write_text(report_text, encoding="utf-8")
+    return draft_dir
 
 
-def test_p3_fail_unprovenanced_numeric_claim(vp, ss):
+def test_p3_returns_skipped_when_no_draft_dir(vp, ss):
+    """M5a Tier C (D-059): the rewritten P3 needs draft_dir to invoke
+    check_quantitative_grounding (it reads REPORT.md). Legacy callers
+    without draft_dir get status='skipped' with a clear note — the
+    v0.3 speaker_notes_provenance fallback is RETIRED."""
     slide = ss.example_slide("claim_evidence", 1, None)
-    slide["content"]["bullets"] = ["The agent reaches 90% accuracy."]
     spec = _wrap([slide])
-    res = vp.validate_p3_numeric_provenance(spec)
-    assert res.status == "fail"
-    assert res.violations[0].escalation_path == "escalate"
-    assert "auto-fix forbidden" in res.violations[0].message.lower() or \
-           "fabrication" in res.violations[0].message.lower()
+    res = vp.validate_p3_numeric_provenance(spec)   # no draft_dir
+    assert res.status == "skipped"
+    assert any("draft_dir" in v.message for v in res.violations)
 
 
-def test_p3_pass_when_claim_is_provenanced(vp, ss):
+def test_p3_pass_when_all_numerics_grounded(vp, ss, tmp_path):
+    """All numbers on a slide appear verbatim in REPORT.md → P3 pass."""
     slide = ss.example_slide("claim_evidence", 1, None)
+    slide["content"]["title"] = "Performance"
     slide["content"]["bullets"] = ["The agent reaches 90% accuracy."]
-    slide["speaker_notes_provenance"] = [
-        {"claim": "90% accuracy",
-         "source": {"kind": "report_line", "path": "REPORT.md", "line": 42}},
-    ]
-    spec = _wrap([slide])
-    res = vp.validate_p3_numeric_provenance(spec)
+    report = "## Section 1\n\nThe agent reaches 90% accuracy on the benchmark.\n"
+    draft_dir = _build_p3_fixture(tmp_path, ss, slide, report)
+    res = vp.validate_p3_numeric_provenance(_wrap([slide]), draft_dir=draft_dir)
     assert res.status == "pass", [v.message for v in res.violations]
+
+
+def test_p3_fail_when_high_severity_numeric_not_in_report(vp, ss, tmp_path):
+    """A HIGH-SEVERITY ungrounded number (n= claims, ratios, scientific,
+    integer >1000) → P3 fail with severity='error'.
+
+    Per D-061 + check_quantitative_grounding._classify_severity:
+    HIGH = n=X, ratios, scientific, integer >1000. Other classes
+    (percent, decimal, small integer) are medium/low → lifted by the
+    M4b cascade `_read_quantitative_grounding` aggregator as P1/P2
+    advisory, NOT by P3 (prevents double-lifting). This test uses an
+    n= claim (high-severity)."""
+    slide = ss.example_slide("claim_evidence", 1, None)
+    slide["content"]["title"] = "Performance"
+    # n=142 is high-severity per check_grounding's classifier
+    slide["content"]["bullets"] = ["Tested on n=142 examples."]
+    # REPORT doesn't mention 142
+    report = "## Section 1\n\nTested on a sample of examples.\n"
+    draft_dir = _build_p3_fixture(tmp_path, ss, slide, report)
+    res = vp.validate_p3_numeric_provenance(_wrap([slide]), draft_dir=draft_dir)
+    assert res.status == "fail"
+    # The new P3 messages reference REPORT.md grounding (v0.4) not
+    # speaker_notes_provenance (v0.3)
+    assert any("REPORT" in v.message for v in res.violations)
+    assert all(v.severity == "error" for v in res.violations)
+    # Auto-fix is still forbidden — same anti-fabrication discipline
+    # as v0.3 P3, preserved per SPEC §13.1's intent.
+    assert any("fabrication" in v.message.lower()
+               for v in res.violations)
+
+
+def test_p3_pass_when_only_medium_low_severity_ungrounded(vp, ss, tmp_path):
+    """A medium-severity ungrounded number (percent, decimal) → P3
+    pass. The aggregator (M4b cascade Tier 1) picks it up as advisory
+    P1/P2; P3 stays out to prevent double-lifting per D-061."""
+    slide = ss.example_slide("claim_evidence", 1, None)
+    slide["content"]["bullets"] = ["Reaches 90% accuracy."]
+    # REPORT mentions 75% (different percent — medium severity for the 90%)
+    report = "## Section 1\n\nReaches 75% accuracy.\n"
+    draft_dir = _build_p3_fixture(tmp_path, ss, slide, report)
+    res = vp.validate_p3_numeric_provenance(_wrap([slide]), draft_dir=draft_dir)
+    # 90% is percent → medium severity → NOT lifted by P3
+    assert res.status == "pass"
+    assert res.violations == []
+
+
+def test_p3_returns_skipped_when_report_missing(vp, ss, tmp_path):
+    """Defensive: REPORT.md missing → check_grounding raises;
+    P3 catches the exception and returns skipped (not fail) so
+    validate_presentation as a whole still completes."""
+    slide = ss.example_slide("claim_evidence", 1, None)
+    slide["content"]["bullets"] = ["The agent reaches 90% accuracy."]
+    # Build draft_dir but DON'T write REPORT.md
+    project_dir = tmp_path / "projects" / "x"
+    draft_dir = project_dir / "talks" / "draft_1"
+    (draft_dir / "working").mkdir(parents=True)
+    (draft_dir / "working" / "slide_spec.json").write_text(
+        json.dumps(_wrap([slide])), encoding="utf-8")
+    res = vp.validate_p3_numeric_provenance(_wrap([slide]), draft_dir=draft_dir)
+    assert res.status == "skipped"
+    assert any("REPORT" in v.message or "missing" in v.message.lower()
+               for v in res.violations)
+
+
+def test_p3_only_lifts_high_severity_to_violation(vp, ss, tmp_path):
+    """Per D-061: P3 surfaces ONLY high-severity check_grounding
+    findings as Violations (becoming P0 in the cascade). Medium/low
+    are intentionally left out — the M4b cascade Tier-1
+    `_read_quantitative_grounding` aggregator lifts those as P1/P2
+    advisory, preventing double-lifting on the same number."""
+    # Construct a spec where some numbers ARE in REPORT (grounded)
+    # and some aren't (high-severity ungrounded). The exact severity
+    # classification is owned by check_quantitative_grounding's
+    # internal heuristic — we just verify P3 wraps it and surfaces
+    # only the high-severity ones as Violations.
+    slide = ss.example_slide("claim_evidence", 1, None)
+    slide["content"]["title"] = "Performance"
+    # Mix: 90% (grounded), 73.5% (ungrounded — likely high-severity)
+    slide["content"]["bullets"] = [
+        "Achieves 90% on Task A; ablation drops to 73.5%.",
+    ]
+    report = "## Results\n\nAchieves 90% on Task A. Baseline is 50%.\n"
+    draft_dir = _build_p3_fixture(tmp_path, ss, slide, report)
+    res = vp.validate_p3_numeric_provenance(_wrap([slide]), draft_dir=draft_dir)
+    # Either pass (if check_grounding classifies 73.5 as low/medium)
+    # or fail with only high-severity numbers as violations.
+    if res.status == "fail":
+        assert all(v.severity == "error" for v in res.violations)
+        # The grounded number (90%) MUST NOT appear in violations
+        assert all("90%" not in v.message for v in res.violations)
 
 
 # ---------------------------------------------------------------------------

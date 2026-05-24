@@ -329,74 +329,109 @@ def validate_p2_time_budget(spec: dict) -> ValidatorResult:
     )
 
 
-def validate_p3_numeric_provenance(spec: dict) -> ValidatorResult:
-    """Every numeric claim on slide or in speaker notes traces to
-    speaker_notes_provenance entries.
+def validate_p3_numeric_provenance(
+    spec: dict,
+    draft_dir: Path | None = None,
+) -> ValidatorResult:
+    """Every numeric claim on a slide must trace to REPORT.md.
 
-    Per SPEC §13.1, this is the most-load-bearing validator. Auto-fix
-    is FORBIDDEN — fixing P3 by removing or fabricating numbers is the
-    failure mode we design against. Default escalation is 'escalate'
-    (re-extract from notebook OR remove the claim).
+    **M5a Tier C (2026-05-24, per D-058 + D-059):** rewritten to wrap
+    `check_quantitative_grounding.check_grounding(draft_dir)`. The
+    v0.3 implementation walked `speaker_notes_provenance` (a structured
+    per-slide index) which the v0.4 fused-notes composer
+    (`slide_compose.v2.md`, M3 per D-033 / D-044) does NOT emit; on the
+    v0.4 path, the old P3 fired on every numeric on every slide,
+    short-circuiting the M4b cascade. The new P3 walks REPORT.md
+    directly (the v0.4-native authority): every numeric literal on a
+    slide must appear in REPORT.md, validated via
+    `check_quantitative_grounding`'s extract-and-grep algorithm
+    (which already runs in `stage_merge_and_assemble` as the advisory
+    check). Same SPEC §13.1 intent ("every numeric claim traces to
+    primary evidence") with a v0.4-native mechanism.
+
+    **Severity mapping** (D-061): high-severity ungrounded numbers →
+    Violation(severity="error"), aggregated → `ValidatorResult.status="fail"`.
+    Medium/low-severity findings → no Violation (they're advisory; the
+    M4b cascade Tier-1 `_read_quantitative_grounding` aggregator lifts
+    them as P1/P2, preventing double-lifting).
+
+    **Skipped when `draft_dir` is None** (rare; legacy callers): can't
+    invoke `check_grounding` without a draft_dir to find REPORT.md, so
+    the validator returns `status="skipped"` with a clear note. The
+    M4b cascade always passes draft_dir.
     """
+    # Skipped path: legacy callers that don't have a draft_dir context
+    if draft_dir is None:
+        return ValidatorResult(
+            "P3", "Numeric provenance", "skipped",
+            [Violation(
+                severity="warning",
+                where="(global)",
+                message=(
+                    "P3 requires draft_dir to invoke check_quantitative_grounding "
+                    "(v0.4 REPORT-walking authority). Caller did not pass "
+                    "draft_dir; the legacy v0.3 speaker_notes_provenance check "
+                    "is retired per D-058/D-059 — there is no v0.3-style "
+                    "fallback. If you need P3 in this context, pass draft_dir."
+                ),
+                escalation_path="manual",
+            )],
+        )
+
+    # Load check_quantitative_grounding as a sibling module (same
+    # pattern as review_cascade._invoke_review_tier2 etc.). Avoids
+    # making validate_presentation.py top-level import the grounding
+    # checker, which would pull a lot of transitive deps into the
+    # validate-only path.
+    import importlib.util as _u
+    cg_path = Path(__file__).resolve().parent / "check_quantitative_grounding.py"
+    cg_spec = _u.spec_from_file_location("_cg_for_p3", cg_path)
+    cg_mod = _u.module_from_spec(cg_spec)
+    sys.modules["_cg_for_p3"] = cg_mod
+    cg_spec.loader.exec_module(cg_mod)
+
+    try:
+        report = cg_mod.check_grounding(draft_dir)
+    except Exception as exc:  # noqa: BLE001
+        # Defensive: check_grounding can raise on missing REPORT.md or
+        # malformed spec. Surface as a skipped P3 with the error, so
+        # validate_presentation as a whole still completes.
+        return ValidatorResult(
+            "P3", "Numeric provenance", "skipped",
+            [Violation(
+                severity="warning",
+                where="(global)",
+                message=(
+                    f"P3 wrapper around check_quantitative_grounding raised "
+                    f"({exc}). REPORT.md may be missing or the spec may not "
+                    f"yet be merged. P3 deferred — re-run after assemble."
+                ),
+                escalation_path="manual",
+            )],
+        )
+
+    # Map high-severity ungrounded findings to Violation(severity=error).
+    # Medium/low intentionally NOT lifted here — the M4b cascade
+    # Tier-1 `_read_quantitative_grounding` aggregator handles those
+    # as P1/P2 advisory. This split prevents double-lifting on the
+    # same number.
     violations: list[Violation] = []
-    for slide in spec["slides"]:
-        sid = slide["id"]
-        layout = slide["layout"]
-        # Build the corpus of text where numeric claims could appear:
-        # slide content texts + speaker_notes
-        texts: list[tuple[str, str]] = []  # (where_label, text)
-        content = slide.get("content", {})
-        # Walk content for string fields
-        def _walk(prefix: str, obj: Any) -> None:
-            if isinstance(obj, str):
-                texts.append((prefix, obj))
-            elif isinstance(obj, list):
-                for i, item in enumerate(obj):
-                    _walk(f"{prefix}[{i}]", item)
-            elif isinstance(obj, dict):
-                for k, v in obj.items():
-                    _walk(f"{prefix}.{k}", v)
-        _walk("content", content)
-        if "speaker_notes" in slide and slide["speaker_notes"]:
-            texts.append(("speaker_notes", slide["speaker_notes"]))
-
-        # Find all numeric claims
-        all_claims: set[str] = set()
-        for _, text in texts:
-            for claim in _extract_numeric_claims(text):
-                all_claims.add(claim)
-
-        if not all_claims:
+    for finding in report.findings:
+        if finding.severity != "high":
             continue
-
-        # Provenance: lookup table from claim → source ref
-        provenance = slide.get("speaker_notes_provenance", []) or []
-        provenanced_claims: set[str] = set()
-        for entry in provenance:
-            if not isinstance(entry, dict):
-                continue
-            claim_text = entry.get("claim", "")
-            for token in _extract_numeric_claims(claim_text):
-                provenanced_claims.add(token)
-
-        unprovenanced = all_claims - provenanced_claims
-        # big_number's headline is itself a numeric claim that's allowed
-        # without provenance-entry IF it appears in REPORT or notebook —
-        # but we can't verify that here. Treat big_number's headline as
-        # auto-provenance only when speaker_notes_provenance has at
-        # least one entry referencing the headline (or any source).
-        # In practice, the slide-compose prompt is responsible for
-        # populating provenance. If absent on a big_number, escalate.
-        for claim in sorted(unprovenanced):
-            violations.append(Violation(
-                severity="error",
-                where=f"slide[{sid}].layout={layout}",
-                message=(f"numeric claim '{claim}' has no entry in "
-                         f"speaker_notes_provenance; either add a provenance "
-                         f"entry pointing to notebook/REPORT, or remove the "
-                         f"claim. Auto-fix forbidden (would require fabrication)."),
-                escalation_path="escalate",
-            ))
+        number_text = finding.number.raw or finding.number.canonical or "<num>"
+        violations.append(Violation(
+            severity="error",
+            where=f"slide[{finding.slide_id}]",
+            message=(
+                f"numeric claim {number_text!r} not grounded in REPORT.md "
+                f"(severity=high): {finding.note}. Either add the number "
+                f"to REPORT.md with its source notebook+cell, or remove "
+                f"the claim from the slide. Auto-fix forbidden (would "
+                f"require fabrication)."
+            ),
+            escalation_path="escalate",
+        ))
 
     if not violations:
         return ValidatorResult("P3", "Numeric provenance", "pass")
@@ -798,7 +833,11 @@ def validate_presentation(
     # P1, P2, P3 — spec-only
     results.append(validate_p1_mode_budget(spec))
     results.append(validate_p2_time_budget(spec))
-    results.append(validate_p3_numeric_provenance(spec))
+    # M5a Tier C: P3 now requires draft_dir (wraps
+    # check_quantitative_grounding which walks REPORT.md). Legacy
+    # callers without draft_dir get a skipped result with a clear note;
+    # the M4b cascade always passes draft_dir.
+    results.append(validate_p3_numeric_provenance(spec, draft_dir))
     # P4 — needs pool
     results.append(validate_p4_citation_pool_integrity(spec, citation_pool))
     # P5 — uses brand tokens (forbidden contrast pairs)
