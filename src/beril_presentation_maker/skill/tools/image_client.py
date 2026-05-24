@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-"""image_client.py — AI image-generation client (CBORG-Gemini default).
+"""image_client.py — AI image-generation client (multi-provider).
 
-Per SPEC §8.3 + DECISIONS D-005-rev1, D-006. Tier 3 figure handling for
-the `concept_illustration` slide layout. Default OFF (`--ai-diagrams off`);
-enabled per-image via Channel A (LLM-proposed, opt-in flag) or Channel B
-(user-requested at any pause point).
+Per SPEC §8.3 + DECISIONS D-005-rev1, D-006, D-062..D-064. Tier 3 figure
+handling for the `concept_illustration` slide layout. Default OFF
+(`--ai-diagrams off`); enabled per-image via Channel A (LLM-proposed,
+opt-in flag) or Channel B (user-requested at any pause point).
 
 Provider abstraction:
 
   Default: CBORG (https://api.cborg.lbl.gov), model
   google/gemini-pro-image. Auth via CBORG_API_KEY env var (or .env at
-  BERIL_ROOT — discovered upstream by configure).
+  BERIL_ROOT — discovered upstream by the orchestrator).
 
-  v0.2 reserves: direct Google AI Studio (GOOGLE_AI_STUDIO_API_KEY) and
-  OpenAI gpt-image-1 (OPENAI_API_KEY) as alternatives if CBORG quality
-  disappoints on conceptual illustrations.
+  M5b (D-062): direct Google AI Studio (GOOGLE_AI_STUDIO_API_KEY).
+  Native Gemini API at generativelanguage.googleapis.com/v1beta;
+  `gemini-3.1-flash-image-preview` (Nano Banana 2) is the May-2026
+  primary; pro lineage `gemini-3-pro-image-preview` and prior-gen
+  `gemini-2.5-flash-image` are the fallback chain (resolve_ai_studio_model).
+  Provider selected by the orchestrator (presentation_maker.sh) based
+  on env-var precedence; per-draft probe cache lives at
+  `audit/ai_image_gen_probe.json` (D-063).
+
+  Future: OpenAI gpt-image-1 (OPENAI_API_KEY) as an alternative — not
+  scheduled (not in the user's stated provider-needs).
 
 Constraints (enforced here):
   - Per-image cost cap (caller supplies budget_remaining_usd).
@@ -73,28 +81,108 @@ import requests
 # ---------------------------------------------------------------------------
 
 DEFAULT_CBORG_BASE_URL = "https://api.cborg.lbl.gov"
+DEFAULT_AI_STUDIO_BASE_URL = "https://generativelanguage.googleapis.com"
 # 2026-04-30: CBORG model inventory uses bare names (not google/-prefixed).
 # Default to gemini-3-pro-image (Gemini 3's image-gen, "nanobanana pro")
 # — better text handling than gemini-pro-image. Override via --model.
 DEFAULT_MODEL = "gemini-3-pro-image"
+# AI Studio default if no probe cache hits — the primary May-2026 model
+# per https://ai.google.dev/gemini-api/docs/image-generation. The probe
+# (Tier C) walks the D-035-rev1 fallback chain and may pick a different
+# model.
+DEFAULT_AI_STUDIO_MODEL = "gemini-3.1-flash-image-preview"
 
 # Per-million-token cost estimates for cost-cap enforcement.
 # Source: cborg.lbl.gov/models/ — gemini image-gen models: $2 / $12 per M tokens.
-# (Image-gen tokens are different from text tokens; output_tokens include
-# the encoded image, ~32K tokens at the model's max.)
+# AI Studio rates from https://ai.google.dev/pricing — different lineage but
+# the same general scale; calibrated via image_gen_calibration.py against
+# each provider before _WORST_CASE_COST_USD is treated as load-bearing
+# (image-gen tokens are different from text tokens; output_tokens include
+# the encoded image, ~32K tokens at the model's max).
 _MODEL_RATES_USD_PER_M = {
-    "gemini-pro-image":                 {"input": 2.00, "output": 12.00},
-    "gemini-3-pro-image":               {"input": 2.00, "output": 12.00},
+    # CBORG (proxied Google models, OpenAI-compat surface)
+    "gemini-pro-image":                  {"input": 2.00, "output": 12.00},
+    "gemini-3-pro-image":                {"input": 2.00, "output": 12.00},
     # Legacy google/-prefixed aliases — kept so old callers don't break,
     # but CBORG itself expects the bare names above.
-    "google/gemini-pro-image":          {"input": 2.00, "output": 12.00},
-    "google/gemini-3-pro-image":        {"input": 2.00, "output": 12.00},
+    "google/gemini-pro-image":           {"input": 2.00, "output": 12.00},
+    "google/gemini-3-pro-image":         {"input": 2.00, "output": 12.00},
     "google/gemini-3-pro-image-preview": {"input": 2.00, "output": 12.00},
+    # AI Studio native (M5b/D-062). Conservative input/output rates until
+    # image_gen_calibration.py runs against AI Studio (M5b Tier E).
+    # Sourced from ai.google.dev/pricing (May 2026 published numbers).
+    "gemini-3.1-flash-image-preview":    {"input": 0.30, "output": 30.00},
+    "gemini-3-pro-image-preview":        {"input": 1.25, "output": 30.00},
+    "gemini-2.5-flash-image":            {"input": 0.30, "output": 30.00},
 }
+
+# AI Studio fallback chain (D-035-rev1, M5b Tier A discovery: Google's
+# May-2026 model lineup has shifted — the original D-035 chain
+# `gemini-3-pro-image → gemini-2.5-flash-image → fail` is updated to
+# match the actual published model names with `-preview` suffix on the
+# 3.x line). probe_available_models() + resolve_ai_studio_model() pick
+# the first present in this list.
+AI_STUDIO_MODEL_FALLBACK_CHAIN = (
+    "gemini-3-pro-image-preview",
+    "gemini-3.1-flash-image-preview",
+    "gemini-2.5-flash-image",
+)
 
 # Channel labels per SPEC §8.3 two-channel design.
 CHANNEL_A = "A"   # LLM-proposed (global flag opt-in)
 CHANNEL_B = "B"   # user-requested (interactive override; bypasses Channel A)
+
+
+# AI Studio's image API accepts aspectRatio + imageSize (bucketed
+# enums) — NOT free-form (width, height). Existing callers pass
+# (width, height) tuples (e.g., (1024, 1024)); map to the closest
+# supported bucket. CBORG's OpenAI-compat path keeps the WxH string
+# form, so this mapping is only used on the AI Studio path.
+#
+# Supported AI Studio aspect ratios (per
+# https://ai.google.dev/gemini-api/docs/image-generation, May 2026):
+#   1:1, 2:3, 3:2, 4:3, 3:4, 16:9, 9:16, 4:5, 5:4, 21:9
+# Supported imageSize values: "512", "1K", "2K", "4K".
+_AI_STUDIO_ASPECT_RATIOS = (
+    (1.0, "1:1"),
+    (2.0 / 3.0, "2:3"),
+    (3.0 / 2.0, "3:2"),
+    (4.0 / 3.0, "4:3"),
+    (3.0 / 4.0, "3:4"),
+    (16.0 / 9.0, "16:9"),
+    (9.0 / 16.0, "9:16"),
+    (4.0 / 5.0, "4:5"),
+    (5.0 / 4.0, "5:4"),
+    (21.0 / 9.0, "21:9"),
+)
+
+
+def _size_to_ai_studio_config(size: tuple[int, int]) -> tuple[str, str]:
+    """Map (width, height) → (aspectRatio, imageSize) bucket pair for
+    AI Studio's responseFormat.image. Picks the closest supported
+    aspectRatio by ratio distance, and the smallest imageSize bucket
+    whose max-dimension covers the request.
+
+    Example: (1024, 1024) → ("1:1", "1K")
+    Example: (1920, 1080) → ("16:9", "2K")
+    """
+    width, height = size
+    if width <= 0 or height <= 0:
+        return "1:1", "1K"
+    requested_ratio = width / height
+    best = min(_AI_STUDIO_ASPECT_RATIOS,
+               key=lambda pair: abs(pair[0] - requested_ratio))
+    aspect_ratio = best[1]
+    max_dim = max(width, height)
+    if max_dim <= 512:
+        image_size = "512"
+    elif max_dim <= 1024:
+        image_size = "1K"
+    elif max_dim <= 2048:
+        image_size = "2K"
+    else:
+        image_size = "4K"
+    return aspect_ratio, image_size
 
 
 # Worst-case cost preflight bound. v0.3.3.2 (#62) recalibrated against
@@ -113,6 +201,14 @@ CHANNEL_B = "B"   # user-requested (interactive override; bypasses Channel A)
 # rate-card drift, but tight enough that --max-image-cost-usd 0.10
 # clears (~7 images per cap rather than ~12 falsely rejected ones).
 # Re-run image_gen_calibration.py if the model id or rate card changes.
+#
+# M5b status: shared constant across both providers until M5b Tier E
+# calibrates the AI Studio path. AI Studio's `gemini-2.5-flash-image`
+# has different per-image token economics from CBORG's
+# `gemini-3-pro-image`; the $0.05 cap is held provisionally and re-
+# evaluated at Tier E. If AI Studio's calibrated mean is materially
+# higher, the band test below will flag it and a per-provider split
+# may be warranted (deferred follow-up; not in M5b scope).
 _WORST_CASE_COST_USD = 0.05
 
 
@@ -188,6 +284,21 @@ class ImageClient:
         return cls(provider="cborg", base_url=DEFAULT_CBORG_BASE_URL,
                    api_key=api_key, **kwargs)
 
+    @classmethod
+    def google_ai_studio(cls, api_key: str,
+                         model: str = DEFAULT_AI_STUDIO_MODEL,
+                         **kwargs) -> "ImageClient":
+        """Construct an ImageClient that talks to AI Studio's native
+        Gemini API. M5b/D-062.
+
+        Caller is responsible for resolving the model via
+        resolve_ai_studio_model() (Tier C) before constructing; this
+        constructor accepts the resolved model name and doesn't probe.
+        """
+        return cls(provider="google_ai_studio",
+                   base_url=DEFAULT_AI_STUDIO_BASE_URL,
+                   model=model, api_key=api_key, **kwargs)
+
     # -----------------------------------------------------------------------
     # Cost estimation
     # -----------------------------------------------------------------------
@@ -258,11 +369,13 @@ class ImageClient:
         start = time.time()
         if self.provider == "cborg":
             image_bytes, usage = self._call_cborg(prompt, model, size)
+        elif self.provider == "google_ai_studio":
+            image_bytes, usage = self._call_google_ai_studio(prompt, model, size)
         else:
             raise ImageClientError(
-                f"provider {self.provider!r} not implemented in v0.1; "
-                f"only 'cborg' supported. Direct Google / OpenAI keys are "
-                f"v0.2 (D-006 / SPEC §8.3)."
+                f"provider {self.provider!r} not implemented; supported "
+                f"providers: 'cborg' (CBORG_API_KEY) and 'google_ai_studio' "
+                f"(GOOGLE_AI_STUDIO_API_KEY, M5b/D-062). See SPEC §8.3."
             )
         elapsed = time.time() - start
 
@@ -362,6 +475,129 @@ class ImageClient:
         }
         return image_bytes, normalized
 
+    def _call_google_ai_studio(
+        self,
+        prompt: str,
+        model: str,
+        size: tuple[int, int],
+    ) -> tuple[bytes, dict]:
+        """POST to AI Studio's native Gemini :generateContent endpoint.
+        Returns (image_bytes, usage_dict). M5b/D-062.
+
+        API contract per https://ai.google.dev/gemini-api/docs/image-generation
+        (verified 2026-05-24 — May 2026 Gemini API).
+
+        Request shape:
+          POST /v1beta/models/<MODEL>:generateContent
+          Headers: x-goog-api-key, Content-Type
+          Body: {"contents":[{"parts":[{"text": prompt}]}],
+                 "generationConfig":{"responseModalities":["IMAGE"],
+                                     "responseFormat":{"image":{
+                                       "aspectRatio": "1:1"|...,
+                                       "imageSize": "1K"|"2K"|...}}}}
+
+        Response shape: image bytes at
+          candidates[0].content.parts[N].inlineData.data (base64).
+          Walk parts looking for inlineData — model may emit a text
+          part + an image part in either order.
+          Usage at usageMetadata.{promptTokenCount, candidatesTokenCount}.
+        """
+        if not self.api_key:
+            raise ImageClientError(
+                "no api_key set; pass api_key=... or set "
+                "GOOGLE_AI_STUDIO_API_KEY env var"
+            )
+        url = f"{self.base_url}/v1beta/models/{model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        aspect_ratio, image_size = _size_to_ai_studio_config(size)
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "responseFormat": {
+                    "image": {
+                        "aspectRatio": aspect_ratio,
+                        "imageSize": image_size,
+                    },
+                },
+            },
+        }
+        try:
+            resp = self._session.post(url, headers=headers, json=payload,
+                                       timeout=self.timeout_s)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            body = ""
+            status = None
+            try:
+                if hasattr(e, "response") and e.response is not None:
+                    body = e.response.text[:1000]
+                    status = e.response.status_code
+            except Exception:  # noqa: BLE001
+                pass
+            # 429: surface clearly per §14.2 rate-limit handling — AI
+            # Studio's free tier rate-limits aggressively; per-image
+            # approval gate is the natural spacer, but the user needs
+            # to see the 429 distinctly so they don't blame the model
+            # selection for a quota issue.
+            if status == 429:
+                raise ImageClientError(
+                    f"AI Studio rate-limited (HTTP 429). Wait or check "
+                    f"your AI Studio quota tier "
+                    f"(https://ai.google.dev/gemini-api/docs/rate-limits). "
+                    f"Response: {body}"
+                ) from e
+            raise ImageClientError(
+                f"AI Studio request failed: {e}\n"
+                f"  endpoint: {url}\n"
+                f"  response body: {body}"
+            ) from e
+
+        data = resp.json()
+        # Walk candidates[0].content.parts looking for inlineData (the
+        # image bytes). Google's API may emit a text part alongside —
+        # take the first part that has inlineData.data.
+        try:
+            parts = data["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise ImageClientError(
+                f"AI Studio response missing candidates[0].content.parts: {data}"
+            ) from e
+        b64 = None
+        mime_type = None
+        for part in parts:
+            inline = part.get("inlineData") or part.get("inline_data")
+            if isinstance(inline, dict) and inline.get("data"):
+                b64 = inline["data"]
+                mime_type = inline.get("mimeType") or inline.get("mime_type")
+                break
+        if b64 is None:
+            raise ImageClientError(
+                f"AI Studio response had no inlineData part among "
+                f"{len(parts)} parts: {data}"
+            )
+        if mime_type and not mime_type.startswith("image/"):
+            # Defensive: don't assume bytes are an image if the model
+            # somehow returned audio/text inline_data.
+            raise ImageClientError(
+                f"AI Studio returned non-image inlineData (mimeType="
+                f"{mime_type!r}); refusing to write."
+            )
+
+        image_bytes = base64.b64decode(b64)
+        usage = data.get("usageMetadata", {})
+        # AI Studio uses camelCase names (promptTokenCount,
+        # candidatesTokenCount). Normalize to the same shape as
+        # _call_cborg so the caller's cost-estimate path is uniform.
+        normalized = {
+            "input_tokens": int(usage.get("promptTokenCount", 0)),
+            "output_tokens": int(usage.get("candidatesTokenCount", 0)),
+        }
+        return image_bytes, normalized
+
     # -----------------------------------------------------------------------
     # Quant-content judge
     # -----------------------------------------------------------------------
@@ -446,12 +682,30 @@ def append_provenance(
 
 def _cmd_generate(args: argparse.Namespace) -> int:
     """Generate one image, save bytes + provenance."""
-    api_key = args.api_key or os.environ.get("CBORG_API_KEY")
-    if not api_key:
-        print("CBORG_API_KEY not set (and --api-key not provided)",
-              file=sys.stderr)
+    provider = args.provider
+    if provider == "cborg":
+        api_key = args.api_key or os.environ.get("CBORG_API_KEY")
+        if not api_key:
+            print("CBORG_API_KEY not set (and --api-key not provided)",
+                  file=sys.stderr)
+            return 3
+        model = args.model or DEFAULT_MODEL
+        client = ImageClient.cborg(api_key=api_key, model=model)
+    elif provider == "google_ai_studio":
+        api_key = args.api_key or os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
+        if not api_key:
+            print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not "
+                  "provided)", file=sys.stderr)
+            return 3
+        # When --provider google_ai_studio without an explicit --model,
+        # default to the M5b primary. Tier C's probe is the canonical
+        # resolver; the CLI is the bare-metal path that doesn't probe.
+        model = args.model or DEFAULT_AI_STUDIO_MODEL
+        client = ImageClient.google_ai_studio(api_key=api_key, model=model)
+    else:
+        print(f"unknown --provider {provider!r}; expected "
+              f"'cborg' or 'google_ai_studio'", file=sys.stderr)
         return 3
-    client = ImageClient.cborg(api_key=api_key, model=args.model)
     try:
         result = client.generate(
             prompt=args.prompt,
@@ -490,7 +744,16 @@ def main(argv: list[str] | None = None) -> int:
     p_gen.add_argument("--budget", type=float, default=5.00,
                        help="Remaining budget for this draft (USD); "
                             "if worst-case cost would exceed, exit 4.")
-    p_gen.add_argument("--model", default=DEFAULT_MODEL)
+    p_gen.add_argument("--provider", choices=["cborg", "google_ai_studio"],
+                       default="cborg",
+                       help="Image-gen provider. 'cborg' (default) reads "
+                            "CBORG_API_KEY; 'google_ai_studio' reads "
+                            "GOOGLE_AI_STUDIO_API_KEY (M5b/D-062).")
+    p_gen.add_argument("--model", default=None,
+                       help="Model name. Defaults: 'gemini-3-pro-image' "
+                            "(cborg) / 'gemini-3.1-flash-image-preview' "
+                            "(google_ai_studio). Tier-C probe is the "
+                            "canonical resolver for google_ai_studio.")
     p_gen.add_argument("--width", type=int, default=1024)
     p_gen.add_argument("--height", type=int, default=1024)
     p_gen.add_argument("--channel", choices=["A", "B"], default="A")

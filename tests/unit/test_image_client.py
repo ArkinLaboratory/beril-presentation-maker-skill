@@ -340,3 +340,333 @@ def test_cli_generate_with_mocked_session_writes_image(ic, monkeypatch, tmp_path
     parsed = json.loads(prov.read_text())
     assert len(parsed["entries"]) == 1
     monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+# ---------------------------------------------------------------------------
+# AI Studio (M5b/D-062)
+# ---------------------------------------------------------------------------
+
+def _mock_ai_studio_response(image_bytes: bytes = b"fake-png",
+                              prompt_tokens: int = 100,
+                              candidates_tokens: int = 5000,
+                              mime_type: str = "image/png",
+                              include_text_part: bool = False):
+    """Build a Mock for requests.Session.post returning AI Studio-shape JSON.
+
+    AI Studio's :generateContent response shape:
+      candidates[0].content.parts = [<text or inlineData parts>]
+      usageMetadata = {promptTokenCount, candidatesTokenCount}
+    """
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    parts = []
+    if include_text_part:
+        parts.append({"text": "Here is your image:"})
+    parts.append({"inlineData": {"mimeType": mime_type, "data": b64}})
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": parts}}],
+        "usageMetadata": {
+            "promptTokenCount": prompt_tokens,
+            "candidatesTokenCount": candidates_tokens,
+        },
+    }
+    mock_resp.raise_for_status = MagicMock()
+    return mock_resp
+
+
+# Construction + classmethod
+
+def test_ai_studio_classmethod_defaults(ic):
+    """google_ai_studio classmethod sets provider, base URL, default model."""
+    client = ic.ImageClient.google_ai_studio(api_key="test-ai")
+    assert client.provider == "google_ai_studio"
+    assert client.base_url == ic.DEFAULT_AI_STUDIO_BASE_URL
+    assert client.model == ic.DEFAULT_AI_STUDIO_MODEL
+    assert client.api_key == "test-ai"
+
+
+def test_ai_studio_classmethod_model_override(ic):
+    client = ic.ImageClient.google_ai_studio(
+        api_key="x", model="gemini-3-pro-image-preview")
+    assert client.model == "gemini-3-pro-image-preview"
+
+
+def test_ai_studio_default_model_is_may_2026_primary(ic):
+    """Pin the default model to the May-2026 primary discovered at Tier A
+    (gemini-3.1-flash-image-preview = Nano Banana 2). If Google moves the
+    default model line again, this test breaks and forces an explicit
+    update to AI_STUDIO_MODEL_FALLBACK_CHAIN."""
+    assert ic.DEFAULT_AI_STUDIO_MODEL == "gemini-3.1-flash-image-preview"
+    assert ic.DEFAULT_AI_STUDIO_MODEL in ic.AI_STUDIO_MODEL_FALLBACK_CHAIN
+
+
+def test_ai_studio_fallback_chain_order(ic):
+    """D-035-rev1 (M5b Tier A): pro-preview → 3.1-flash-preview → 2.5-flash.
+    Test pins both presence and order — the resolve function (Tier C)
+    picks the first present in this chain."""
+    assert ic.AI_STUDIO_MODEL_FALLBACK_CHAIN == (
+        "gemini-3-pro-image-preview",
+        "gemini-3.1-flash-image-preview",
+        "gemini-2.5-flash-image",
+    )
+
+
+# _size_to_ai_studio_config helper
+
+def test_size_helper_1024_square_to_1k_1to1(ic):
+    """Common case: orchestrator passes (1024, 1024) → ('1:1', '1K')."""
+    assert ic._size_to_ai_studio_config((1024, 1024)) == ("1:1", "1K")
+
+
+def test_size_helper_widescreen_to_16_9(ic):
+    assert ic._size_to_ai_studio_config((1920, 1080)) == ("16:9", "2K")
+
+
+def test_size_helper_portrait_to_2_3(ic):
+    assert ic._size_to_ai_studio_config((512, 768)) == ("2:3", "1K")
+
+
+def test_size_helper_large_square_to_2k(ic):
+    assert ic._size_to_ai_studio_config((2048, 2048)) == ("1:1", "2K")
+
+
+def test_size_helper_huge_to_4k(ic):
+    assert ic._size_to_ai_studio_config((3000, 2000)) == ("3:2", "4K")
+
+
+def test_size_helper_tiny_to_512(ic):
+    assert ic._size_to_ai_studio_config((256, 256)) == ("1:1", "512")
+
+
+def test_size_helper_zero_returns_safe_default(ic):
+    assert ic._size_to_ai_studio_config((0, 0)) == ("1:1", "1K")
+
+
+# Rate card
+
+def test_ai_studio_rate_card_has_may_2026_models(ic):
+    """All three models in the fallback chain must have rate-card entries
+    so estimate_cost_usd doesn't silently return 0.0 (which would mask
+    cost drift). Pinned at M5b Tier A; update with each Google price
+    change."""
+    for model in ic.AI_STUDIO_MODEL_FALLBACK_CHAIN:
+        assert model in ic._MODEL_RATES_USD_PER_M, (
+            f"AI Studio model {model!r} missing from rate card — "
+            f"estimate_cost_usd would return 0.0 and mask spend"
+        )
+        rates = ic._MODEL_RATES_USD_PER_M[model]
+        assert rates["input"] > 0 and rates["output"] > 0
+
+
+# _call_google_ai_studio — request shape
+
+def test_ai_studio_request_shape(ic):
+    """Pin the request shape against Google's published API contract
+    (May 2026). If this test breaks, the API likely changed; re-fetch
+    https://ai.google.dev/gemini-api/docs/image-generation and update."""
+    sess = MagicMock()
+    sess.post.return_value = _mock_ai_studio_response(
+        image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
+    )
+    client = ic.ImageClient.google_ai_studio(api_key="ai-key",
+                                              request_session=sess)
+    client.generate(prompt="A glowing brain", budget_remaining_usd=10.00,
+                    size=(1024, 1024))
+    args, kwargs = sess.post.call_args
+    url = args[0]
+    # Endpoint includes the model name + :generateContent
+    assert ":generateContent" in url
+    assert "gemini-3.1-flash-image-preview" in url
+    assert "/v1beta/models/" in url
+    # API key in header (not query string)
+    assert kwargs["headers"]["x-goog-api-key"] == "ai-key"
+    assert kwargs["headers"]["Content-Type"] == "application/json"
+    # NOT an Authorization Bearer header (would be CBORG-style)
+    assert "Authorization" not in kwargs["headers"]
+    # Body shape: contents[0].parts[0].text + generationConfig
+    body = kwargs["json"]
+    assert body["contents"][0]["parts"][0]["text"] == "A glowing brain"
+    gen_cfg = body["generationConfig"]
+    assert gen_cfg["responseModalities"] == ["IMAGE"]
+    img_cfg = gen_cfg["responseFormat"]["image"]
+    assert img_cfg["aspectRatio"] == "1:1"
+    assert img_cfg["imageSize"] == "1K"
+
+
+# _call_google_ai_studio — response parsing
+
+def test_ai_studio_parses_image_bytes(ic):
+    sess = MagicMock()
+    sess.post.return_value = _mock_ai_studio_response(
+        image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
+        prompt_tokens=200, candidates_tokens=8000,
+    )
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    result = client.generate(prompt="test", budget_remaining_usd=10.00,
+                              channel="A")
+    assert result.image_bytes.startswith(b"\x89PNG")
+    assert result.model == ic.DEFAULT_AI_STUDIO_MODEL
+    assert result.prompt == "test"
+    assert result.channel == "A"
+    # Cost calculated from rate card * usage
+    assert result.cost_usd > 0
+    # Token-count normalization: camelCase → input/output_tokens
+    expected_cost = ic.ImageClient.estimate_cost_usd(
+        ic.DEFAULT_AI_STUDIO_MODEL,
+        input_tokens=200, output_tokens=8000)
+    assert abs(result.cost_usd - expected_cost) < 1e-9
+
+
+def test_ai_studio_handles_text_part_alongside_image(ic):
+    """API may emit a text part + an image part; walker must find the
+    inlineData part regardless of order."""
+    sess = MagicMock()
+    sess.post.return_value = _mock_ai_studio_response(
+        image_bytes=b"\x89PNG bytes",
+        include_text_part=True,  # text part precedes image part
+    )
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    result = client.generate(prompt="x", budget_remaining_usd=10.00)
+    assert result.image_bytes == b"\x89PNG bytes"
+
+
+def test_ai_studio_missing_inline_data_raises(ic):
+    """Defensive: response with only text parts → ImageClientError."""
+    sess = MagicMock()
+    bad_resp = MagicMock()
+    bad_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "no image here"}]}}],
+        "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+    }
+    bad_resp.raise_for_status = MagicMock()
+    sess.post.return_value = bad_resp
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    assert "inlineData" in str(exc.value)
+
+
+def test_ai_studio_non_image_mime_refused(ic):
+    """Defensive: if model returns inline_data with mimeType=audio/wav,
+    refuse rather than write bytes that aren't an image."""
+    sess = MagicMock()
+    sess.post.return_value = _mock_ai_studio_response(
+        image_bytes=b"some bytes",
+        mime_type="audio/wav",
+    )
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    assert "non-image" in str(exc.value)
+
+
+def test_ai_studio_429_surfaces_clearly(ic):
+    """Per §14.2: AI Studio free-tier rate-limits aggressively; 429 must
+    surface as a distinct, actionable error (not a generic HTTP failure)."""
+    import requests
+    sess = MagicMock()
+    err_resp = MagicMock()
+    err_resp.status_code = 429
+    err_resp.text = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}'
+    raise_err = requests.HTTPError("429 Too Many Requests")
+    raise_err.response = err_resp
+    err_resp.raise_for_status = MagicMock(side_effect=raise_err)
+    sess.post.return_value = err_resp
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    msg = str(exc.value)
+    assert "429" in msg
+    assert "rate-limit" in msg.lower() or "rate limited" in msg.lower()
+
+
+def test_ai_studio_generic_http_error_includes_endpoint(ic):
+    import requests
+    sess = MagicMock()
+    sess.post.side_effect = requests.RequestException("connection refused")
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    msg = str(exc.value)
+    assert "AI Studio" in msg
+    assert "endpoint" in msg
+    assert "generativelanguage.googleapis.com" in msg
+
+
+def test_ai_studio_no_api_key_raises(ic):
+    client = ic.ImageClient(provider="google_ai_studio", api_key=None,
+                            base_url=ic.DEFAULT_AI_STUDIO_BASE_URL,
+                            model=ic.DEFAULT_AI_STUDIO_MODEL)
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    assert "GOOGLE_AI_STUDIO_API_KEY" in str(exc.value)
+
+
+# Dispatch — cborg path unchanged + google_ai_studio added; unknown provider
+# still names both supported options.
+
+def test_dispatch_unsupported_provider_names_both(ic):
+    """The unsupported-provider error must name both supported providers
+    so users know what's available."""
+    client = ic.ImageClient(provider="openai", api_key="x")
+    with pytest.raises(ic.ImageClientError) as exc:
+        client.generate(prompt="x", budget_remaining_usd=10.00)
+    msg = str(exc.value)
+    assert "cborg" in msg
+    assert "google_ai_studio" in msg
+
+
+# CLI — --provider flag
+
+def test_cli_ai_studio_missing_api_key_returns_3(ic, monkeypatch):
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_API_KEY", raising=False)
+    rc = ic.main(["generate", "--provider", "google_ai_studio",
+                  "--prompt", "x", "--out", "/tmp/x.png",
+                  "--budget", "5.00"])
+    assert rc == 3
+
+
+def test_cli_ai_studio_generate_with_mocked_session(ic, monkeypatch, tmp_path):
+    """End-to-end CLI on the AI Studio path with mocked HTTP."""
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-ai")
+    out_img = tmp_path / "img.png"
+    prov = tmp_path / "image_provenance.json"
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.post.return_value = _mock_ai_studio_response(
+        image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
+    )
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    rc = ic.main([
+        "generate", "--provider", "google_ai_studio",
+        "--prompt", "x",
+        "--out", str(out_img),
+        "--budget", "5.00",
+        "--provenance", str(prov),
+    ])
+    assert rc == 0
+    assert out_img.is_file()
+    assert prov.is_file()
+    parsed = json.loads(prov.read_text())
+    assert len(parsed["entries"]) == 1
+    # Provenance records the AI Studio model, not the CBORG default
+    assert parsed["entries"][0]["model"] == ic.DEFAULT_AI_STUDIO_MODEL
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+def test_cli_unknown_provider_returns_3(ic, monkeypatch, tmp_path):
+    """argparse rejects unknown --provider value at parse time → SystemExit.
+    Pin that the choice-list is exactly {cborg, google_ai_studio} so we
+    don't accidentally accept 'openai' or similar."""
+    with pytest.raises(SystemExit):
+        ic.main(["generate", "--provider", "openai",
+                 "--prompt", "x", "--out", str(tmp_path / "x.png"),
+                 "--budget", "5.00"])
