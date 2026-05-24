@@ -166,6 +166,7 @@ PEP-668 system interpreter that lacks the project's deps, and `source
                           [--image-allow-exploratory]
                           [--image-style <style>]
                           [--max-revise-cost-usd <n>] [--max-revisions <n>]
+                          [--visual-qa]
                           [--skip-assembly]
                           [--model <model_id>] [--no-stream]
 
@@ -217,8 +218,20 @@ projects/<project_id>/talks/draft_N/
     ├── adversarial_review.{json,md}    ← v3 schema (v0.3.3.1+)
     ├── quantitative_grounding.{json,md}
     ├── image_provenance.json   ← v0.3.3 image-gen append-log
+    ├── visual_qa.{json,md}     ← v0.4 M4a (opt-in --visual-qa); advisory
+    │                             render-quality findings (5 defect classes)
     └── revise_loop_metadata.json
 ```
+
+**`--visual-qa` (v0.4 M4a Tier C, opt-in):** renders the assembled deck
+to per-slide PNGs via `soffice` + `pdftoppm`, runs a vision-capable
+`claude -p` over them, writes advisory `audit/visual_qa.{md,json}` with
+findings across five defect classes (text overflow / container breach,
+element overlap, footer or title-band collision, illegible scale,
+headline↔body coherence). Always rc=0; never blocks assembly. Adds
+~$0.6–0.8 (Sonnet 4.6 vision) + ~30s LibreOffice render. Requires
+LibreOffice + Poppler on the host; without them the flag is a no-op
+with a stub report explaining what's missing.
 
 Each invocation creates a new numbered draft directory. Decks are
 versioned, not edited in place. v0.3.1+ 4-zone layout is stable

@@ -1059,3 +1059,53 @@ DEFERRED (not vendored at M1): paper-writer's `claim_inventory.py` (~2400 LOC re
 **Rationale:** Tier 2 is a review-cascade component; calibrating detection classes for a cascade that does not exist yet is premature, and §16's assignment predates the M2-lite reshape.
 
 **Related:** [M3_PUNCH_LIST.md](M3_PUNCH_LIST.md) DQ4; V0_4_ARCHITECTURE §16 M4b.
+
+---
+
+## D-050 — 2026-05-23 — M4a: visual-QA is opt-in, not auto-run (DQ1)
+
+**Decision:** The Tier-C visual-QA pass runs only when the operator passes `--visual-qa` (orchestrator flag) or invokes the standalone `visual_qa.py` verb. Off by default (`VISUAL_QA=0` in `presentation_maker.sh`). Always advisory (rc=0; never blocks assembly); writes `audit/visual_qa.{md,json}`.
+
+**Rationale:** The pass costs a LibreOffice render + a vision-LLM call (~$0.6–0.8 per 28-slide deck on Sonnet 4.6). Adding that to every run before there's a body of cost data is premature spend. Opt-in first; revisit auto-running once M4b's cascade exists (it may belong as an M4b Tier-1 check). Skill ships portable — soffice + pdftoppm are host-only runtime deps gated by the flag; a hub without them runs every other pipeline identically and the flag, if passed, writes a stub report.
+
+**Alternatives considered:** Auto-run on every assemble — rejected per the cost-discipline argument. A `--no-visual-qa` opt-out instead — rejected; would normalize the cost before we have data.
+
+**Related:** [M4_PUNCH_LIST.md](M4_PUNCH_LIST.md) DQ1; V0_4_ARCHITECTURE §16 M4a; `tools/visual_qa.py`; `prompts/visual_qa.v1.md`; `feedback_cost_record_dont_gate`.
+
+---
+
+## D-051 — 2026-05-23 — M4a: visual-QA render toolchain — soffice + pdftoppm (DQ2)
+
+**Decision:** The Tier-C render pipeline is `soffice --headless --convert-to pdf` followed by `pdftoppm -png -r 100` (Poppler). One pptx → one pdf → N per-slide PNGs. Both binaries probed via `shutil.which` at tool start; missing → advisory stub report + rc=0.
+
+**Rationale:** `soffice --convert-to png` only converts the first slide of a `.pptx` (single-image output), so the pdf-intermediate route is the standard one-shot for a multi-slide deck. `pdftoppm` is the Poppler default and matches what scientific-document toolchains use; confirmed present on Adam's Mac. The host-only runtime gate (D-050) prevents this from becoming a skill-install dependency.
+
+**Alternatives considered:** ImageMagick `convert` instead of `pdftoppm` — rejected for being a heavier dep with a security history. `mutool draw` — viable alternative if Poppler is unavailable on a target host; revisit if a hub install lacks Poppler. Direct python-pptx → PIL render — rejected as lossy (the watermark + master template details only show up under real PowerPoint-spec rendering).
+
+**Related:** [M4_PUNCH_LIST.md](M4_PUNCH_LIST.md) DQ2; `tools/visual_qa.py` `pptx_to_pdf` + `pdf_to_pngs`.
+
+---
+
+## D-052 — 2026-05-23 — M4a: shrink-to-fit floor at 60% fontScale + clamp warning (DQ3)
+
+**Decision:** Tier-A's `_fit_textbox` (`assemble_pptx.py`) and `_apply_fontscale_to_shape` (`diagram_render.py`) shrink toward a documented floor of `60000` (60% of the master pt size) and clamp at the floor — never silently sub-60%. When the floor is reached, the assembler emits a soft-warning to its `warnings` channel (`AssemblyResult.warnings`); the Tier-C visual-QA pass and the operator both see it.
+
+**Rationale:** 60% matches the M3 E-4 `_fill_qa_anticipated` adaptive ladder, which was empirically known-legible at projection distance on the v0.2.2 fixed-60% Q&A slides. A single floor (vs per-slot floors keyed to each slot's design pt size) keeps the helper simple; on the smallest text (workflow step_captions at 11pt × 60% = 6.6pt, references at 18pt × 60% = 10.8pt) the rendered text is tight but legible. Per-slot floors deferred until a slot pattern proves the single floor inadequate.
+
+**Alternatives considered:** Per-slot floors keyed to each slot's design pt size — rejected as more complex than the gain. Hard-fail at the floor (refuse to render) — rejected; the renderer's job is to produce a deck, and clamping is the right safety net (the operator sees the warning and can hand-edit).
+
+**Related:** [M4_PUNCH_LIST.md](M4_PUNCH_LIST.md) DQ3; `tools/assemble_pptx.py` `FONTSCALE_FLOOR` + `_fit_textbox`; `tools/diagram_render.py` `NODE_FONTSCALE_FLOOR` + `_apply_fontscale_to_shape`; M3 E-4 (precedent).
+
+---
+
+## D-053 — 2026-05-23 — M4a: content-cap validator backstops are advisory soft-warnings (DQ4)
+
+**Decision:** The new Tier-B content-length caps (`BIG_NUMBER_SUBTITLE_MAX_CHARS=80`, `WORKFLOW_STEP_CAPTION_MAX_CHARS=70`, `QA_ANSWER_SUMMARY_MAX_CHARS=600`, `DIAGRAM_NODE_LABEL_MAX_CHARS=40` in `slide_spec.py`) emit `ValidatorIssue` with `severity="soft-warning"`. The assembler splits issues by severity: hard errors raise `AssemblyError` as before; soft-warnings surface through `AssemblyResult.warnings` (same channel as the Tier-A clamp warnings and missing-asset warnings). The pre-existing `DATA_FIGURE_CAPTION_MAX_CHARS=280` remains a hard-error (load-bearing for the no-shrink render of the `data_figure` caption per v0.3.5 motivation).
+
+**Rationale:** The Tier-A renderer absorbs slightly-long content (shrink-to-fit toward the 60% floor). Failing the pipeline after LLM spend on a length the renderer can absorb is poor value; surfacing the cap as advisory lets prompt drift be caught programmatically while keeping the run alive. `--strict` continues to fail on any warning (including soft-warnings) — opt-in fail-on-warning, unchanged contract.
+
+**Live failure pin:** during Tier E round-1 recompose on `ibd_phage_targeting/draft_1`, the bash orchestrator's `slide_spec.py validate` CLI call (separate from the in-process assembler split) initially returned `rc=1` on a spec with 19 soft-warnings + 0 errors — `_cli_validate` was missed in the Tier-B commit. Hotpatch `53dfaf5` made the CLI severity-aware too; both code paths now agree.
+
+**Alternatives considered:** Hard-reject parity with `DATA_FIGURE_CAPTION_MAX_CHARS` — rejected; the four new caps are aesthetic (renderer absorbs), not load-bearing. New `severity="info"` tier for "just track it" — rejected as premature; two severities cover the current cases.
+
+**Related:** [M4_PUNCH_LIST.md](M4_PUNCH_LIST.md) DQ4; `tools/slide_spec.py` `ValidatorIssue.severity` + `_check_advisory_max_chars`; `tools/assemble_pptx.py` `assemble()` issue-split; M4a Tier E round-1 CLI hotpatch (commit `53dfaf5`); `feedback_prompt_discipline_needs_post_check`.

@@ -78,8 +78,16 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            runner (parallel slide_compose)
 │       │   ├── reconcile_deck.py        v0.4 M3: post-merge conflict checker
 │       │   │                            (dup figure / dup headline / image budget)
+│       │   ├── visual_qa.py              v0.4 M4a: opt-in visual-QA pass —
+│       │   │                            renders deck via soffice + pdftoppm
+│       │   │                            (host-only deps), runs vision claude
+│       │   │                            -p over per-slide PNGs, writes
+│       │   │                            advisory audit/visual_qa.{md,json};
+│       │   │                            graceful no-op stub when deps absent
+│       │   │                            (D-050, D-051)
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
-│       │                                (build-time, not runtime)
+│       │                                (build-time, not runtime; M4a Tier E
+│       │                                round 2 added the watermark-strip pass)
 │       ├── prompts/
 │       │   ├── plan.v1.md               Plan-phase: triage + throughline
 │       │   │                            candidates + substory sketch
@@ -99,8 +107,14 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── rewrite.v1.md            Apply review-driven fixes to slides
 │       │   ├── extract_claims.v1.md     v0.4 M1: claim extraction (vendored from
 │       │   │                            paper-writer; consumed by extract_claims.py)
-│       │   └── deck_outline.v1.md       v0.4 M2: deck-outline call (enriched
-│       │                                substory clustering — V0_4_ARCHITECTURE §20)
+│       │   ├── deck_outline.v1.md       v0.4 M2: deck-outline call (enriched
+│       │   │                            substory clustering — V0_4_ARCHITECTURE §20)
+│       │   └── visual_qa.v1.md          v0.4 M4a: vision-reviewer system prompt
+│       │                                for tools/visual_qa.py — five defect
+│       │                                classes (container_breach, element_overlap,
+│       │                                footer_or_title_collision, illegible_scale,
+│       │                                headline_body_mismatch); structured JSON
+│       │                                output; advisory severity
 │       └── references/
 │           ├── presentation-checklist.md  P-tier validators in detail
 │           ├── kbase-brand-tokens.json    colors / fonts / sizes
@@ -166,8 +180,13 @@ ArkinLaboratory/beril-presentation-maker-skill/
   - hash-diff against `state.json` on `continue`
 - `python-pptx` for slide_spec → .pptx (only at `assemble` step). Pure
   Python, no system pandoc / LibreOffice binary needed for .pptx.
-- `LibreOffice` (system binary, optional) for `--format pdf`. If absent,
-  pptx-only output with a clear message.
+- `LibreOffice` (system binary, optional) for `--format pdf` AND for
+  the opt-in `--visual-qa` pass (M4a Tier C). If absent, both degrade
+  gracefully (`--format pdf` emits pptx-only with a message;
+  `--visual-qa` writes an advisory stub report and rc=0).
+- `Poppler` `pdftoppm` (system binary, optional) for the `--visual-qa`
+  pass — converts the LibreOffice-rendered PDF to per-slide PNGs that
+  the vision LLM reads. Same degrade-gracefully posture as soffice.
 
 Nothing about *what* the slides say is hardcoded in Python. The
 Python layer is install + configure + state-diff + validators +

@@ -1083,19 +1083,73 @@ detection-class calibration moved to M4b (D-049). Detail: `M3_PUNCH_LIST.md`.
 **M4 — Render-quality + review cascade.** Two halves, M4a before M4b
 (Adam 2026-05-23):
 
-- **M4a — visual-QA + content discipline.** The render-debt fix.
-  (i) Renderer: explicit shrink-to-fit (explicit `fontScale` — the
-  mechanism LibreOffice honours; a bare `<a:normAutofit>` is not
-  computed at render) on the overflow-prone slots — diagram nodes,
-  workflow step-captions, `big_number` subtitle, `data_table` caption.
-  (ii) Content: length caps in the prompts — `diagram_design` node
-  labels, `slide_compose.v2` subtitle/caption, `qa_prep` `answer_summary`.
-  (iii) A visual-QA check: render → PNG → vision pass flagging
-  containment / overflow / footer-collision + headline↔body coherence.
-  Absorbs the M3-deferred items: workflow inter-box connector-label
-  placement, Slide-13 compound-headline verification. Needs a
-  render-validate loop. Spec input: the M3 Tier-E examination + defect
-  taxonomy (`M3_PUNCH_LIST.md` E-phase patch log).
+- **M4a — visual-QA + content discipline — SHIPPED 2026-05-24.**
+  Six tiers, five Tier-E rounds, suite 1107 passed, VQA cost across
+  rounds: $2.84 (one-time M4a-build spend). Per-tier ship table in
+  `M4_PUNCH_LIST.md`; DQ1–DQ4 resolutions land as D-050..D-053 in
+  `DECISIONS.md`; M4a retrospective in auto-memory
+  `project_presentation_maker_v0_4_m4a.md`.
+  - **Renderer** (Tier A, commit `fa42880`): `_fit_textbox` helper
+    writes explicit `<a:normAutofit fontScale="…">` on overflow-prone
+    freeform textboxes (big_number subtitle/sub_pointer/source_footer,
+    workflow step_captions + tool_version_footer, data_table caption +
+    footnote, methods_summary tools_versions); `_apply_fontscale_to_shape`
+    on diagram node labels (replaces the LibreOffice-ignored
+    `auto_size=TEXT_TO_FIT_SHAPE`); 60% fontScale floor (D-052) with a
+    clamp-warning surfaced via `AssemblyResult.warnings`. `_render_edge`
+    split into `_render_edge_line` + `_render_edge_label`; third
+    render-diagram pass paints labels on top of nodes (M3-deferred
+    z-order fix).
+  - **Content** (Tier B, commit `f7581af`): four advisory caps pinned
+    in `slide_spec.py` (`BIG_NUMBER_SUBTITLE_MAX_CHARS=80`,
+    `WORKFLOW_STEP_CAPTION_MAX_CHARS=70`, `QA_ANSWER_SUMMARY_MAX_CHARS=600`,
+    `DIAGRAM_NODE_LABEL_MAX_CHARS=40`); `ValidatorIssue.severity`
+    splits hard-error from advisory soft-warning (D-053); three prompt
+    edits (`diagram_design.v1.md` node label cap, `slide_compose.v2.md`
+    big_number subtitle + workflow step_caption guidance, `qa_prep.v1.md`
+    answer_summary cap); soft-warnings flow through the assembler
+    warnings channel (not `AssemblyError`).
+  - **Visual-QA** (Tier C, commit `e9e4e82`): new `tools/visual_qa.py`
+    + `prompts/visual_qa.v1.md` + opt-in orchestrator `--visual-qa`
+    flag (D-050). Six-step pipeline (probe toolchain → load spec →
+    assemble → soffice pptx→pdf → pdftoppm pdf→pngs → claude -p vision
+    pass) with stub-report fallback on every failure path. Sonnet 4.6
+    vision (~$0.6–0.8 per 28-slide deck); LibreOffice + Poppler are
+    host-only runtime deps (skill ships portable; absent deps → stub
+    report + rc=0). Toolchain choice per D-051: `soffice --headless
+    --convert-to pdf` then `pdftoppm` (both confirmed on Adam's Mac).
+  - **Tier D — test hygiene** (commit `0d3a07b`): the live
+    adversarial-interop integration test is now gated behind BOTH
+    `BERIL_PRESENTATION_MAKER_RUN_LIVE=1` AND `TEST_DRAFT_DIR`; the
+    pre-D auto-discovery walk that fired a live ~$0.50 LLM call on
+    routine `pytest tests/` was removed.
+  - **Tier E — live render smoke** (5 rounds, commits `53dfaf5`,
+    `64d35f1`, `1a7e9c7`, `a234acf`, `de4a7f1`): convergence gate on
+    `ibd_phage_targeting` draft_1. Round 1 hotpatched a CLI severity
+    bug (soft-warnings halted the orchestrator); round 2 stripped the
+    full-slide watermark from 12 layouts via `build_master.py` +
+    darkened `GRAPHITE_GRAY_RGB` (157,146,135)→(80,75,70) + the
+    `claim_evidence` figure_caption autofit; round 3 introduced
+    gap-based edge-label geometry + acronym-aware title fix-up;
+    round 4 raised the in-gap threshold (0.4→1.0in) + word_wrap=False
+    after round-3 produced char-by-char wrap, and moved the acronym
+    fix to `merge_compose_fragments.py` so the spec-on-disk matches
+    the render; round 5 anchored edge-label `y` to `node_top - h - 0.05`
+    (the round-4 `mid_y - 0.40` was INSIDE the node-row vertical extent)
+    + added the missing `_enable_normautofit` to `_fill_claim_evidence`'s
+    with-figure branch.
+  - **Tier F — closeout**: this section; `LAYOUT.md` updated for
+    `visual_qa.py` + `visual_qa.v1.md`; `DECISIONS.md` D-050..D-053;
+    `M4_PUNCH_LIST.md` status table closed; auto-memory updated.
+  - **Carried out of M4a:** composer prompt iteration for node-label
+    cap respect (slides 5/9/18 carry 50–70-char node labels — Tier-A
+    renderer absorbs; tightening lives with the next slide_compose
+    prompt iteration); `visual_qa.v1.md` prompt iteration to require
+    fontScale-grounded illegible_scale claims (7 false positives in
+    Tier-E round-4 VQA where the model reported "extremely small font"
+    on text rendered at 80–100% scale); portable visual-QA path for
+    end-user revise loops (auto-memory task; revisit during M4b
+    cascade design).
 - **M4b — tiered review cascade.** The original §16 M4: `review_cascade.py`
   orchestrator; Tier 1 deterministic P-validators; Tier 2 Haiku with
   empirical detection-class calibration; Tier 3 canonical adversarial;

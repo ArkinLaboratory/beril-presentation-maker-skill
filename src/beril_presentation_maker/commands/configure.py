@@ -17,7 +17,10 @@ Checks (in order):
   - `beril-adversarial-cli` on PATH (review-rewrite loop falls back to
     inline reviewer; v0.3.0 will gate the loop on this).
   - `requests` Python module (optional ai_image_prompt CBORG client).
-  - LibreOffice (`soffice`) on PATH — required only for `--format pdf`.
+  - LibreOffice (`soffice`) on PATH — required only for `--format pdf`
+    AND the opt-in `--visual-qa` pass (M4a Tier C).
+  - `pdftoppm` (Poppler) on PATH — required only for `--visual-qa`
+    (converts the LibreOffice-rendered PDF to per-slide PNGs).
   - `mmdc` (mermaid-cli) — required only for the v0.3+ mermaid-diagram
     code path; not needed for v0.2.
   - POSIX core utilities (basename, cat, cp, cut, date, dirname, echo,
@@ -221,14 +224,41 @@ def run(args: argparse.Namespace) -> int:
             _info("  [absent]  requests            — ai_image_prompt CBORG client unavailable")
             soft_warnings.append("requests (image-gen optional)")
 
-    # ---- 8. LibreOffice (--format pdf only) ----
+    # ---- 8. LibreOffice (--format pdf + --visual-qa) ----
+    # M4a Tier C (2026-05-23): soffice is also required for the opt-in
+    # --visual-qa pass (pptx → pdf → per-slide PNGs → vision claude -p).
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if soffice:
-        _info(f"  [OK]      LibreOffice         — {soffice}  (used for --format pdf)")
+        _info(
+            f"  [OK]      LibreOffice         — {soffice}  "
+            "(used for --format pdf and --visual-qa)"
+        )
     else:
         _info(
             "  [absent]  LibreOffice         — needed only for "
-            "`assemble --format pdf`. .pptx export works without it."
+            "`assemble --format pdf` AND `--visual-qa` (M4a Tier C). "
+            ".pptx export + the default pipeline work without it; "
+            "passing --visual-qa writes an advisory stub and rc=0."
+        )
+
+    # ---- 8b. Poppler pdftoppm (--visual-qa only) ----
+    # M4a Tier C: pdftoppm converts the LibreOffice-rendered PDF to per-
+    # slide PNGs for the vision LLM. Required only if --visual-qa is in
+    # use; absent → visual_qa.py writes a stub report + rc=0 (graceful
+    # no-op, matches the soffice posture).
+    pdftoppm = shutil.which("pdftoppm")
+    if pdftoppm:
+        _info(
+            f"  [OK]      pdftoppm (Poppler)  — {pdftoppm}  "
+            "(used for --visual-qa)"
+        )
+    else:
+        _info(
+            "  [absent]  pdftoppm (Poppler)  — needed only for "
+            "`--visual-qa` (M4a Tier C). Default pipeline runs "
+            "without it; passing --visual-qa writes an advisory "
+            "stub and rc=0. Install via Homebrew (`brew install "
+            "poppler`) or your distro's `poppler-utils` package."
         )
 
     # ---- 9. mermaid-cli (v0.3+ diagram path) ----

@@ -109,6 +109,12 @@ This subcommand:
   from `BERIL_ROOT/.env`).
 - Reports adversarial CLI status (installed / version / has
   `review` subcommand).
+- Reports optional binary status: `soffice` (LibreOffice) for
+  `--format pdf` + `--visual-qa`, `pdftoppm` (Poppler) for
+  `--visual-qa`. Both are runtime-only; the skill installs and
+  runs without them, and the affected verbs degrade gracefully
+  (`--format pdf` emits pptx-only with a message; `--visual-qa`
+  writes an advisory stub report and rc=0).
 - Does NOT make any LLM calls.
 
 If any check fails, fix it and re-run. Common issues:
@@ -124,6 +130,27 @@ If any check fails, fix it and re-run. Common issues:
   on every run. v0.6.x produces v2 schema; presentation-maker
   consumes v3 (since v0.3.3.1; v2 audit files still readable for
   forensic compat).
+- **soffice / pdftoppm missing:** install only if you want PDF
+  output OR the opt-in `--visual-qa` pass. macOS: `brew install
+  --cask libreoffice && brew install poppler`. Linux:
+  distro-appropriate `libreoffice` + `poppler-utils` packages.
+  Without them, the default v0.4 pipeline runs unchanged; the
+  affected verbs emit a stub report and rc=0.
+
+### Optional: enable `--visual-qa` (M4a Tier C)
+
+The opt-in `--visual-qa` flag renders the assembled deck to per-slide
+PNGs and runs a vision-capable `claude -p` over them, flagging render-
+quality defects (text overflow, element overlap, footer collisions,
+illegible scale, headline↔body coherence). Output: advisory
+`audit/visual_qa.{md,json}` (never blocks assembly; always rc=0).
+
+Cost: ~$0.6–0.8 per 28-slide deck (Sonnet 4.6 vision). Time: ~30s
+LibreOffice render + ~60s vision pass.
+
+Requires both system binaries above. Without them the flag is a
+no-op with a stub report explaining what's missing. Skill ships
+portable; the deps are host-only and don't affect any other verb.
 
 ## First-run validation
 
