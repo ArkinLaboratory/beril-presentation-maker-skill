@@ -92,8 +92,10 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            (deterministic + opt-in visual-QA),
 │       │   │                            Tier 2 (Haiku narrative-light), Tier 3
 │       │   │                            (canonical adversarial wrapper).
-│       │   │                            DQ4 / D-057: Tier-1 P0 (P4/P5; P3
-│       │   │                            demoted per D-058) short-circuits.
+│       │   │                            DQ4 / D-057: Tier-1 P0 ({P3, P4, P5})
+│       │   │                            short-circuits. P3 was briefly demoted
+│       │   │                            (D-058, M4b Tier E) pending the v0.4
+│       │   │                            rewrite; restored M5a Tier C per D-059.
 │       │   │                            Writes audit/review_cascade.{md,json}.
 │       │   ├── review_tier2.py           v0.4 M4b Tier C: cascade Tier-2
 │       │   │                            invoker. Pinned claude-haiku-4-5
@@ -102,6 +104,24 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            audit/review_tier2.{md,json}; same
 │       │   │                            stub-report fallback pattern as
 │       │   │                            visual_qa.py.
+│       │   ├── revise_invariance.py     v0.4 M5a Tier A: post-edit semantic-
+│       │   │                            invariance check for the revise verb
+│       │   │                            (contract `revise-invariance.v1`).
+│       │   │                            Five §13 invariants over pre/post
+│       │   │                            slide JSONs: claim_id cross-walk
+│       │   │                            (DQ1 heuristic per D-060; skipped+
+│       │   │                            advisory when claim_inventory.tsv
+│       │   │                            absent), citation preservation
+│       │   │                            (insertions AND deletions forbidden),
+│       │   │                            numeric preservation (multiset; reuses
+│       │   │                            check_quantitative_grounding.extract_
+│       │   │                            numbers), hedge level (per-slide
+│       │   │                            aggregation per DQ2 / D-060), layout
+│       │   │                            preservation. CLI rc=0 pass / rc=1
+│       │   │                            fail per DQ3 / D-061 hard-reject.
+│       │   │                            Invoked by revise_loop.py via subprocess
+│       │   │                            between LLM post-edit and spec merge;
+│       │   │                            writes audit/revise_invariance/<finding_id>.json.
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime; M4a Tier E
 │       │                                round 2 added the watermark-strip pass)
@@ -186,7 +206,8 @@ ArkinLaboratory/beril-presentation-maker-skill/
 - Python helpers under `tools/` (extract_cross_tenant, curate_figures,
   citation_pool, diagram_render, image_client, poster_fill,
   validate_presentation, assemble_pptx, stream_progress, build_master,
-  reconcile_deck, visual_qa, review_cascade, review_tier2)
+  reconcile_deck, visual_qa, review_cascade, review_tier2,
+  revise_invariance)
 - 15 versioned `.v1.md` system prompts under `prompts/`
   (incl. M4a `visual_qa.v1.md` + M4b `review_tier2.v1.md`)
 - Reference rubric `references/presentation-checklist.md`

@@ -1225,15 +1225,86 @@ detection-class calibration moved to M4b (D-049). Detail: `M3_PUNCH_LIST.md`.
       consumers want it in the JSON).
 
 **M5 — Image-gen multi-provider + revise invariance + P3 retirement.**
-AI Studio provider in `image_client.py`; auth discovery; model probe;
-calibration re-run. `revise_invariance.py` post-check on the revise
-verb path. **P3 retirement** (per D-058): replace `validate_p3_numeric_provenance`
-with a wrapper around `check_quantitative_grounding.py` (the v0.4
-REPORT-walking authoritative check; v0.3's `speaker_notes_provenance`
-contract is dead on v0.4). Update SPEC.md §13.1; once retired, P3
-rejoins `_P0_VALIDATORS` in `review_cascade.py` and Tier 1 fail-fast
-saves the full ~$0.50–$1.50 of Tier-3 adversarial spend on real
-numeric defects.
+Split into two halves; M5a (cheap-wins; offline correctness) shipped
+first per Adam's reorder 2026-05-24.
+
+- **M5a — P3 retirement + revise_invariance — SHIPPED 2026-05-24.**
+  Six tiers; per-tier ship table in `M5a_PUNCH_LIST.md`; DQ1–DQ4
+  resolutions land as D-059..D-061 in `DECISIONS.md`; M5a
+  retrospective in auto-memory `project_presentation_maker_v0_4_m5a.md`.
+  - **Tier A — `revise_invariance.py` + 5 invariants** (commit
+    `cf8c0bd` and follow-ups): new `tools/revise_invariance.py`
+    ships the contract (`revise-invariance.v1`); five §13 invariants
+    — claim_id cross-walk (DQ1 heuristic per D-060: substring match
+    against `claim_inventory.tsv` column 1; skipped+advisory when
+    inventory missing), citation preservation (`[Author20YY]` set
+    equality, insertions AND deletions forbidden), numeric
+    preservation (multiset via reused
+    `check_quantitative_grounding.extract_numbers`), hedge level
+    (per-slide aggregation per DQ2 / D-060; ≤1 decrease OK, increase
+    or >1 decrease fail; 5-marker dict as constant), layout
+    preservation (`slide["layout"]` equality). CLI rc=0 pass / rc=1
+    fail per DQ3 / D-061 hard-reject. 29 unit tests; suite 1203
+    passed.
+  - **Tier B — wire into `revise_loop.py`** (commit `e84efc4`):
+    `_check_revise_invariance` helper invokes `revise_invariance.py`
+    via subprocess between LLM post-edit and `_replace_slide_in_spec`
+    (gate placement guarantees spec-not-mutated on violation); threads
+    `claim_inventory.tsv` from M1 standard location
+    (`<draft_dir>/working/00_phase0/claim_inventory.tsv`); new
+    `LoopState.findings_invariance_violated` distinct from
+    `findings_failed` (DQ3 hard-reject: no retry-counter increment);
+    `next_actions.md` surfaces invariance violations as a distinct
+    line; new `_process_finding` return value
+    `"revise_invariance_violated"`. 6 new unit tests; suite 1209
+    passed.
+  - **Tier C — P3 retirement** (commit `79e863a`): rewrite-in-place
+    per DQ4 / D-061 — `validate_p3_numeric_provenance(spec, draft_dir)`
+    wraps `check_quantitative_grounding.check_grounding(draft_dir)`
+    (the v0.4 REPORT-walking authority); HIGH-severity ungrounded →
+    `Violation(severity="error")`; medium/low intentionally NOT
+    lifted (D-061 anti-double-lift split: cascade Tier-1
+    `_read_quantitative_grounding` aggregator already lifts those as
+    P1/P2 advisory). Cascade `_P0_VALIDATORS` re-added P3 →
+    `{"P3", "P4", "P5"}` (D-058 obsolete). v0.3
+    `speaker_notes_provenance` contract retired (no fallback;
+    legacy `draft_dir=None` callers get `status="skipped"`). 3 v0.3
+    P3 tests replaced with 5 v0.4 P3 tests; suite 1212 passed.
+  - **Tier D — docs** (commit `5babab8`): `SPEC.md` §13.1 + §13.2
+    updated with v0.4 P3 mechanism + severity mapping;
+    `DECISIONS.md` D-059 (P3 retirement closes D-058), D-060
+    (DQ1 heuristic + DQ2 per-slide hedge), D-061 (DQ3 hard-reject
+    + DQ4 split).
+  - **Tier E — live + synthetic smoke** (commit `807dbe6`): E1
+    re-ran cascade on `ibd_phage_targeting/draft_1` — 586 → 306
+    findings (282 v0.3-style P3 false-positives gone), P0 went
+    0 → 2 (the two real high-severity ratios on slides 8 and 24),
+    `short_circuited_at: tier1` ✓ — fail-fast restored on real
+    numeric defects, the cascade-saves-Tier-3-spend property
+    promised by D-058 now operational. E2 synthetic
+    `revise_invariance` CLI: citation-deletion → `rc=1`
+    `verdict=fail`; clean prose tightening → `rc=0` `verdict=pass`.
+    All at $0.0000 (E1 was cascade `--no-tier2 --no-tier3`; E2 was
+    offline CLI).
+  - **Tier F — closeout**: this section; `LAYOUT.md` updated for
+    `revise_invariance.py`; `DECISIONS.md` D-059..D-061;
+    `M5a_PUNCH_LIST.md` status table closed; auto-memory updated.
+  - **Carried out of M5a** (deferred):
+    - `_extract_numeric_claims` helper in `validate_presentation.py`
+      is now dead code (the v0.3 P3 walker); only referenced by its
+      own unit tests. Could be removed in a future cleanup. Defer.
+    - Tier 2 prompt v2 expansion (carried from M4b).
+    - Persist Tier-2 cost into `audit/review_tier2.json` (carried
+      from M4b).
+    - Portable visual-QA path for end-user revise loops (carried
+      from M4a).
+
+- **M5b — AI Studio image-gen multi-provider.** AI Studio provider
+  in `image_client.py`; auth discovery; model-availability probe
+  (`gemini-3-pro-image` → `gemini-2.5-flash-image` → fail per D-035);
+  calibration re-run. Pure provider extension; no architectural
+  change. Deferred from M5a per Adam's reorder (ship cheap-wins
+  first).
 
 **M6 — A/B test + cut-over decision.** Score sheet on
 `ibd_phage_targeting`; sanity check on `functional_dark_matter`;
