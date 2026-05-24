@@ -234,6 +234,94 @@ def test_tier2_dispatcher_error_status_when_audit_missing(rc, tmp_path, monkeypa
     assert "did not produce" in result.note
 
 
+def test_derive_beril_root_walks_four_parents_up(rc, tmp_path):
+    """_derive_beril_root: draft sits at <BERIL_ROOT>/projects/<id>/
+    talks/draft_N/; walk 4 parents up + verify .claude/skills/ marker."""
+    root = tmp_path / "beril_root"
+    (root / "projects" / "x" / "talks" / "draft_1").mkdir(parents=True)
+    (root / ".claude" / "skills").mkdir(parents=True)
+    draft = root / "projects" / "x" / "talks" / "draft_1"
+    assert rc._derive_beril_root(draft) == root
+
+
+def test_derive_beril_root_returns_none_when_marker_absent(rc, tmp_path):
+    """If .claude/skills/ is missing 4 parents up, return None — the
+    cascade falls back to the env var (or beril-adversarial does its
+    own thing without --beril-root)."""
+    # Structure 4-parents-up is just tmp_path; no .claude/skills/ marker
+    (tmp_path / "projects" / "x" / "talks" / "draft_1").mkdir(parents=True)
+    draft = tmp_path / "projects" / "x" / "talks" / "draft_1"
+    assert rc._derive_beril_root(draft) is None
+
+
+def test_invoke_beril_adversarial_passes_beril_root_explicitly(rc, tmp_path, monkeypatch):
+    """M4b Tier E hotpatch: subprocess invocation must include
+    --beril-root so beril-adversarial doesn't walk from its own pipx
+    venv location (which has no .claude/skills/)."""
+    import subprocess
+
+    root = tmp_path / "beril_root"
+    (root / "projects" / "x" / "talks" / "draft_1").mkdir(parents=True)
+    (root / ".claude" / "skills").mkdir(parents=True)
+    draft = root / "projects" / "x" / "talks" / "draft_1"
+
+    captured = []
+
+    def _fake_run(cmd, **kwargs):
+        captured.extend(cmd)
+        from unittest.mock import MagicMock
+        return MagicMock(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    # Make sure env BERIL_ROOT doesn't preempt the derivation
+    monkeypatch.delenv("BERIL_ROOT", raising=False)
+    rc._invoke_beril_adversarial(draft)
+
+    assert "--beril-root" in captured, \
+        "M4b Tier E hotpatch: must pass --beril-root explicitly"
+    idx = captured.index("--beril-root")
+    assert captured[idx + 1] == str(root)
+
+
+def test_invoke_beril_adversarial_prefers_explicit_beril_root_arg(rc, tmp_path, monkeypatch):
+    """When the caller passes beril_root explicitly, use that even if
+    env or derivation would resolve a different path."""
+    import subprocess
+    explicit = tmp_path / "explicit_root"
+    explicit.mkdir()
+    draft = tmp_path / "projects" / "x" / "talks" / "draft_1"
+    draft.mkdir(parents=True)
+    captured = []
+    def _fake_run(cmd, **kwargs):
+        captured.extend(cmd)
+        from unittest.mock import MagicMock
+        return MagicMock(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    rc._invoke_beril_adversarial(draft, beril_root=explicit)
+    idx = captured.index("--beril-root")
+    assert captured[idx + 1] == str(explicit)
+
+
+def test_invoke_beril_adversarial_uses_env_var_when_no_explicit_arg(rc, tmp_path, monkeypatch):
+    """$BERIL_ROOT env var is the second-priority resolution
+    (matches the orchestrator's pattern)."""
+    import subprocess
+    env_root = tmp_path / "env_root"
+    env_root.mkdir()
+    draft = tmp_path / "projects" / "x" / "talks" / "draft_1"
+    draft.mkdir(parents=True)
+    captured = []
+    def _fake_run(cmd, **kwargs):
+        captured.extend(cmd)
+        from unittest.mock import MagicMock
+        return MagicMock(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setenv("BERIL_ROOT", str(env_root))
+    rc._invoke_beril_adversarial(draft)
+    idx = captured.index("--beril-root")
+    assert captured[idx + 1] == str(env_root)
+
+
 def test_tier3_returns_skipped_when_adversarial_cli_missing(rc, tmp_path, monkeypatch):
     """Tier D: cascade's run_tier3 probes for beril-adversarial on
     PATH. If absent → status='skipped' + install-hint note. Never

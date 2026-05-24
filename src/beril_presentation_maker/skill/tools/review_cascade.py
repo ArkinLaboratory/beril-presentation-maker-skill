@@ -624,9 +624,39 @@ def run_tier2(
     )
 
 
+def _derive_beril_root(draft_dir: Path) -> Path | None:
+    """Derive BERIL_ROOT from a v0.3.1+ draft path.
+
+    Layout (per V0_4_ARCHITECTURE / CONTRACT): v0.3.1+ draft sits at
+    `<BERIL_ROOT>/projects/<project_id>/talks/draft_N/`. Walks four
+    parents up + verifies `.claude/skills/` exists (the marker
+    beril-adversarial uses to confirm the path is a BERIL_ROOT, per
+    its own validation).
+
+    M4b Tier E hotpatch (2026-05-24): the standalone
+    `stage_adversarial_review` in `presentation_maker.sh` relies on
+    the orchestrator's preamble setting `BERIL_ROOT` env var; the
+    cascade's standalone `review_cascade.py` invocation didn't get
+    that benefit, so beril-adversarial walked from its own script
+    location (a pipx venv) and failed to find `.claude/skills/`.
+    Returns None if the heuristic doesn't match — caller falls back
+    to env-var only.
+    """
+    candidate = draft_dir
+    # 4 parents up: draft_N → talks → <project_id> → projects → BERIL_ROOT
+    for _ in range(4):
+        if candidate.parent == candidate:    # filesystem root reached
+            return None
+        candidate = candidate.parent
+    if (candidate / ".claude" / "skills").is_dir():
+        return candidate
+    return None
+
+
 def _invoke_beril_adversarial(
     draft_dir: Path,
     adversarial_bin: str = "beril-adversarial",
+    beril_root: Path | None = None,
 ) -> tuple[int, str, str, float]:
     """Invoke `beril-adversarial review --type presentation <draft_dir>`.
 
@@ -634,13 +664,35 @@ def _invoke_beril_adversarial(
     Does NOT raise — caller decides escalation based on the tuple.
     Extracted as a separate function so unit tests can monkey-patch
     it without subprocess wrangling.
+
+    BERIL_ROOT resolution (matches the orchestrator's pattern):
+      1. `beril_root` arg if explicitly passed (CLI --beril-root)
+      2. `$BERIL_ROOT` env var
+      3. Walk up from draft_dir per `_derive_beril_root` (fallback)
+    Pass `--beril-root` explicitly to beril-adversarial so it
+    doesn't walk from its own script location (which is the pipx
+    venv when installed via pipx; that path has no `.claude/skills/`).
     """
+    import os
     import subprocess
     t0 = datetime.now(timezone.utc)
+
+    resolved_root: Path | None = beril_root
+    if resolved_root is None:
+        env_root = os.environ.get("BERIL_ROOT")
+        if env_root and Path(env_root).is_dir():
+            resolved_root = Path(env_root)
+    if resolved_root is None:
+        resolved_root = _derive_beril_root(draft_dir)
+
+    cmd = [adversarial_bin, "review", "--type", "presentation"]
+    if resolved_root is not None:
+        cmd += ["--beril-root", str(resolved_root)]
+    cmd += [str(draft_dir)]
+
     try:
         proc = subprocess.run(
-            [adversarial_bin, "review",
-             "--type", "presentation", str(draft_dir)],
+            cmd,
             capture_output=True, text=True,
             timeout=900,   # 15 min max for a 27-slide adversarial pass
         )
