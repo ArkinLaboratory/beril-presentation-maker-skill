@@ -1648,6 +1648,49 @@ stage_image_gen() {
   echo "[Stage 11/14] image_gen (concept_illustration → AI image)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
+  # M5b Tier C / D-064: AI Studio model probe + hybrid fallback.
+  # Runs once per draft when IMAGE_PROVIDER=google_ai_studio. If the
+  # probe finds no usable model:
+  #   - CBORG_API_KEY set → silent fallback: override IMAGE_PROVIDER=cborg
+  #     for the rest of this draft (D-064 hybrid).
+  #   - else → loud-warning diagnostic to stderr; disable image-gen for
+  #     this run (treat as --no-images).
+  # Cache lives at $AUDIT_DIR/ai_image_gen_probe.json (D-063 sidecar);
+  # repeat invocations on the same draft are essentially free.
+  if [[ "${IMAGE_PROVIDER:-}" == "google_ai_studio" ]]; then
+    local cborg_flag=""
+    if [[ -n "${CBORG_API_KEY:-}" ]]; then
+      cborg_flag="--cborg-available"
+    fi
+    local resolved_model probe_rc
+    set +e
+    resolved_model=$("$PYTHON_BIN" "$TOOLS_DIR/image_client.py" probe \
+        --audit-dir "$AUDIT_DIR" \
+        $cborg_flag)
+    probe_rc=$?
+    set -e
+    if [[ $probe_rc -eq 0 ]]; then
+      export GOOGLE_AI_STUDIO_RESOLVED_MODEL="$resolved_model"
+      echo "  [image-gen probe] AI Studio model: $resolved_model" >&2
+    elif [[ $probe_rc -eq 5 ]]; then
+      # D-064 hybrid fallback
+      if [[ -n "${CBORG_API_KEY:-}" ]]; then
+        echo "  [image-gen probe] AI Studio probe found no usable model; "\
+"falling back to CBORG (silent fallback per D-064; CBORG_API_KEY is set)" >&2
+        IMAGE_PROVIDER="cborg"
+        export IMAGE_PROVIDER
+      else
+        echo "  [image-gen probe] AI Studio probe failed AND no CBORG_API_KEY; "\
+"disabling image-gen for this run (D-064 loud-warning branch)." >&2
+        return 0
+      fi
+    else
+      echo "  [image-gen probe] image_client.py probe failed (rc=$probe_rc); "\
+"see stderr above. Disabling image-gen for this run." >&2
+      return 0
+    fi
+  fi
+
   # 1. Run the decision layer. v0.3.7+: this includes the LLM-judgment
   # layer for deferred-layout slides (claim_evidence, big_idea, big_number,
   # workflow_diagram, two_column_compare, implications). The CLI default
@@ -1883,8 +1926,18 @@ with open('$request_path') as f:
   # resolved) defaults to cborg downstream, which then exits 3 with
   # "CBORG_API_KEY not set" — surfaces the misconfiguration loudly.
   local provider_arg="${IMAGE_PROVIDER:-cborg}"
+  # M5b Tier C: for google_ai_studio, pass the probe-resolved model so
+  # we use what the user actually has access to (3-pro-preview if
+  # available, else 3.1-flash-preview, etc.). CBORG path uses its
+  # default; no probe needed there.
+  local model_arg=()
+  if [[ "$provider_arg" == "google_ai_studio" ]] \
+      && [[ -n "${GOOGLE_AI_STUDIO_RESOLVED_MODEL:-}" ]]; then
+    model_arg=(--model "$GOOGLE_AI_STUDIO_RESOLVED_MODEL")
+  fi
   if ! "$PYTHON_BIN" "$TOOLS_DIR/image_client.py" generate \
       --provider "$provider_arg" \
+      "${model_arg[@]}" \
       --prompt "$image_prompt" \
       --out "$image_path" \
       --budget "$budget_remaining" \

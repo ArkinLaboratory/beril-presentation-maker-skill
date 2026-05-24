@@ -628,6 +628,217 @@ class ImageClient:
 
 
 # ---------------------------------------------------------------------------
+# AI Studio model-availability probe (M5b Tier C / D-063, D-064)
+# ---------------------------------------------------------------------------
+
+PROBE_SCHEMA_VERSION = "ai-image-gen-probe.v1"
+
+
+def _fingerprint_api_key(api_key: str) -> str:
+    """Return a short non-reversible fingerprint of an API key for the
+    sidecar cache. Lets us detect key rotation (probe re-run on new
+    key) without persisting the key itself.
+
+    Uses sha256 of the key; persists the first 8 hex chars. Collision
+    resistance is fine at that length for the "did the key change?"
+    use case (NOT cryptographic identity)."""
+    import hashlib
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
+
+
+def probe_available_models(
+    api_key: str,
+    *,
+    base_url: str = DEFAULT_AI_STUDIO_BASE_URL,
+    timeout_s: int = 10,
+    request_session: requests.Session | None = None,
+) -> list[str]:
+    """Probe AI Studio's list-models endpoint and return image-capable
+    model names (with the 'models/' prefix stripped).
+
+    A model is image-capable if its `supportedGenerationMethods`
+    includes 'generateContent' AND its name matches `gemini-*image*`
+    (the latter filter excludes the text-only chat models that also
+    expose `generateContent`).
+
+    Any HTTP / parsing error → returns an empty list (caller decides
+    next action per D-064; the probe itself never raises).
+    """
+    session = request_session or requests.Session()
+    url = f"{base_url.rstrip('/')}/v1beta/models"
+    headers = {"x-goog-api-key": api_key}
+    try:
+        resp = session.get(url, headers=headers, timeout=timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return []
+    models = data.get("models", [])
+    out: list[str] = []
+    for m in models:
+        name = m.get("name", "")
+        methods = m.get("supportedGenerationMethods") or []
+        if "generateContent" not in methods:
+            continue
+        # Strip the "models/" prefix Google returns.
+        short = name[len("models/"):] if name.startswith("models/") else name
+        # Filter to image-capable: name contains "image". Excludes
+        # gemini-*-flash (text), gemini-*-pro (text), etc.
+        if "image" in short.lower():
+            out.append(short)
+    return out
+
+
+def resolve_ai_studio_model(
+    available_models: list[str],
+    *,
+    chain: tuple[str, ...] = AI_STUDIO_MODEL_FALLBACK_CHAIN,
+) -> str | None:
+    """Walk the D-035-rev1 fallback chain and return the first model
+    name that's present in `available_models`. Returns None if none
+    of the chain models are available — caller invokes the D-064
+    hybrid fallback path.
+    """
+    available_set = set(available_models)
+    for model in chain:
+        if model in available_set:
+            return model
+    return None
+
+
+def load_or_probe_ai_studio_model(
+    api_key: str,
+    audit_dir: Path | str,
+    *,
+    override_model: str | None = None,
+    base_url: str = DEFAULT_AI_STUDIO_BASE_URL,
+    timeout_s: int = 10,
+    request_session: requests.Session | None = None,
+    force_refresh: bool = False,
+) -> dict:
+    """Resolve the AI Studio model to use, caching the result in
+    `<audit_dir>/ai_image_gen_probe.json` per draft (DQ2 / D-063).
+
+    Args:
+      api_key: AI Studio API key (used for the probe + fingerprint).
+      audit_dir: where to write the sidecar cache file.
+      override_model: if set, skips the probe entirely and pins the
+        named model (GOOGLE_AI_STUDIO_MODEL env-var override per C5).
+      force_refresh: re-probe even if a cache hit exists with the
+        same key fingerprint.
+
+    Returns a dict with keys:
+      schema_version: "ai-image-gen-probe.v1"
+      api_key_fingerprint: "<8 hex>"
+      probed_at: ISO-8601
+      available_models: list[str]
+      resolved_model: str | None
+      from_override: bool   # true if GOOGLE_AI_STUDIO_MODEL was set
+      from_cache: bool      # true if the result came from the sidecar
+      chain_walked: list[str]  # the fallback chain we walked
+
+    The sidecar JSON has the same shape (minus from_cache).
+    """
+    audit_dir = Path(audit_dir)
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = audit_dir / "ai_image_gen_probe.json"
+    fingerprint = _fingerprint_api_key(api_key)
+    chain_walked = list(AI_STUDIO_MODEL_FALLBACK_CHAIN)
+
+    # GOOGLE_AI_STUDIO_MODEL override (C5): skip probe entirely.
+    if override_model:
+        record = {
+            "schema_version": PROBE_SCHEMA_VERSION,
+            "api_key_fingerprint": fingerprint,
+            "probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "available_models": [override_model],
+            "resolved_model": override_model,
+            "from_override": True,
+            "chain_walked": [override_model],
+        }
+        sidecar.write_text(json.dumps(record, indent=2) + "\n",
+                           encoding="utf-8")
+        return {**record, "from_cache": False}
+
+    # Cache hit? Same fingerprint + same schema.
+    if not force_refresh and sidecar.is_file():
+        try:
+            cached = json.loads(sidecar.read_text(encoding="utf-8"))
+            if (cached.get("schema_version") == PROBE_SCHEMA_VERSION
+                    and cached.get("api_key_fingerprint") == fingerprint):
+                return {**cached, "from_cache": True}
+        except (json.JSONDecodeError, OSError):
+            # Sidecar corrupt — re-probe rather than fail.
+            pass
+
+    # Probe.
+    available = probe_available_models(
+        api_key, base_url=base_url, timeout_s=timeout_s,
+        request_session=request_session,
+    )
+    resolved = resolve_ai_studio_model(available, chain=AI_STUDIO_MODEL_FALLBACK_CHAIN)
+    record = {
+        "schema_version": PROBE_SCHEMA_VERSION,
+        "api_key_fingerprint": fingerprint,
+        "probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "available_models": available,
+        "resolved_model": resolved,
+        "from_override": False,
+        "chain_walked": chain_walked,
+    }
+    sidecar.write_text(json.dumps(record, indent=2) + "\n",
+                       encoding="utf-8")
+    return {**record, "from_cache": False}
+
+
+def format_probe_failure_diagnostic(
+    record: dict,
+    *,
+    cborg_available: bool,
+) -> str:
+    """Build the D-064 loud-warning multi-line diagnostic when the
+    AI Studio probe found no usable model. The orchestrator prints
+    this to stderr; the user sees the full chain + available models +
+    actionable next step.
+
+    Branches on cborg_available:
+      True  → "falling back to CBORG" message (silent fallback gets
+              a one-line summary instead; this is for the loud case
+              where we're disabling image-gen).
+      False → "image-gen disabled for this run" message with
+              instructions for re-enabling.
+    """
+    available = record.get("available_models") or []
+    chain = record.get("chain_walked") or list(AI_STUDIO_MODEL_FALLBACK_CHAIN)
+    lines = [
+        "AI Studio image-gen unavailable.",
+        "  Fallback chain walked (D-035-rev1):",
+    ]
+    for m in chain:
+        marker = "present" if m in available else "absent"
+        lines.append(f"    - {m} ({marker})")
+    if available:
+        # Show up to first 10 available image-capable models so the user
+        # has something to set GOOGLE_AI_STUDIO_MODEL to.
+        sample = available[:10]
+        more = f" (+{len(available) - 10} more)" if len(available) > 10 else ""
+        lines.append(f"  Image-capable models seen on this key: {', '.join(sample)}{more}")
+    else:
+        lines.append("  Image-capable models seen on this key: NONE")
+    if cborg_available:
+        lines.append("  CBORG_API_KEY is set — image-gen would silently "
+                     "fall back to CBORG (this path is the loud-warning "
+                     "branch only when invoked explicitly).")
+    else:
+        lines.append("  No CBORG_API_KEY for fallback. Image-gen DISABLED "
+                     "for this run.")
+        lines.append("  To re-enable: set CBORG_API_KEY (CBORG fallback), "
+                     "OR set GOOGLE_AI_STUDIO_MODEL=<name> to pin a "
+                     "specific model, OR fix AI Studio access.")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Provenance file I/O
 # ---------------------------------------------------------------------------
 
@@ -762,8 +973,73 @@ def main(argv: list[str] | None = None) -> int:
                        help="Append-to path for image_provenance.json.")
     p_gen.set_defaults(func=_cmd_generate)
 
+    # M5b Tier C: probe subcommand. Orchestrator invokes this before
+    # the first image-gen call to resolve the AI Studio model + cache
+    # the result in <audit_dir>/ai_image_gen_probe.json.
+    p_probe = sub.add_parser(
+        "probe",
+        help="Probe AI Studio for image-capable models + cache resolution.")
+    p_probe.add_argument("--audit-dir", required=True,
+                         help="Directory for ai_image_gen_probe.json sidecar.")
+    p_probe.add_argument("--api-key",
+                         help="Override GOOGLE_AI_STUDIO_API_KEY env var.")
+    p_probe.add_argument("--force-refresh", action="store_true",
+                         help="Re-probe even if cache hit exists.")
+    p_probe.add_argument("--cborg-available", action="store_true",
+                         help="Pass when CBORG_API_KEY is set in the caller "
+                              "shell. Affects the D-064 diagnostic when "
+                              "the probe finds no usable model.")
+    p_probe.set_defaults(func=_cmd_probe)
+
     args = p.parse_args(argv)
     return args.func(args)
+
+
+def _cmd_probe(args: argparse.Namespace) -> int:
+    """Resolve the AI Studio model + write the sidecar cache.
+
+    Honours GOOGLE_AI_STUDIO_MODEL env var (C5): if set, the probe is
+    skipped and the named model is pinned in the cache.
+
+    Exit codes:
+      0  resolved (model name on stdout, single line)
+      3  GOOGLE_AI_STUDIO_API_KEY missing
+      5  probe found no usable model (D-064 hybrid fallback); writes
+         the diagnostic to stderr; orchestrator decides next action
+         (silent CBORG fallback if --cborg-available was passed; else
+         disable image-gen for this run).
+    """
+    api_key = args.api_key or os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
+    if not api_key:
+        print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not provided)",
+              file=sys.stderr)
+        return 3
+    override_model = os.environ.get("GOOGLE_AI_STUDIO_MODEL") or None
+    record = load_or_probe_ai_studio_model(
+        api_key=api_key,
+        audit_dir=Path(args.audit_dir),
+        override_model=override_model,
+        force_refresh=args.force_refresh,
+    )
+    if record.get("resolved_model"):
+        # Cache hit / fresh probe success: emit the resolved model on
+        # stdout (single token; orchestrator captures via $(...)).
+        print(record["resolved_model"])
+        # Diagnostic to stderr names the source (cache vs probe vs override).
+        if record.get("from_override"):
+            source = "override (GOOGLE_AI_STUDIO_MODEL)"
+        elif record.get("from_cache"):
+            source = f"cache (probed {record.get('probed_at', '?')})"
+        else:
+            source = "fresh probe"
+        print(f"image_client probe: resolved {record['resolved_model']} "
+              f"via {source}", file=sys.stderr)
+        return 0
+    # No resolved model: D-064 hybrid-fallback diagnostic.
+    diag = format_probe_failure_diagnostic(
+        record, cborg_available=args.cborg_available)
+    print(diag, file=sys.stderr)
+    return 5
 
 
 if __name__ == "__main__":

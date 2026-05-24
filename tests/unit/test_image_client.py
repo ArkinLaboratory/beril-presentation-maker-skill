@@ -670,3 +670,432 @@ def test_cli_unknown_provider_returns_3(ic, monkeypatch, tmp_path):
         ic.main(["generate", "--provider", "openai",
                  "--prompt", "x", "--out", str(tmp_path / "x.png"),
                  "--budget", "5.00"])
+
+
+# ---------------------------------------------------------------------------
+# Tier C — AI Studio model-availability probe (D-063, D-064)
+# ---------------------------------------------------------------------------
+
+def _mock_list_models_response(image_model_names: list[str],
+                                non_image_names: list[str] | None = None):
+    """Build a Mock for requests.Session.get returning AI Studio's
+    /v1beta/models response shape with the given model names.
+
+    Image models include 'image' in name + supportedGenerationMethods
+    contains 'generateContent'. Non-image models also support
+    generateContent but don't have 'image' in the name — used to test
+    the filter.
+    """
+    non_image_names = non_image_names or []
+    models = []
+    for n in image_model_names:
+        models.append({
+            "name": f"models/{n}",
+            "supportedGenerationMethods": ["generateContent", "countTokens"],
+        })
+    for n in non_image_names:
+        models.append({
+            "name": f"models/{n}",
+            "supportedGenerationMethods": ["generateContent"],
+        })
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"models": models}
+    mock_resp.raise_for_status = MagicMock()
+    return mock_resp
+
+
+# probe_available_models
+
+def test_probe_returns_image_capable_models(ic):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview",
+                            "gemini-3-pro-image-preview"],
+        non_image_names=["gemini-2.0-flash", "gemini-2.0-pro"],
+    )
+    out = ic.probe_available_models(api_key="x", request_session=sess)
+    # Strips "models/" prefix
+    assert "gemini-3.1-flash-image-preview" in out
+    assert "gemini-3-pro-image-preview" in out
+    # Filter excludes non-image models
+    assert "gemini-2.0-flash" not in out
+    assert "gemini-2.0-pro" not in out
+
+
+def test_probe_uses_x_goog_api_key_header(ic):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(image_model_names=[])
+    ic.probe_available_models(api_key="probe-key", request_session=sess)
+    _args, kwargs = sess.get.call_args
+    assert kwargs["headers"]["x-goog-api-key"] == "probe-key"
+    # NOT Authorization header (would be CBORG-style)
+    assert "Authorization" not in kwargs["headers"]
+
+
+def test_probe_hits_v1beta_models_endpoint(ic):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(image_model_names=[])
+    ic.probe_available_models(api_key="x", request_session=sess)
+    args, _kwargs = sess.get.call_args
+    assert "/v1beta/models" in args[0]
+    assert args[0].endswith("/v1beta/models")
+    # NOT a query-string key (we use header auth)
+    assert "?key=" not in args[0]
+
+
+def test_probe_returns_empty_on_http_error(ic):
+    import requests
+    sess = MagicMock()
+    sess.get.side_effect = requests.RequestException("network error")
+    out = ic.probe_available_models(api_key="x", request_session=sess)
+    assert out == []
+
+
+def test_probe_returns_empty_on_bad_json(ic):
+    sess = MagicMock()
+    bad_resp = MagicMock()
+    bad_resp.json.side_effect = ValueError("not json")
+    bad_resp.raise_for_status = MagicMock()
+    sess.get.return_value = bad_resp
+    out = ic.probe_available_models(api_key="x", request_session=sess)
+    assert out == []
+
+
+def test_probe_returns_empty_on_no_models_field(ic):
+    """Defensive: API returns 200 with empty/unexpected body."""
+    sess = MagicMock()
+    resp = MagicMock()
+    resp.json.return_value = {}  # no "models" key
+    resp.raise_for_status = MagicMock()
+    sess.get.return_value = resp
+    out = ic.probe_available_models(api_key="x", request_session=sess)
+    assert out == []
+
+
+# resolve_ai_studio_model
+
+def test_resolve_picks_first_chain_model_present(ic):
+    """Walks AI_STUDIO_MODEL_FALLBACK_CHAIN in order; returns first
+    present in available."""
+    chain = ic.AI_STUDIO_MODEL_FALLBACK_CHAIN
+    # User has only the 2.5-flash (last in chain)
+    out = ic.resolve_ai_studio_model([chain[2]])
+    assert out == chain[2]
+
+
+def test_resolve_picks_pro_over_flash_when_both_available(ic):
+    """If the user has access to multiple chain models, picks the
+    highest-priority (chain order: pro → 3.1-flash → 2.5-flash)."""
+    chain = ic.AI_STUDIO_MODEL_FALLBACK_CHAIN
+    out = ic.resolve_ai_studio_model(list(chain))
+    assert out == chain[0]  # gemini-3-pro-image-preview
+
+
+def test_resolve_returns_none_when_no_chain_match(ic):
+    """User has image models but none are in our chain → return None.
+    Triggers the D-064 hybrid fallback path."""
+    out = ic.resolve_ai_studio_model(["imagen-4", "gemini-2.0-flash-image"])
+    assert out is None
+
+
+def test_resolve_returns_none_on_empty_available(ic):
+    assert ic.resolve_ai_studio_model([]) is None
+
+
+# load_or_probe_ai_studio_model — sidecar cache (D-063)
+
+def test_load_or_probe_writes_sidecar_on_fresh_probe(ic, tmp_path):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    record = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    sidecar = tmp_path / "ai_image_gen_probe.json"
+    assert sidecar.is_file()
+    assert record["resolved_model"] == "gemini-3.1-flash-image-preview"
+    assert record["from_cache"] is False
+    assert record["from_override"] is False
+    assert record["schema_version"] == ic.PROBE_SCHEMA_VERSION
+    # Fingerprint is short hash, NOT the raw key
+    assert record["api_key_fingerprint"] != "x"
+    assert len(record["api_key_fingerprint"]) == 8
+
+
+def test_load_or_probe_hits_cache_on_repeat(ic, tmp_path):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    # First call: fresh probe.
+    r1 = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    assert r1["from_cache"] is False
+    assert sess.get.call_count == 1
+    # Second call: cache hit; HTTP NOT called again.
+    r2 = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    assert r2["from_cache"] is True
+    assert r2["resolved_model"] == r1["resolved_model"]
+    assert sess.get.call_count == 1  # unchanged — still 1
+
+
+def test_load_or_probe_re_probes_on_different_api_key(ic, tmp_path):
+    """Cache fingerprints the key; rotating keys forces a re-probe.
+    Prevents stale cache from one user/account leaking into another."""
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    r1 = ic.load_or_probe_ai_studio_model(
+        api_key="key-A", audit_dir=tmp_path, request_session=sess)
+    r2 = ic.load_or_probe_ai_studio_model(
+        api_key="key-B", audit_dir=tmp_path, request_session=sess)
+    assert r1["api_key_fingerprint"] != r2["api_key_fingerprint"]
+    assert r2["from_cache"] is False
+    assert sess.get.call_count == 2
+
+
+def test_load_or_probe_force_refresh_re_probes(ic, tmp_path):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    r2 = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess,
+        force_refresh=True)
+    assert r2["from_cache"] is False
+    assert sess.get.call_count == 2
+
+
+def test_load_or_probe_override_skips_probe(ic, tmp_path):
+    """GOOGLE_AI_STUDIO_MODEL override (C5): skip probe entirely, pin
+    the named model. Records from_override=True."""
+    sess = MagicMock()
+    # Session GET should NOT be invoked when override is set.
+    sess.get.side_effect = AssertionError("probe was called despite override")
+    record = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path,
+        override_model="my-custom-model",
+        request_session=sess)
+    assert record["resolved_model"] == "my-custom-model"
+    assert record["from_override"] is True
+    assert sess.get.call_count == 0
+
+
+def test_load_or_probe_recovers_from_corrupt_cache(ic, tmp_path):
+    """Sidecar JSON corrupted (e.g., partial write) → re-probe rather
+    than fail. Defensive."""
+    sidecar = tmp_path / "ai_image_gen_probe.json"
+    sidecar.write_text("{not json{", encoding="utf-8")
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    record = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    assert record["resolved_model"] == "gemini-3.1-flash-image-preview"
+    assert record["from_cache"] is False  # re-probed; cache was unreadable
+
+
+def test_load_or_probe_records_none_when_no_chain_match(ic, tmp_path):
+    """API returns models but none in our chain → cache records
+    resolved_model=None; triggers D-064 in caller."""
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["imagen-4"],  # not in our chain
+    )
+    record = ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    assert record["resolved_model"] is None
+    assert record["available_models"] == ["imagen-4"]
+    # Cache still written so we don't re-probe next call.
+    cached = json.loads((tmp_path / "ai_image_gen_probe.json").read_text())
+    assert cached["resolved_model"] is None
+
+
+# format_probe_failure_diagnostic — D-064
+
+def test_diagnostic_loud_when_no_cborg(ic):
+    """No CBORG fallback → diagnostic must say 'image-gen DISABLED'
+    plus suggest the next steps the user can take."""
+    record = {
+        "available_models": ["imagen-4", "gemini-2.0-flash-image"],
+        "chain_walked": list(ic.AI_STUDIO_MODEL_FALLBACK_CHAIN),
+    }
+    diag = ic.format_probe_failure_diagnostic(record, cborg_available=False)
+    assert "DISABLED" in diag
+    assert "No CBORG_API_KEY" in diag
+    # Names what user can do to fix it
+    assert "GOOGLE_AI_STUDIO_MODEL" in diag
+    # Names every chain model + its availability
+    for m in ic.AI_STUDIO_MODEL_FALLBACK_CHAIN:
+        assert m in diag
+
+
+def test_diagnostic_lists_available_models(ic):
+    """The diagnostic shows image-capable models seen on the key so
+    the user has options for GOOGLE_AI_STUDIO_MODEL override."""
+    record = {
+        "available_models": ["imagen-4", "gemini-2.0-flash-image"],
+        "chain_walked": list(ic.AI_STUDIO_MODEL_FALLBACK_CHAIN),
+    }
+    diag = ic.format_probe_failure_diagnostic(record, cborg_available=False)
+    assert "imagen-4" in diag
+    assert "gemini-2.0-flash-image" in diag
+
+
+def test_diagnostic_when_no_image_models_at_all(ic):
+    record = {
+        "available_models": [],
+        "chain_walked": list(ic.AI_STUDIO_MODEL_FALLBACK_CHAIN),
+    }
+    diag = ic.format_probe_failure_diagnostic(record, cborg_available=False)
+    assert "NONE" in diag
+
+
+def test_diagnostic_notes_cborg_available_branch(ic):
+    """When CBORG is available, the diagnostic acknowledges that path
+    (even though this function is normally only invoked on the
+    loud-warning branch)."""
+    record = {
+        "available_models": ["imagen-4"],
+        "chain_walked": list(ic.AI_STUDIO_MODEL_FALLBACK_CHAIN),
+    }
+    diag = ic.format_probe_failure_diagnostic(record, cborg_available=True)
+    assert "CBORG_API_KEY is set" in diag
+
+
+# CLI — probe subcommand
+
+def test_cli_probe_missing_api_key_returns_3(ic, monkeypatch, tmp_path):
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_API_KEY", raising=False)
+    rc = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc == 3
+
+
+def test_cli_probe_success_prints_model_to_stdout(ic, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_MODEL", raising=False)
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    rc = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    # Resolved model on stdout (orchestrator captures via $(...))
+    assert captured.out.strip() == "gemini-3.1-flash-image-preview"
+    # Diagnostic on stderr
+    assert "resolved" in captured.err
+    # Sidecar written
+    assert (tmp_path / "ai_image_gen_probe.json").is_file()
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+def test_cli_probe_no_match_returns_5(ic, monkeypatch, tmp_path, capsys):
+    """D-064: probe finds models but none in our chain → rc=5 + loud
+    diagnostic. Orchestrator decides next action based on
+    --cborg-available."""
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_MODEL", raising=False)
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.get.return_value = _mock_list_models_response(
+        image_model_names=["imagen-4"],  # not in our chain
+    )
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    rc = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc == 5
+    captured = capsys.readouterr()
+    assert "DISABLED" in captured.err
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+def test_cli_probe_honours_override_env_var(ic, monkeypatch, tmp_path, capsys):
+    """GOOGLE_AI_STUDIO_MODEL env var short-circuits the probe (C5)."""
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_MODEL", "gemini-experimental")
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.get.side_effect = AssertionError("HTTP probe ran despite override")
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    rc = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "gemini-experimental"
+    assert "override" in captured.err.lower()
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+def test_cli_probe_cache_hit_does_not_re_probe(ic, monkeypatch, tmp_path, capsys):
+    """Second invocation reads sidecar, doesn't issue HTTP."""
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_MODEL", raising=False)
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    # First call: probe.
+    rc1 = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc1 == 0
+    capsys.readouterr()  # drain
+    # Second call: should hit cache.
+    rc2 = ic.main(["probe", "--audit-dir", str(tmp_path)])
+    assert rc2 == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "gemini-3.1-flash-image-preview"
+    assert "cache" in captured.err
+    assert sess_mock.get.call_count == 1  # unchanged on second call
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+def test_cli_probe_force_refresh(ic, monkeypatch, tmp_path):
+    monkeypatch.setenv("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+    monkeypatch.delenv("GOOGLE_AI_STUDIO_MODEL", raising=False)
+
+    real_session = ic.requests.Session
+    sess_mock = MagicMock()
+    sess_mock.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
+    ic.main(["probe", "--audit-dir", str(tmp_path)])
+    ic.main(["probe", "--audit-dir", str(tmp_path), "--force-refresh"])
+    assert sess_mock.get.call_count == 2
+    monkeypatch.setattr(ic.requests, "Session", real_session)
+
+
+# Sidecar schema pin
+
+def test_probe_schema_version_pin(ic):
+    """If the schema changes, the cache invalidates safely (old records
+    skipped). Pin the schema version literal so any change is explicit."""
+    assert ic.PROBE_SCHEMA_VERSION == "ai-image-gen-probe.v1"
+
+
+def test_sidecar_has_expected_keys(ic, tmp_path):
+    sess = MagicMock()
+    sess.get.return_value = _mock_list_models_response(
+        image_model_names=["gemini-3.1-flash-image-preview"],
+    )
+    ic.load_or_probe_ai_studio_model(
+        api_key="x", audit_dir=tmp_path, request_session=sess)
+    cached = json.loads((tmp_path / "ai_image_gen_probe.json").read_text())
+    expected = {"schema_version", "api_key_fingerprint", "probed_at",
+                "available_models", "resolved_model", "from_override",
+                "chain_walked"}
+    assert expected.issubset(set(cached.keys()))
+    # api_key_fingerprint must NOT be the raw key
+    assert cached["api_key_fingerprint"] != "x"
