@@ -124,15 +124,21 @@ def test_cascade_report_short_circuit_field(rc):
 
 
 # ---------------------------------------------------------------------------
-# Tier-A scaffolding — per-tier dispatchers return 'not-implemented'
+# Tier-A scaffolding — per-tier dispatchers
+# (Tier B replaced run_tier1 with the real aggregation; Tier 2/3 still stubs)
 # ---------------------------------------------------------------------------
 
-def test_tier1_scaffolding_not_implemented(rc, tmp_path):
-    """Tier A ships the cascade contract; Tier B fills run_tier1."""
+def test_tier1_missing_spec_returns_pass_with_empty_findings(rc, tmp_path):
+    """When working/slide_spec.json is absent, Tier 1 has nothing to
+    aggregate — validate_presentation skips, the four audit readers
+    return [], and Tier 1 lands as 'pass' (no findings, no P0). This
+    is also the cascade's no-op-on-missing-spec posture (paired with
+    main()'s stub-report when slide_spec.json is missing)."""
     result = rc.run_tier1(tmp_path)
     assert result.name == "tier1"
-    assert result.status == "not-implemented"
+    assert result.status == "pass"
     assert result.has_p0 is False
+    assert result.findings == []
 
 
 def test_tier2_scaffolding_not_implemented(rc, tmp_path):
@@ -258,12 +264,15 @@ def test_run_cascade_no_tier3_flag_skips_tier3(rc, tmp_path, monkeypatch):
     assert "--no-tier3" in report.tiers[2].note
 
 
-def test_run_cascade_scaffolding_end_to_end_not_implemented(rc, tmp_path):
-    """Tier A scaffolding end-to-end: all three tiers emit
-    'not-implemented' (no monkeypatch); cascade still completes."""
+def test_run_cascade_end_to_end_tier1_real_tier2_3_stubs(rc, tmp_path):
+    """Cascade end-to-end on an empty draft (no slide_spec.json): Tier 1
+    runs the real aggregation (lands 'pass' because nothing to check),
+    Tier 2 + Tier 3 are still scaffolding stubs that return
+    'not-implemented'. Cascade still completes; short_circuited_at
+    null."""
     report = rc.run_cascade(tmp_path)
     assert [t.status for t in report.tiers] == [
-        "not-implemented", "not-implemented", "not-implemented",
+        "pass", "not-implemented", "not-implemented",
     ]
     assert report.short_circuited_at is None
     assert report.total_cost_usd == 0.0
@@ -339,9 +348,11 @@ def test_write_reports_creates_both_files(rc, tmp_path):
 # CLI smoke
 # ---------------------------------------------------------------------------
 
-def test_cli_returns_0_on_clean_scaffolding(rc, tmp_path):
-    """CLI on a draft with slide_spec.json present → all three tiers
-    not-implemented (Tier A scaffolding); rc=0."""
+def test_cli_returns_0_on_empty_spec(rc, tmp_path):
+    """CLI on a draft with a minimal (empty-slides) slide_spec.json →
+    Tier 1 runs real aggregation but finds nothing (validators land as
+    not-applicable on empty slides; no audit files present); Tier 2/3
+    still stubs. rc=0."""
     spec_dir = tmp_path / "working"
     spec_dir.mkdir()
     (spec_dir / "slide_spec.json").write_text(json.dumps({"slides": []}))
@@ -350,13 +361,13 @@ def test_cli_returns_0_on_clean_scaffolding(rc, tmp_path):
     j = tmp_path / "audit" / "review_cascade.json"
     payload = json.loads(j.read_text())
     assert [t["status"] for t in payload["tiers"]] == [
-        "not-implemented", "not-implemented", "not-implemented",
+        "pass", "not-implemented", "not-implemented",
     ]
     assert payload["short_circuited_at"] is None
 
 
 def test_cli_no_tier2_no_tier3_propagate(rc, tmp_path):
-    """--no-tier2 + --no-tier3 → Tier 1 runs (scaffolding stub), 2+3 skipped."""
+    """--no-tier2 + --no-tier3 → Tier 1 runs (real aggregation), 2+3 skipped."""
     spec_dir = tmp_path / "working"
     spec_dir.mkdir()
     (spec_dir / "slide_spec.json").write_text(json.dumps({"slides": []}))
@@ -368,3 +379,272 @@ def test_cli_no_tier2_no_tier3_propagate(rc, tmp_path):
     assert payload["tiers"][2]["status"] == "skipped"
     assert "--no-tier2" in payload["tiers"][1]["note"]
     assert "--no-tier3" in payload["tiers"][2]["note"]
+
+
+# ---------------------------------------------------------------------------
+# M4b Tier B — Tier 1 aggregation specifics
+# ---------------------------------------------------------------------------
+
+def _write_audit_json(draft_dir: Path, filename: str, payload: dict) -> None:
+    """Helper: drop a JSON file into <draft_dir>/audit/."""
+    audit = draft_dir / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / filename).write_text(json.dumps(payload))
+
+
+def test_tier1_p0_validators_pinned_to_p3_p4_p5(rc):
+    """DQ4: only P3 (numeric provenance), P4 (citation pool), and P5
+    (brand color) short-circuit. Pin the set so a future refactor that
+    bumps P10 to P0 (for example) breaks the test, not the cascade
+    contract."""
+    assert rc._P0_VALIDATORS == frozenset({"P3", "P4", "P5"})
+
+
+def test_tier1_reads_quantitative_grounding_artifact(rc, tmp_path):
+    """audit/quantitative_grounding.json findings flow into Tier 1
+    findings; high severity → P1, others → P2; all advisory (no P0)."""
+    _write_audit_json(tmp_path, "quantitative_grounding.json", {
+        "schema_version": "quantitative-grounding.v1",
+        "findings": [
+            {"slide_id": 7, "slide_position": 6, "slide_layout": "big_number",
+             "severity": "high", "note": "94.7% not in REPORT",
+             "number": {"text": "94.7%", "raw": "94.7%"}},
+            {"slide_id": 13, "slide_position": 12, "slide_layout": "claim_evidence",
+             "severity": "low", "note": "0.31 partial match",
+             "number": {"text": "0.31", "raw": "0.31"}},
+        ],
+    })
+    findings = rc._read_quantitative_grounding(tmp_path)
+    assert len(findings) == 2
+    high = next(f for f in findings if f.slide_id == 7)
+    low = next(f for f in findings if f.slide_id == 13)
+    assert high.severity == "P1"
+    assert low.severity == "P2"
+    assert all(f.tier == "tier1" for f in findings)
+    assert all(f.kind == "quantitative_grounding" for f in findings)
+    # No P0 from this checker
+    assert not any(f.severity == "P0" for f in findings)
+
+
+def test_tier1_reads_no_artifact_refs_artifact(rc, tmp_path):
+    """audit/no_artifact_refs.json hits flow into Tier 1 as P2 (all
+    advisory; process-detail-bleed is a hint, not a contract violation)."""
+    _write_audit_json(tmp_path, "no_artifact_refs.json", {
+        "schema_version": "no-artifact-refs.v1",
+        "hits": [
+            {"slide_id": 9, "slide_position": 8, "slide_layout": "claim_evidence",
+             "location": "bullets[0]", "pattern": "notebook_ref",
+             "matched_text": "NB04c §13",
+             "explanation": "notebook section ref leaked to slide face",
+             "suggestion": "move to speaker notes", "context": "..."},
+        ],
+    })
+    findings = rc._read_no_artifact_refs(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P2"
+    assert findings[0].kind == "no_artifact_refs"
+    assert findings[0].slide_id == 9
+
+
+def test_tier1_reads_deck_reconciliation_artifact(rc, tmp_path):
+    """audit/deck_reconciliation.json findings flow in as P1 (cross-
+    section conflicts are real but not load-bearing-P0). slide_ids list
+    preserved in evidence."""
+    _write_audit_json(tmp_path, "deck_reconciliation.json", {
+        "schema_version": "deck-reconciliation.v1",
+        "findings": [
+            {"kind": "duplicate_headline", "severity": "warning",
+             "slide_ids": [8, 12],
+             "detail": "OR=8.11 appears on two big_number slides"},
+        ],
+    })
+    findings = rc._read_deck_reconciliation(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+    assert findings[0].kind == "duplicate_headline"
+    assert findings[0].slide_id == 8        # first slide_id in the list
+    assert findings[0].evidence["slide_ids"] == [8, 12]
+
+
+def test_tier1_reads_visual_qa_artifact_per_dq2(rc, tmp_path):
+    """DQ2 (Adam 2026-05-24 — ship as (b)): cascade reads
+    audit/visual_qa.json if present, NEVER invokes visual_qa.py.
+    confidence='high' → P1; 'medium'/'low' → P2; no P0 from visual-QA."""
+    _write_audit_json(tmp_path, "visual_qa.json", {
+        "schema_version": "visual-qa.v1",
+        "n_slides_reviewed": 3,
+        "findings": [
+            {"slide_id": 6, "kind": "container_breach",
+             "severity": "warning", "confidence": "high",
+             "detail": "diagram label overflows", "evidence_locator": "x"},
+            {"slide_id": 10, "kind": "illegible_scale",
+             "severity": "warning", "confidence": "medium",
+             "detail": "step caption small", "evidence_locator": "y"},
+        ],
+    })
+    findings = rc._read_visual_qa(tmp_path)
+    assert len(findings) == 2
+    high_finding = next(f for f in findings if f.slide_id == 6)
+    med_finding = next(f for f in findings if f.slide_id == 10)
+    assert high_finding.severity == "P1"
+    assert med_finding.severity == "P2"
+    assert all(f.kind.startswith("visual_qa:") for f in findings)
+    assert not any(f.severity == "P0" for f in findings)
+
+
+def test_tier1_visual_qa_stub_report_ignored_per_dq2(rc, tmp_path):
+    """The M4a stub-report posture writes visual_qa.json with empty
+    findings + a note (toolchain missing, spec missing, etc.). Tier 1
+    must ignore the stub and emit zero findings — not treat the note
+    as a finding."""
+    _write_audit_json(tmp_path, "visual_qa.json", {
+        "schema_version": "visual-qa.v1",
+        "n_slides_reviewed": 0,
+        "findings": [],
+        "note": "visual-QA toolchain incomplete (missing: soffice)",
+    })
+    assert rc._read_visual_qa(tmp_path) == []
+
+
+def test_tier1_missing_audit_artifacts_returns_empty(rc, tmp_path):
+    """Each reader is no-op-safe when its audit JSON is absent —
+    the cascade should not require operator to have run the optional
+    checks (visual-QA in particular, per DQ2)."""
+    assert rc._read_quantitative_grounding(tmp_path) == []
+    assert rc._read_no_artifact_refs(tmp_path) == []
+    assert rc._read_deck_reconciliation(tmp_path) == []
+    assert rc._read_visual_qa(tmp_path) == []
+
+
+def test_tier1_p0_validator_fail_triggers_status_fail(rc, tmp_path, monkeypatch):
+    """The first time the cascade sees a P3/P4/P5 fail, Tier 1's
+    status becomes 'fail' and has_p0 is True. This is the
+    short-circuit trigger run_cascade reads."""
+    # Mock _validate_p1_p10 directly to inject a P3 finding (avoids
+    # building a full slide_spec that triggers P3 validate_p3_numeric).
+    def _fake_validate(draft_dir, write_audit=True):
+        return [rc.CascadeFinding(
+            tier="tier1", kind="P3", severity="P0",
+            slide_id=5, detail="numeric provenance fail",
+            evidence={"where": "slide[5].bullets[0]"},
+        )]
+    monkeypatch.setattr(rc, "_validate_p1_p10", _fake_validate)
+
+    result = rc.run_tier1(tmp_path)
+    assert result.status == "fail"
+    assert result.has_p0 is True
+    assert len(result.findings) == 1
+    assert result.findings[0].kind == "P3"
+
+
+def test_tier1_only_p1_p2_findings_yields_status_advisory(rc, tmp_path, monkeypatch):
+    """Tier 1 with findings but no P0 → status 'advisory' (cascade
+    continues to Tier 2 + 3)."""
+    monkeypatch.setattr(rc, "_validate_p1_p10",
+                        lambda d, write_audit=True: [rc.CascadeFinding(
+                            tier="tier1", kind="P10", severity="P1",
+                            slide_id=3, detail="density warn",
+                        )])
+    result = rc.run_tier1(tmp_path)
+    assert result.status == "advisory"
+    assert result.has_p0 is False
+
+
+def _structurally_valid_minimal_spec() -> dict:
+    """Build a structurally-valid (per slide_spec.validate_slide_spec)
+    minimal spec for Tier 1 tests that need validate_presentation to
+    actually run. Uses one title slide with substory_id=None so the
+    substory-cross-reference check doesn't fire."""
+    import importlib.util as _u
+    import sys
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    ss_path = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
+               / "tools" / "slide_spec.py")
+    spec = _u.spec_from_file_location("_ss_for_test", ss_path)
+    mod = _u.module_from_spec(spec)
+    sys.modules["_ss_for_test"] = mod
+    spec.loader.exec_module(mod)
+    return {
+        "schema_version": mod.SCHEMA_VERSION,
+        "project_id": "x", "mode": "talk-30",
+        "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [mod.example_slide("title", substory_id=None)],
+    }
+
+
+def test_tier1_writes_presentation_validation_audit_artifact(rc, tmp_path):
+    """When validate_presentation runs, Tier 1 persists the report at
+    audit/presentation_validation.json (forensic trail; lets a future
+    --no-review-cascade run still have the artifact)."""
+    spec_dir = tmp_path / "working"
+    spec_dir.mkdir()
+    spec = _structurally_valid_minimal_spec()
+    (spec_dir / "slide_spec.json").write_text(json.dumps(spec))
+    rc.run_tier1(tmp_path)
+    audit = tmp_path / "audit" / "presentation_validation.json"
+    assert audit.is_file(), \
+        "Tier 1 must write audit/presentation_validation.json as side-effect"
+    payload = json.loads(audit.read_text())
+    # Sanity: validate_presentation report schema (has 'validators' list)
+    assert "validators" in payload
+
+
+def test_tier1_skips_validate_on_structurally_invalid_spec(rc, tmp_path):
+    """A structurally-invalid spec (e.g., missing required fields) would
+    crash validate_presentation. Tier 1's pre-flight via
+    slide_spec.validate_slide_spec catches that; the cascade emits zero
+    P1-P10 findings (the assembler is the authoritative gate for
+    structural validity) and the audit artifact is NOT written.
+    """
+    spec_dir = tmp_path / "working"
+    spec_dir.mkdir()
+    # Empty-slides spec is structurally invalid (missing schema_version,
+    # mode, etc.)
+    (spec_dir / "slide_spec.json").write_text(json.dumps({"slides": []}))
+    result = rc.run_tier1(tmp_path)
+    # No crash; no P1-P10 findings from the validator (other audit
+    # readers are independent — they emit only if their JSONs exist)
+    assert result.status == "pass"
+    # Audit artifact NOT written because validate didn't run
+    assert not (tmp_path / "audit" / "presentation_validation.json").is_file()
+
+
+def test_tier1_aggregates_all_five_sources_in_one_pass(rc, tmp_path):
+    """End-to-end Tier 1: spec + all four audit artifacts present.
+    Findings list aggregates across all sources (validator + 4 audits).
+    No P0 since none of the artifacts inject one."""
+    spec_dir = tmp_path / "working"
+    spec_dir.mkdir()
+    (spec_dir / "slide_spec.json").write_text(json.dumps({"slides": []}))
+    _write_audit_json(tmp_path, "quantitative_grounding.json", {
+        "findings": [{"slide_id": 1, "severity": "high",
+                      "note": "n", "number": {"text": "X"}}],
+    })
+    _write_audit_json(tmp_path, "no_artifact_refs.json", {
+        "hits": [{"slide_id": 2, "pattern": "p",
+                  "matched_text": "M", "explanation": "e"}],
+    })
+    _write_audit_json(tmp_path, "deck_reconciliation.json", {
+        "findings": [{"kind": "duplicate_figure", "severity": "warning",
+                      "slide_ids": [3, 4], "detail": "d"}],
+    })
+    _write_audit_json(tmp_path, "visual_qa.json", {
+        "n_slides_reviewed": 5,
+        "findings": [{"slide_id": 5, "kind": "container_breach",
+                      "severity": "warning", "confidence": "high",
+                      "detail": "d", "evidence_locator": "x"}],
+    })
+    result = rc.run_tier1(tmp_path)
+    # 1 quant-grounding + 1 artifact-ref + 1 reconciliation + 1 visual-qa
+    # = 4 findings (validate_presentation on empty slides emits none)
+    kinds = [f.kind for f in result.findings]
+    assert "quantitative_grounding" in kinds
+    assert "no_artifact_refs" in kinds
+    assert "duplicate_figure" in kinds
+    assert any(k.startswith("visual_qa:") for k in kinds)
+    # All P1/P2; no P0 → status advisory, cascade continues
+    assert result.status == "advisory"
+    assert result.has_p0 is False
