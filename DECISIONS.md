@@ -1204,3 +1204,57 @@ review-cascade: 586 finding(s) across 3 tier(s) ($0.0000, short-circuited at tie
 ```
 
 **Related:** [M4b_PUNCH_LIST.md](M4b_PUNCH_LIST.md) Tier E; [SPEC.md](SPEC.md) §13.1 (P3 documentation — M5 update target); D-033 + D-044 (v0.4 fused-notes composer); `tools/review_cascade.py` `_P0_VALIDATORS`; `tools/check_quantitative_grounding.py` (the v0.4 authoritative numeric check); `tools/validate_presentation.py` (P3 stays for v0.3 audit trail until M5).
+
+---
+
+## D-059 — 2026-05-24 — M5a: P3 retirement complete; rewrite in-place as `check_quantitative_grounding` wrapper (closes D-058)
+
+**Decision:** `validate_p3_numeric_provenance` is rewritten **in-place** (same `P3` id, same SPEC §13.1 reference, same severity position) to wrap `tools/check_quantitative_grounding.check_grounding(draft_dir)`. The v0.3 `speaker_notes_provenance` contract is RETIRED — no fallback path. Cascade `_P0_VALIDATORS` re-adds P3 (M4b D-058 demote becomes obsolete; cascade fail-fast on numeric defects is restored).
+
+**Rationale:** D-058 demoted P3 from cascade P0 to P1 because the v0.3 implementation walked a per-slide `speaker_notes_provenance` index that the v0.4 fused-notes composer (D-033 / D-044) doesn't emit. The v0.4-native authority for "every numeric claim traces to evidence" is `check_quantitative_grounding.py` — already wired into `stage_merge_and_assemble` and already read by the M4b cascade Tier-1 `_read_quantitative_grounding` aggregator. Wrapping it from P3 reuses the working code and preserves P3's identity in the cascade contract.
+
+**In-place rewrite vs new validator id:** considered renaming to `validate_p3b_grounded_numbers` (DQ4-(b) in the M5a punch list). Rejected per DQ4-(a): same id, same severity position, lower churn in DECISIONS / SPEC / cascade. The mechanism changed; the intent ("every numeric claim traces to primary evidence") and the SPEC §13.1 anti-fabrication discipline didn't.
+
+**v0.3 fallback retired:** no `speaker_notes_provenance`-based fallback in the new P3. Legacy `validate_p3_numeric_provenance(spec)` calls without `draft_dir` return `status="skipped"` with a Violation noting the rewrite. v0.3-shape specs (if anyone re-runs them) now go through the REPORT-walking check; if their REPORT.md still exists, they get the v0.4 behaviour; if it doesn't, P3 skips with a clear note rather than the old `speaker_notes_provenance` lookup. The v0.3 unit tests `test_p3_*` were replaced by v0.4-shaped tests; the `_extract_numeric_claims` helper that the old P3 used is now dead code but kept (still has unit-test coverage of its own behaviour; cleanup is a small follow-on, not blocking).
+
+**Related:** [M5a_PUNCH_LIST.md](M5a_PUNCH_LIST.md) Tier C; [SPEC.md](SPEC.md) §13.1 (updated this commit); D-058 (M4b Tier E demote — obsolete); `tools/validate_presentation.py` `validate_p3_numeric_provenance`; `tools/check_quantitative_grounding.py`; `tools/review_cascade.py` `_P0_VALIDATORS`.
+
+---
+
+## D-060 — 2026-05-24 — M5a: revise_invariance DQ1 (heuristic claim_id) + DQ2 (per-slide hedge aggregation)
+
+**Decision:** `tools/revise_invariance.py` ships the five §13 invariants in M5a v1. Two pinned design choices:
+- **DQ1 — invariant 1 `claim_id_cross_walk` ships with a heuristic.** Reads `<draft_dir>/working/00_phase0/claim_inventory.tsv` (M1 standard location); extracts the `claim_id` column; substring-matches mentions in slide text + speaker_notes; per-slide set must be equal pre vs post. Misses claims referenced without quoting the id (a real false-negative class); catches the common case where the composer reuses the id in `evidence_pointer`-style fields. Absent claim_inventory → invariant 1 SKIPPED (audit JSON records it; the other 4 invariants still gate).
+- **DQ2 — invariant 4 `hedge_level` uses per-slide aggregation** + the §13-listed 5 markers as a `HEDGE_MARKERS` constant in `revise_invariance.py` (`may`, `suggests`, `appears`, `candidate`, `preliminary`). Per-slide sum across content + speaker_notes; ≤1 decrease allowed (rephrasing); increase or >1 decrease fail.
+
+**Rationale (DQ1 reversal):** the M5a punch list originally recommended DQ1-(a) (defer invariant 1 until composer emits inline `[claim_id]` tokens). Adam reversed → ship the heuristic now. The heuristic's false-negatives are bounded by which slides quote ids in `evidence_pointer` fields (most do, per M1 + M2-lite per-substory briefs); the gain is that the revise verb is gated on all 5 invariants from §13 in M5a v1, not 4.
+
+**Rationale (DQ2):** matches the M4a/M4b "ship the mechanism; iterate the parameters" posture. Per-slide aggregation is the simplest implementation; per-claim attribution (option b in the M5a punch list) is an empirical refinement once we have revise-failure data showing the per-slide aggregate is too coarse. The 5-marker dictionary is the §13 list; future extensions (`consistent with`, `might`, `hint`, `indicate`) become a single constant edit + retest.
+
+**Alternatives considered:**
+- **DQ1-(a) defer invariant 1** — Adam rejected; ship now with the heuristic.
+- **DQ2 per-claim attribution** — deferred; no data yet on whether per-slide aggregation is too coarse.
+- **Hedge dictionary as external JSON** — rejected; the dictionary is small and rarely changes; a constant in code is simpler.
+
+**Related:** [M5a_PUNCH_LIST.md](M5a_PUNCH_LIST.md) DQ1 + DQ2; [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §13 (the 5-invariant contract); `tools/revise_invariance.py` `_check_claim_id_cross_walk` + `_check_hedge_level` + `HEDGE_MARKERS`.
+
+---
+
+## D-061 — 2026-05-24 — M5a: revise_invariance DQ3 (hard reject) + P3-vs-aggregator double-lift split (DQ4 follow-on)
+
+**Decision:** Two split decisions captured together (the M5a `revise_invariance` gate + the M5a P3 rewrite both touch how cascade severity flows):
+
+**A. revise_invariance DQ3 — hard reject on any failed invariant.** The `revise_loop._process_finding` gate (M5a Tier B) treats any invariant violation as terminal: the post-edit slide is REJECTED (not merged into the spec); the finding lands in `state.findings_invariance_violated` (distinct from `findings_failed` for operator visibility) and ALSO in `findings_failed` (backward-compat); the retry counter is NOT incremented (semantic failures rarely fix on naive retry); per-finding audit JSON at `audit/revise_invariance/<finding_id>.json`; `next_actions.md` surfaces the violations as a distinct line.
+
+**B. P3-vs-aggregator double-lift split (D-061 follow-on to D-059).** The new M5a P3 reads `check_quantitative_grounding.GroundingReport.findings` and lifts ONLY high-severity findings (per `check_grounding._classify_severity`: n=X claims, ratios, scientific, integers >1000) as `Violation(severity="error")` → become P0 in the M4b cascade `_P0_VALIDATORS` short-circuit set. Medium/low-severity findings (percent, decimal, small integer) are intentionally NOT lifted by P3; the M4b cascade Tier-1 `_read_quantitative_grounding` aggregator continues to lift them as P1/P2 advisory. The split prevents double-lifting on the same number (operator would see the same defect counted twice with conflicting severity) while preserving P3's role as the load-bearing mechanical fail-fast surface for high-stakes numbers AND the aggregator's role as the operator-visibility surface for everything else.
+
+**Rationale (A):** §13 says "the revise is rejected wholesale; halt with `phase=revise_invariance_violated`". The hard-reject contract is in the spec; M5a implements it. Retry-with-prompt-aware-feedback (option (b) in the M5a punch list) is a future iteration once we see how often invariance failures happen in practice.
+
+**Rationale (B):** the alternative (P3 lifts EVERYTHING, aggregator stays out) collapses the severity stratification — every ungrounded percent becomes a cascade P0, defeating fail-fast. The alternative (aggregator lifts EVERYTHING, P3 stays out) loses P3's ability to short-circuit on high-stakes numbers. The split keeps both surfaces useful.
+
+**Alternatives considered:**
+- **A (revise_invariance) retry-with-feedback** — deferred per DQ3 ship-then-iterate; no calibration data yet on invariance-failure retry success.
+- **B (P3 split) lift everything to P3** — rejected; collapses severity stratification.
+- **B lift everything to aggregator** — rejected; loses fail-fast on high-stakes numbers.
+
+**Related:** [M5a_PUNCH_LIST.md](M5a_PUNCH_LIST.md) DQ3 + DQ4; [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §13 (hard-reject contract); `tools/revise_invariance.py` (CLI rc=1 hard reject); `tools/revise_loop.py` `_check_revise_invariance` + `LoopState.findings_invariance_violated`; `tools/validate_presentation.py` `validate_p3_numeric_provenance` (high-only lifter); `tools/review_cascade.py` `_read_quantitative_grounding` (medium/low aggregator).

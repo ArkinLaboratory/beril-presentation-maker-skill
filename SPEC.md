@@ -752,7 +752,7 @@ user-modify | accept-as-limitation.
 |---|---|---|---|
 | P1 | Mode budget | Slide count within mode's range (e.g., talk-30: 25–32) | auto-fix (re-allocate) |
 | P2 | Time budget | Estimated time/slide × slide count = mode minutes ± 20% | auto-fix (re-allocate) |
-| P3 | Numeric provenance | Every numeric claim on slide or in notes traces to notebook/REPORT | escalate (notebook) |
+| P3 | Numeric provenance | Every numeric claim on slide traces to REPORT.md (v0.4 M5a wrapper around `check_quantitative_grounding`); v0.3 `speaker_notes_provenance` retired per D-059 | escalate (notebook) |
 | P4 | Citation pool integrity | Every short-form ref on slide resolves to verified pool entry | scope-down |
 | P5 | Contrast WCAG AA | Body text ≥4.5:1 contrast vs background; title ≥3:1 (large text) | auto-fix (color swap) |
 | P6 | Figure resolution | Embedded images ≥1080p in their displayed area; not stretched | escalate (regen at higher res) or auto-fix (unstretch) |
@@ -776,13 +776,44 @@ User-modify and accept-as-limitation are valid alternatives but the
 orchestrator does not auto-fix P3 (it would require fabricating
 numbers).
 
+**v0.4 mechanism (M5a Tier C, 2026-05-24 per D-058 + D-059):** P3 is
+implemented as a thin wrapper around
+`tools/check_quantitative_grounding.check_grounding(draft_dir)` —
+the v0.4 REPORT-walking authority. It walks every numeric literal
+on the slide and greps `REPORT.md` for verbatim matches (with
+canonical-form normalization for thousands-commas, SI suffixes,
+etc.). The v0.3 contract was different: per-slide
+`speaker_notes_provenance` index that the composer emitted
+alongside speaker notes. The v0.4 fused-notes composer
+(`slide_compose.v2.md`, M3 per D-033/D-044) doesn't emit that
+index, so the v0.3 P3 implementation was no longer correct on v0.4
+specs (M4b Tier E live probe found it fired on every number on
+every slide, 282 false positives on `ibd_phage_targeting/draft_1`).
+The M5a rewrite restores P3's load-bearing P0 status in the M4b
+cascade `_P0_VALIDATORS` set (D-058 demote obsolete).
+
+**Severity mapping** (D-061): only HIGH-severity ungrounded numbers
+(per `check_quantitative_grounding._classify_severity`: n=X claims,
+ratios, scientific notation, integers >1000) become P3 Violations
+with `severity="error"`. Medium/low-severity findings (percent,
+decimal, small integer) are lifted as P1/P2 advisory by the M4b
+cascade's `_read_quantitative_grounding` aggregator instead. The
+split prevents double-lifting on the same number while preserving
+P3's role as the load-bearing mechanical fail-fast surface for
+high-stakes numbers.
+
+**P3 requires draft_dir.** Legacy `validate_p3_numeric_provenance(spec)`
+calls without draft_dir return `status="skipped"` with a note — the
+v0.3 `speaker_notes_provenance` fallback is retired; there is no
+no-draft-dir code path. The M4b cascade always passes draft_dir.
+
 ### 13.2 P-validator dispatch table
 
 | Validator | Section/file | Notes |
 |---|---|---|
 | P1 | (orchestrator) | Slide count is a budget concern; orchestrator re-allocates |
 | P2 | (orchestrator) | Time budget; re-allocate |
-| P3 | `slide_compose.v1` or `speaker_notes.v1` | Whichever slide carries the unprovenanced claim |
+| P3 | `tools/check_quantitative_grounding.py` (wrapped) | v0.4 walks REPORT.md (D-059). v0.3 escalated to `slide_compose.v1` / `speaker_notes.v1` via the per-slide provenance index (retired). |
 | P4 | `slide_compose.v1` or `citation_pool.v1` | Pool gap → pool gen agent; on-slide ref drift → compose agent |
 | P5 | (orchestrator) | Color swap is mechanical |
 | P6 | (orchestrator) or escalation | Figure regen is gap-fill |
