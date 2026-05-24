@@ -282,15 +282,51 @@ def test_connector_color_is_slate_dark(dr):
     assert dr.DEFAULT_SWIMLANE_BORDER == "graphite_gray"
 
 
-def test_edge_label_horizontal_uses_gap_geometry(dr, blank_slide):
-    """M4a Tier E round 3 (2026-05-23): horizontal edge labels now place
-    inside the inter-node GAP (not center-to-center midpoint) and size
-    the textbox to gap-width minus margin, so a 0.7in-wide label can no
-    longer spill onto the adjacent node when the gap is < 0.7in. Round-2
-    visual-QA found this on ibd_phage_targeting/draft_1 slides 6/10/19
-    (label `max ARI at K=4` fragmented as `max AR` / `at K=4`)."""
-    # Two horizontal nodes with a known gap (1.0in apart, each 1.5in wide,
-    # so gap between right-edge-of-src and left-edge-of-dst = 0.5in)
+def test_edge_label_horizontal_wide_gap_fits_in_gap(dr, blank_slide):
+    """M4a Tier E round 4 (2026-05-24): horizontal edges with a WIDE gap
+    (>=1.0in) place the label inside the gap, sized to gap-width minus
+    margin. Round-3 used a 0.4in threshold but a 0.4in box was too
+    narrow for any label at 9pt and triggered char-by-char wrap."""
+    # Two horizontal nodes 1.2in apart (src.right at 2.25, dst.left at 3.45),
+    # gap = 1.20in — comfortably above the 1.0in in-gap threshold.
+    src = dr._RenderedShape(node_id="src", shape=None,
+                            cx=1.5, cy=2.0, w=1.5, h=0.8)
+    dst = dr._RenderedShape(node_id="dst", shape=None,
+                            cx=4.2, cy=2.0, w=1.5, h=0.8)
+    rendered = {"src": src, "dst": dst}
+    n_before = len(blank_slide.shapes)
+    dr._render_edge_label(
+        blank_slide,
+        {"from": "src", "to": "dst", "kind": "straight", "label": "test"},
+        rendered, brand_tokens=None,
+    )
+    assert len(blank_slide.shapes) == n_before + 1
+    label_shape = blank_slide.shapes[-1]
+    EMU = 914400
+    left_in = label_shape.left / EMU
+    width_in = label_shape.width / EMU
+    # src right edge = 2.25; dst left edge = 3.45; gap = 1.20
+    # Label must fit in [2.25, 3.45]
+    assert 2.20 <= left_in <= 3.50, (
+        f"label left {left_in:.3f} must be inside gap [2.25, 3.45]"
+    )
+    assert (left_in + width_in) <= 3.50, (
+        f"label right {left_in + width_in:.3f} must be at-or-left-of dst left 3.45"
+    )
+
+
+def test_edge_label_horizontal_narrow_gap_overflows_above_nodes(dr, blank_slide):
+    """M4a Tier E round 4 narrow-gap branch: when the gap is < 1.0in
+    (the ibd_phage_targeting slide-6 case, gap = 0.4in), the label
+    box is sized to 1.1in centered on the connector midpoint and
+    placed above the connector line. It WILL overlap the node-tops
+    horizontally — but at label-bottom y = mid_y - 0.15 vs node-top
+    y = cy - 0.45, there's ~0.30in of vertical clearance, so the
+    label paints above the node row. The previous round-3 behavior
+    forced the box to gap-width which produced one-char-per-line
+    stacks; the round-4 fallback renders the label as one line."""
+    # Two horizontal nodes 0.5in apart (gap = 0.5in), below the 1.0in
+    # threshold — should trigger the wider-than-gap fallback.
     src = dr._RenderedShape(node_id="src", shape=None,
                             cx=1.5, cy=2.0, w=1.5, h=0.8)
     dst = dr._RenderedShape(node_id="dst", shape=None,
@@ -303,19 +339,25 @@ def test_edge_label_horizontal_uses_gap_geometry(dr, blank_slide):
         rendered, brand_tokens=None,
     )
     assert len(blank_slide.shapes) == n_before + 1
-    # The newly-added textbox should be the last shape
     label_shape = blank_slide.shapes[-1]
-    # Read its position via the underlying EMU values (914400 EMU = 1in)
     EMU = 914400
-    left_in = label_shape.left / EMU
     width_in = label_shape.width / EMU
-    # src right edge = 1.5 + 0.75 = 2.25; dst left edge = 3.5 - 0.75 = 2.75
-    # Label must fit in [2.25, 2.75] — i.e. left >= 2.25 and right <= 2.75
-    assert 2.20 <= left_in, (
-        f"label left {left_in:.3f} must be at-or-right-of src right edge 2.25"
+    top_in = label_shape.top / EMU
+    height_in = label_shape.height / EMU
+    # Width must be the fallback 1.1in — wider than the 0.5in gap
+    assert 1.0 <= width_in <= 1.3, (
+        f"narrow-gap label width {width_in:.3f} must be ~1.1in (fallback), "
+        f"not constrained to the 0.5in gap"
     )
-    assert (left_in + width_in) <= 2.80, (
-        f"label right {left_in + width_in:.3f} must be at-or-left-of dst left edge 2.75"
+    # word_wrap must be OFF on the textbox — confirms the fix
+    assert label_shape.text_frame.word_wrap is False, (
+        "narrow-gap label must have word_wrap=False to avoid char-by-char "
+        "wrap when the box is wider than the gap"
+    )
+    # Vertical position: label-bottom must clear node-top (cy - h/2 = 1.60)
+    assert top_in + height_in <= 1.85, (
+        f"narrow-gap label bottom {top_in + height_in:.3f} must clear "
+        f"node-top at 1.60 (plus small margin for paint-order overlap)"
     )
 
 

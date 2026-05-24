@@ -19,7 +19,7 @@ times during M3 Tier E — `deliverable/pngs{,2,3}/`, `pngs4/draft.pdf`).
 | B — content-length caps (prompts + validator backstops) | prompts, `slide_spec.py` | ✅ committed 2026-05-23 (suite 1068 passed; takes effect on next slide_compose/diagram_design/qa_prep run, verified in Tier E) |
 | C — the visual-QA pass | new `tools/visual_qa.py` + `visual_qa.v1.md` | ✅ committed 2026-05-23 (suite 1091 passed; opt-in `--visual-qa`; soffice+pdftoppm host-only deps; graceful no-op with stub report when absent; live render-round in Tier E) |
 | D — test-hygiene tidy + Slide-13 verification | `test_adversarial_interop.py` | ✅ committed 2026-05-23 (D1 done — live test now gated on BOTH `BERIL_PRESENTATION_MAKER_RUN_LIVE=1` AND `TEST_DRAFT_DIR`; auto-discovery walk removed; suite skips cleanly. D2 deferred to Tier E recompose, which verifies Slide-13 naturally.) |
-| E — end-to-end render smoke on `ibd_phage_targeting` | live | 🔄 in flight: round 1 (CLI hotpatch + compose), round 2 (watermark strip + slate-dark + claim_evidence caption autofit), round 3 (edge-label gap geometry + title acronym fix); awaiting live confirmation render. Suite 1106 passed. |
+| E — end-to-end render smoke on `ibd_phage_targeting` | live | 🔄 in flight: round 1 (CLI hotpatch + compose), round 2 (watermark strip + slate-dark + claim_evidence caption autofit), round 3 (edge-label gap geometry + title acronym fix), round 4 (edge-label gap-threshold raised 0.4→1.0 + word_wrap off + acronym fix moved into merge so spec on disk matches render); awaiting round-4 confirmation render. Suite 1107 passed. |
 | F — closeout | paperwork | ⬜ not started |
 
 ## Why M4a exists — the defect taxonomy and the root cause

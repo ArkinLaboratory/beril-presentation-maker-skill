@@ -455,7 +455,11 @@ def _render_edge_label(
     label_h = 0.25
 
     if dy < 0.3 and src.w > 0 and dst.w > 0:
-        # Horizontal edge — place label in the inter-node gap.
+        # Horizontal edge — place label ABOVE the node row, sized to
+        # the gap when the gap is wide enough for the label to read,
+        # otherwise sized wider than the gap (overflows the gap but
+        # sits above the node-tops and is therefore visible).
+        #
         # Compute gap edges from node half-widths around their centers.
         if src.cx < dst.cx:
             src_right = src.cx + src.w / 2
@@ -464,19 +468,29 @@ def _render_edge_label(
             src_right = dst.cx + dst.w / 2
             dst_left = src.cx - src.w / 2
         gap = max(0.0, dst_left - src_right)
-        # If the gap is too narrow for a meaningful label, fall back
-        # to the prior offset heuristic but at minimum width.
-        if gap >= 0.4:
-            label_w = max(0.4, gap - 0.10)   # margin: 0.05in each side
+        # M4a Tier E round 4 (2026-05-24): raised the in-gap threshold
+        # from 0.4 to 1.0in. Round-3 used >=0.4in and word_wrap=True,
+        # which produced one-character-per-line vertical stacks on the
+        # ibd_phage_targeting slide-6 lda_gmm→k4 edge (gap = exactly
+        # 0.4in; label "max ARI at K=4" needs ~1.4in at 9pt to render
+        # on one line, so wrapping into a 0.40in-wide box stacks every
+        # character). Below 1.0in we place the label ABOVE the node
+        # row at the connector midpoint with a 1.1in width — clears
+        # the node-tops cleanly (y = mid_y - 0.40 = above node-top y =
+        # cy - 0.45 by ~0.05in) and reads as one line.
+        if gap >= 1.0:
+            label_w = max(0.6, gap - 0.10)   # margin: 0.05in each side
             # x: center the textbox in the gap
             label_x = src_right + (gap - label_w) / 2
             # y: above the connector line
             label_y = mid_y - 0.40
         else:
-            # Tight gap — sit the label above the connector midpoint,
-            # accept overlap with the nearest node box (label paints
-            # on top anyway per Tier A3 third-pass z-order).
-            label_w = 0.50
+            # Narrow gap — sit the label above the node row, sized to
+            # one line. Clears the node-tops (label-bottom at mid_y -
+            # 0.15 ≈ cy - 0.15 vs node-top cy - 0.45, so 0.30in of
+            # clearance). Label paints on top anyway per Tier A3
+            # third-pass z-order if any vertical overlap remains.
+            label_w = 1.10
             label_x = mid_x - label_w / 2
             label_y = mid_y - 0.40
     elif dx < 0.3 and src.h > 0 and dst.h > 0:
@@ -504,9 +518,17 @@ def _render_edge_label(
         Inches(label_w), Inches(label_h),
     )
     tb.text_frame.text = label
-    # Tier E round 3: word_wrap so multi-word labels wrap inside the
-    # gap-sized box instead of clipping at the right edge.
-    tb.text_frame.word_wrap = True
+    # Tier E round 4 (2026-05-24): word_wrap REMOVED. Round-3 used
+    # word_wrap=True, but combined with a narrow gap-sized box on
+    # slide-6 (0.4in wide), python-pptx fell back to char-by-char
+    # wrap (no word fit) and rendered every label character on its
+    # own line — visible as a vertical character stack. The new
+    # round-4 geometry sizes the box wide enough (1.1in min for
+    # narrow gaps, gap-width-minus-margin for wide gaps) that
+    # single-line rendering is correct; word_wrap=False lets the
+    # textbox draw cleanly without falling back to char-wrap if a
+    # corner case slips past.
+    tb.text_frame.word_wrap = False
     for paragraph in tb.text_frame.paragraphs:
         for run in paragraph.runs:
             run.font.size = Pt(9)

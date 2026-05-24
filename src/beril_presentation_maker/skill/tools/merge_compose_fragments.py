@@ -72,6 +72,22 @@ from typing import Any, Optional
 _TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_TOOLS_DIR))
 import slide_spec  # noqa: E402  (sibling tool)
+# M4a Tier E round 4 (2026-05-24): pull the assembler's acronym fix-up
+# so the title written to slide_spec.json on disk matches the rendered
+# title. Without this, the spec carries "Ibd Phage Targeting" while the
+# assembler renders "IBD Phage Targeting" — confuses the visual-QA
+# vision pass (it reads the spec AND the PNG; sees a mismatch that
+# isn't really there). One module-level import; only this helper is
+# pulled, not the renderer itself.
+import importlib.util as _importlib_util
+_ASSEMBLE_PATH = _TOOLS_DIR / "assemble_pptx.py"
+_assemble_spec = _importlib_util.spec_from_file_location(
+    "_assemble_for_acronym", _ASSEMBLE_PATH
+)
+_assemble_mod = _importlib_util.module_from_spec(_assemble_spec)
+sys.modules["_assemble_for_acronym"] = _assemble_mod
+_assemble_spec.loader.exec_module(_assemble_mod)
+_fix_acronyms_in_title = _assemble_mod._fix_acronyms_in_title
 
 
 # v0.3.2.1: regex to strip JSON-trailing-commas. Matches `,` followed by
@@ -343,6 +359,12 @@ def build_title_slide(slide_id: int, throughline_punchline: str,
     title_text = project_id.replace("_", " ").replace("-", " ").title().strip()
     if not title_text:
         title_text = f"BERDL project: {project_id}"
+    # M4a Tier E round 4 (2026-05-24): acronym-aware fix-up. Python's
+    # .title() lowercases letters after the first in each word — so
+    # `ibd_phage_targeting` → "Ibd Phage Targeting" instead of "IBD
+    # Phage Targeting". Apply the shared assembler helper so the spec
+    # on disk matches what the renderer + visual-QA see.
+    title_text = _fix_acronyms_in_title(title_text)
 
     # Subtitle carries a TRUNCATED version of the throughline punchline.
     # 2026-04-26 followup: full punchline (200-300 chars) overflowed the
