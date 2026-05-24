@@ -141,11 +141,97 @@ def test_tier1_missing_spec_returns_pass_with_empty_findings(rc, tmp_path):
     assert result.findings == []
 
 
-def test_tier2_scaffolding_not_implemented(rc, tmp_path):
-    """Tier C will build review_tier2.py + prompts/review_tier2.v1.md."""
+def test_tier2_dispatcher_lifts_skipped_from_stub_audit(rc, tmp_path, monkeypatch):
+    """Tier C: cascade's run_tier2 invokes review_tier2.run_tier2 (which
+    handles its own toolchain probe + stub-report fallback). If
+    review_tier2 writes a stub (claude missing, spec missing — empty
+    findings + a note), the cascade lifts it as 'skipped' so the
+    cascade report reflects the degraded path without claiming a
+    clean pass."""
+    # Stub the cascade's review_tier2 invoker so we control what
+    # audit/review_tier2.json contains.
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "review_tier2.json").write_text(json.dumps({
+        "schema_version": "review-tier2.v1",
+        "n_slides_reviewed": 0,
+        "findings": [],
+        "note": "Tier 2 toolchain incomplete (missing: claude)",
+    }))
+    monkeypatch.setattr(rc, "_invoke_review_tier2",
+                        lambda d, claude_bin="claude": 0)
     result = rc.run_tier2(tmp_path)
     assert result.name == "tier2"
-    assert result.status == "not-implemented"
+    assert result.status == "skipped"
+    assert "toolchain incomplete" in result.note
+
+
+def test_tier2_dispatcher_lifts_findings_from_audit_json(rc, tmp_path, monkeypatch):
+    """Happy-path: review_tier2 writes a real findings list; cascade
+    lifts each into a CascadeFinding with tier='tier2'."""
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "review_tier2.json").write_text(json.dumps({
+        "schema_version": "review-tier2.v1",
+        "n_slides_reviewed": 5,
+        "findings": [
+            {"slide_id": 7, "kind": "register_drift",
+             "severity": "P1", "confidence": "high",
+             "detail": "passive voice on STRONG",
+             "evidence_locator": "content.subtitle"},
+            {"slide_id": 12, "kind": "qa_softball",
+             "severity": "P2", "confidence": "medium",
+             "detail": "low-novelty question",
+             "evidence_locator": "content.question"},
+        ],
+    }))
+    monkeypatch.setattr(rc, "_invoke_review_tier2",
+                        lambda d, claude_bin="claude": 0)
+    result = rc.run_tier2(tmp_path)
+    assert result.status == "advisory"
+    assert len(result.findings) == 2
+    assert {f.kind for f in result.findings} == {"register_drift", "qa_softball"}
+    assert all(f.tier == "tier2" for f in result.findings)
+    # DQ4: NO P0 from Tier 2
+    assert not any(f.severity == "P0" for f in result.findings)
+    assert result.has_p0 is False
+
+
+def test_tier2_dispatcher_demotes_rogue_p0_to_p1(rc, tmp_path, monkeypatch):
+    """DQ4 invariant pin: if the Tier-2 model emits a P0 (against the
+    prompt's contract), the cascade dispatcher demotes it to P1. The
+    cascade's short-circuit reads TierResult.has_p0; an unintended
+    Tier-2 P0 must NOT trigger short-circuit."""
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "review_tier2.json").write_text(json.dumps({
+        "schema_version": "review-tier2.v1",
+        "n_slides_reviewed": 1,
+        "findings": [
+            {"slide_id": 1, "kind": "register_drift",
+             "severity": "P0",         # ← rogue Tier-2 P0
+             "confidence": "high",
+             "detail": "model emitted P0 against prompt contract",
+             "evidence_locator": "content.subtitle"},
+        ],
+    }))
+    monkeypatch.setattr(rc, "_invoke_review_tier2",
+                        lambda d, claude_bin="claude": 0)
+    result = rc.run_tier2(tmp_path)
+    assert result.findings[0].severity == "P1"   # demoted from P0
+    assert result.has_p0 is False                 # short-circuit NOT triggered
+
+
+def test_tier2_dispatcher_error_status_when_audit_missing(rc, tmp_path, monkeypatch):
+    """If review_tier2 ran but failed to produce the audit file
+    (subprocess crash, etc.), cascade lifts as 'error' — distinct from
+    'skipped' (which means review_tier2 wrote a clean stub)."""
+    monkeypatch.setattr(rc, "_invoke_review_tier2",
+                        lambda d, claude_bin="claude": 0)
+    # No audit file pre-written → cascade reads None
+    result = rc.run_tier2(tmp_path)
+    assert result.status == "error"
+    assert "did not produce" in result.note
 
 
 def test_tier3_scaffolding_not_implemented(rc, tmp_path):
@@ -264,18 +350,35 @@ def test_run_cascade_no_tier3_flag_skips_tier3(rc, tmp_path, monkeypatch):
     assert "--no-tier3" in report.tiers[2].note
 
 
-def test_run_cascade_end_to_end_tier1_real_tier2_3_stubs(rc, tmp_path):
-    """Cascade end-to-end on an empty draft (no slide_spec.json): Tier 1
-    runs the real aggregation (lands 'pass' because nothing to check),
-    Tier 2 + Tier 3 are still scaffolding stubs that return
-    'not-implemented'. Cascade still completes; short_circuited_at
-    null."""
+def test_run_cascade_end_to_end_tier1_2_real_tier3_stub(rc, tmp_path, monkeypatch):
+    """Cascade end-to-end on an empty draft (no slide_spec.json):
+    Tier 1 runs real aggregation (lands 'pass' — nothing to check);
+    Tier 2 invokes review_tier2 (stubbed in tests — must NEVER hit
+    live LLM); Tier 3 still 'not-implemented' (Tier D will replace).
+
+    short_circuited_at stays null because Tier 1 doesn't emit P0
+    on an empty draft."""
+    # Defensively stub Tier 2's claude invocation — tests must never
+    # hit live LLM even if claude is on PATH in the dev env.
+    def _stub_invoke(draft_dir, claude_bin="claude"):
+        audit = draft_dir / "audit"
+        audit.mkdir(parents=True, exist_ok=True)
+        (audit / "review_tier2.json").write_text(json.dumps({
+            "schema_version": "review-tier2.v1",
+            "n_slides_reviewed": 0, "findings": [],
+            "note": "stubbed by test_run_cascade_end_to_end_tier1_2_real_tier3_stub",
+        }))
+        return 0
+    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke)
+
     report = rc.run_cascade(tmp_path)
-    assert [t.status for t in report.tiers] == [
-        "pass", "not-implemented", "not-implemented",
-    ]
+    assert report.tiers[0].status == "pass"
+    # Tier 2 is wired (not the scaffolding stub) — exact status
+    # depends on what the stub above wrote; 'skipped' for our stub.
+    assert report.tiers[1].status != "not-implemented", \
+        "Tier C wired run_tier2; cascade should no longer return scaffolding stub"
+    assert report.tiers[2].status == "not-implemented"   # Tier D will replace
     assert report.short_circuited_at is None
-    assert report.total_cost_usd == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -348,11 +451,25 @@ def test_write_reports_creates_both_files(rc, tmp_path):
 # CLI smoke
 # ---------------------------------------------------------------------------
 
-def test_cli_returns_0_on_empty_spec(rc, tmp_path):
+def test_cli_returns_0_on_empty_spec(rc, tmp_path, monkeypatch):
     """CLI on a draft with a minimal (empty-slides) slide_spec.json →
-    Tier 1 runs real aggregation but finds nothing (validators land as
-    not-applicable on empty slides; no audit files present); Tier 2/3
-    still stubs. rc=0."""
+    Tier 1 runs real aggregation but finds nothing (validators skipped
+    structurally-invalid spec); Tier 2 lifts a 'skipped' stub (mocked
+    via _invoke_review_tier2 — tests must NEVER hit live LLM); Tier 3
+    still 'not-implemented' (Tier D will replace). rc=0 always."""
+    # Defensively stub Tier 2's claude invocation — even if claude is
+    # on PATH in the dev env, the test must not make a real LLM call.
+    def _stub_invoke(draft_dir, claude_bin="claude"):
+        audit = draft_dir / "audit"
+        audit.mkdir(parents=True, exist_ok=True)
+        (audit / "review_tier2.json").write_text(json.dumps({
+            "schema_version": "review-tier2.v1",
+            "n_slides_reviewed": 0, "findings": [],
+            "note": "stubbed by test_cli_returns_0_on_empty_spec",
+        }))
+        return 0
+    monkeypatch.setattr(rc, "_invoke_review_tier2", _stub_invoke)
+
     spec_dir = tmp_path / "working"
     spec_dir.mkdir()
     (spec_dir / "slide_spec.json").write_text(json.dumps({"slides": []}))
@@ -360,9 +477,9 @@ def test_cli_returns_0_on_empty_spec(rc, tmp_path):
     assert rc_val == 0
     j = tmp_path / "audit" / "review_cascade.json"
     payload = json.loads(j.read_text())
-    assert [t["status"] for t in payload["tiers"]] == [
-        "pass", "not-implemented", "not-implemented",
-    ]
+    assert payload["tiers"][0]["status"] == "pass"
+    assert payload["tiers"][1]["status"] == "skipped"   # stubbed
+    assert payload["tiers"][2]["status"] == "not-implemented"
     assert payload["short_circuited_at"] is None
 
 

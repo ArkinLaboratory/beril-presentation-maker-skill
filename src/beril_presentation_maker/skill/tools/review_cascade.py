@@ -508,17 +508,106 @@ def run_tier1(draft_dir: Path) -> TierResult:
     )
 
 
-def run_tier2(draft_dir: Path) -> TierResult:
-    """Tier 2 — Haiku narrative-light (4 detection classes).
+def _invoke_review_tier2(draft_dir: Path, claude_bin: str = "claude") -> int:
+    """Load + invoke the review_tier2 sibling module.
 
-    M4b Tier A SCAFFOLDING: returns 'not-implemented'. Tier C builds
-    tools/review_tier2.py + prompts/review_tier2.v1.md.
+    Extracted as a separate function so unit tests can monkeypatch it
+    without wrestling with the importlib spec_from_file_location
+    machinery. Same sibling-module-load pattern as _validate_p1_p10.
     """
+    import importlib.util as _u
+    rt2_spec = _u.spec_from_file_location(
+        "_rt2_for_cascade", _THIS_DIR / "review_tier2.py")
+    rt2_mod = _u.module_from_spec(rt2_spec)
+    sys.modules["_rt2_for_cascade"] = rt2_mod
+    rt2_spec.loader.exec_module(rt2_mod)
+    return rt2_mod.run_tier2(
+        draft_dir, quiet=True, claude_bin=claude_bin)
+
+
+def run_tier2(
+    draft_dir: Path,
+    *,
+    claude_bin: str = "claude",
+) -> TierResult:
+    """Tier 2 — Haiku narrative-light (4 detection classes; M4b Tier C).
+
+    Invokes tools/review_tier2.py (claude-haiku-4-5 + the 4 detection
+    classes from §8.1: register_drift, qa_softball,
+    unbacked_quantitative, substory_arc). Reads
+    audit/review_tier2.json and lifts findings into cascade
+    findings.
+
+    DQ4: Tier 2 NEVER emits P0 — every finding is severity P1 or P2.
+    The cascade's short-circuit logic in run_cascade reads
+    TierResult.has_p0, so a Tier-2 result always has has_p0=False
+    and Tier 3 always runs after Tier 2.
+    """
+    t0 = datetime.now(timezone.utc)
+
+    # Invoke review_tier2 — handles its own toolchain probe, stub-report
+    # fallback, and audit/review_tier2.{md,json} writes. Always rc=0.
+    try:
+        _invoke_review_tier2(draft_dir, claude_bin=claude_bin)
+    except Exception as exc:  # noqa: BLE001
+        duration = (datetime.now(timezone.utc) - t0).total_seconds()
+        return TierResult(
+            name="tier2",
+            status="error",
+            note=f"review_tier2 raised: {exc}",
+            duration_sec=duration,
+        )
+
+    duration = (datetime.now(timezone.utc) - t0).total_seconds()
+    payload = _load_json_safe(draft_dir / "audit" / "review_tier2.json")
+    if payload is None:
+        return TierResult(
+            name="tier2",
+            status="error",
+            note="review_tier2 did not produce audit/review_tier2.json",
+            duration_sec=duration,
+        )
+
+    # Stub posture: empty findings + a note (missing claude, missing
+    # spec, LLM error). Map to 'skipped' so the cascade reflects the
+    # degraded path without claiming a clean pass.
+    findings_raw = payload.get("findings") or []
+    if not findings_raw and payload.get("note"):
+        return TierResult(
+            name="tier2",
+            status="skipped",
+            note=payload.get("note", ""),
+            duration_sec=duration,
+        )
+
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        sev = f.get("severity", "P2")
+        # Pin DQ4 invariant: Tier 2 cannot emit P0. If the model
+        # tries (it shouldn't per the prompt), demote to P1.
+        if sev not in ("P1", "P2"):
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier2",
+            kind=f.get("kind", "unknown"),
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("detail", "<no detail>"),
+            evidence={"confidence": f.get("confidence", "medium"),
+                      "evidence_locator": f.get("evidence_locator")},
+        ))
+
     return TierResult(
         name="tier2",
-        status="not-implemented",
-        note="Tier A scaffolding — Tier C will invoke claude-haiku-4-5 "
-             "with the §8.1 candidate-four detection classes.",
+        status="advisory" if findings else "pass",
+        findings=findings,
+        # cost_usd reads come from the diagnostic written into
+        # audit/review_tier2.json by the rt2 module's stub on failure
+        # paths; on the happy path the rt2 module doesn't currently
+        # write cost back into the JSON (it goes to stderr). Future
+        # iteration: persist diag.cost_usd into the JSON envelope.
+        cost_usd=0.0,
+        duration_sec=duration,
     )
 
 

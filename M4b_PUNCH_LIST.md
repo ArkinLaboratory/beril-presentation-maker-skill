@@ -20,7 +20,7 @@ Tier-1 candidate).
 |---|---|---|
 | A — `review_cascade.py` orchestrator scaffolding | new `tools/review_cascade.py` + `presentation_maker.sh` wiring | ✅ committed 2026-05-24 (cascade contract `review-cascade.v1`; per-tier dispatchers return `not-implemented` until B/C/D fill in; orchestrator auto-runs cascade per DQ1 with `--no-review-cascade` opt-out; suite 1127 passed) |
 | B — Tier 1 (deterministic + visual-QA aggregation) | `review_cascade.py`'s Tier-1 dispatcher; reuses existing checkers | ✅ committed 2026-05-24 (aggregates 5 sources: P1-P10 + quantitative_grounding + no_artifact_refs + deck_reconciliation + opt-in visual_qa per DQ2; P0/P1/P2 classification per DQ4 — only P3/P4/P5 fail short-circuits; writes `audit/presentation_validation.json` side-effect; suite 1139 passed) |
-| C — Tier 2 (Haiku narrative-light) + empirical detection-class calibration (D-049) | new `tools/review_tier2.py` + prompt; calibration probe | ⬜ not started |
+| C — Tier 2 (Haiku narrative-light) + empirical detection-class calibration (D-049) | new `tools/review_tier2.py` + prompt; calibration probe | ✅ committed 2026-05-24 (`prompts/review_tier2.v1.md` + `tools/review_tier2.py` ship the 4 detection classes per §8.1; claude-haiku-4-5 pinned per DQ3 ship-as-v1; cascade `_invoke_review_tier2` + DQ4 invariant pin (rogue P0 demoted to P1); 16 Tier-2 tests + 3 cascade-dispatcher tests; suite 1158 passed. C3 calibration probe deferred to Tier E + post-ship per DQ3.) |
 | D — Tier 3 (wrap canonical adversarial under the cascade contract) | `review_cascade.py` integrates `stage_adversarial_review` | ⬜ not started |
 | E — end-to-end cascade smoke on `ibd_phage_targeting` | live | ⬜ not started |
 | F — closeout | paperwork | ⬜ not started |
