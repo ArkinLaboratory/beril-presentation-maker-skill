@@ -964,8 +964,10 @@ observation); the AI Studio image-gen model line as of May 2026 is
 
 **Model-availability probe** at startup:
 - One `GET https://generativelanguage.googleapis.com/v1beta/models` call (AI Studio path only); filter for image-capable models.
-- Pick `gemini-3-pro-image` if present (Adam: "use it if we see it"), else `gemini-2.5-flash-image`, else fail with a clear message naming available models.
-- Cache the choice in `state.json` per draft (`ai_image_gen.resolved_model`); don't re-probe on every invocation.
+- Pick first model present in the D-035-rev1 fallback chain (`gemini-3-pro-image-preview` → `gemini-3.1-flash-image-preview` → `gemini-2.5-flash-image`) — chain updated at M5b Tier A to match Google's actual May-2026 model names (the original D-035 chain was written against names that have since been deprecated; see DECISIONS D-035-rev1).
+- **`GOOGLE_AI_STUDIO_MODEL` env-var override** short-circuits the probe entirely (M5b Tier C / C5; useful for pinning a specific model for reproducibility or working around probe failures).
+- Cache the choice in `<draft>/audit/ai_image_gen_probe.json` per draft (per D-063 sidecar; superseded §14.2's original `state.json` plan to avoid coupling to a schema in flux at M6). Sidecar fingerprints the API key (sha256 prefix, NOT the raw key) so key rotation re-probes safely.
+- **D-064 hybrid fallback** when no chain model is available: silent fallback to CBORG if `CBORG_API_KEY` is set; else loud-warning disable image-gen for this run with multi-line diagnostic naming the chain walked + image-capable models seen + actionable next steps.
 
 **Rate-card update** at `_MODEL_RATES_USD_PER_M` (lines 85–93):
 - Add `gemini-2.5-flash-image` entry with AI Studio's published rate (~$30/M output tokens, verify before shipping).

@@ -511,13 +511,35 @@ shapes. Mermaid input is accepted as an alternative spec format
 (parsed and rendered to native shapes; Mermaid CLI is NOT a runtime
 dependency).
 
-### 8.3 Tier 3 — AI image generation via CBORG-Gemini (opt-in)
+### 8.3 Tier 3 — AI image generation (opt-in; CBORG or AI Studio)
 
-Default off. `--ai-diagrams opt-in` enables. Provider:
-`google/gemini-pro-image` via CBORG (same `CBORG_API_KEY`, same
-`https://api.cborg.lbl.gov` endpoint as text). Provider-abstraction
-layer (`image_client.py`) supports direct Google AI Studio or
-OpenAI gpt-image-1 keys as alternatives in v0.2.
+Default off. `--ai-diagrams opt-in` enables. Two providers ship in
+v0.4:
+
+- **CBORG** (default; v0.3.x baseline): `google/gemini-pro-image` /
+  `gemini-3-pro-image` via `CBORG_API_KEY` against
+  `https://api.cborg.lbl.gov` (OpenAI-compatible image-gen surface).
+- **AI Studio** (M5b / D-062; honours the user's own Google AI Studio
+  license per Adam's stated intent in V0_4_ARCHITECTURE §14.1):
+  native Gemini API at
+  `https://generativelanguage.googleapis.com/v1beta` via
+  `GOOGLE_AI_STUDIO_API_KEY`. The May-2026 model fallback chain
+  (D-035-rev1) is `gemini-3-pro-image-preview` →
+  `gemini-3.1-flash-image-preview` → `gemini-2.5-flash-image`;
+  resolved at draft time via the model-availability probe (see §8.3.2
+  below).
+
+Provider precedence (D-062 / orchestrator-resolved):
+
+1. Explicit `--image-provider {cborg|google_ai_studio}` wins.
+2. `GOOGLE_AI_STUDIO_API_KEY` env present → AI Studio.
+3. `CBORG_API_KEY` env present → CBORG.
+4. Neither → image-gen disabled for this run (treat as `--no-images`).
+
+Both keys are resolved from `BERIL_ROOT/.env` if not in shell env
+(same defensive `.env` parse that the v0.3.3 CBORG path used; never
+echoes key values — only a `[orchestrator] <KEY> loaded from
+BERIL_ROOT/.env` marker line per memory `feedback_secret_file_handling`).
 
 Two-channel control model (D-005-rev1):
 
@@ -566,6 +588,50 @@ slide_spec carrying one of `metaphor | infographic |
 conceptual_diagram`, which the AI-prompt agent uses to bias prompt
 construction. Same layout for all three styles — only the prompt
 flavor differs.
+
+### 8.3.2 AI Studio model-availability probe + hybrid fallback (M5b)
+
+When the resolved provider is `google_ai_studio`, the orchestrator
+runs `image_client.py probe` once at the top of the image-gen stage
+to resolve which model in the D-035-rev1 fallback chain is actually
+available on the user's API key:
+
+  `gemini-3-pro-image-preview` (preferred)
+  → `gemini-3.1-flash-image-preview`
+  → `gemini-2.5-flash-image`
+  → none → fall back per D-064 (below)
+
+The resolved model is cached at
+`<draft>/audit/ai_image_gen_probe.json` (D-063 sidecar). The cache
+is keyed by a short non-reversible fingerprint of the API key
+(sha256 prefix) so key rotation triggers a re-probe without
+persisting the key itself; corrupt sidecars are re-probed
+defensively. The cache is per-draft (one fresh probe per `draft_N`).
+
+**Manual override (C5).** `GOOGLE_AI_STUDIO_MODEL=<name>` env var
+short-circuits the probe entirely and pins the named model. Useful
+for pinning a specific model for reproducibility or working around
+probe failures.
+
+**D-064 hybrid fallback** when the probe finds no usable model in
+the chain:
+
+- **CBORG fallback (silent).** If `CBORG_API_KEY` is also set:
+  override `IMAGE_PROVIDER=cborg` for the rest of this draft + emit
+  a one-line `[image-gen probe] AI Studio probe found no usable
+  model; falling back to CBORG` log line on stderr. The image-gen
+  stage proceeds.
+- **Loud-warning disable.** If no `CBORG_API_KEY`: emit the full
+  multi-line diagnostic on stderr (chain walked, each model marked
+  present/absent; image-capable models seen on the key; actionable
+  next steps: set CBORG_API_KEY, set GOOGLE_AI_STUDIO_MODEL=<name>,
+  or fix AI Studio access), then disable image-gen for this run
+  (treat as `--no-images`).
+
+This posture preserves the user's stated intent ("use my Gemini
+Studio license if available") while not breaking the run when the
+license is misconfigured — and always surfaces what was tried so
+the user is never silently downgraded without seeing the chain.
 
 ### 8.4 Caption integrity
 

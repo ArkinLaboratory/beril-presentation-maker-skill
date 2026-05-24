@@ -59,8 +59,19 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   ├── citation_pool.py         pool builder + reuse-from-paper
 │       │   ├── diagram_render.py        slide_spec diagram → python-pptx
 │       │   │                            native shapes (Tier 2)
-│       │   ├── image_client.py          CBORG-Gemini image-gen client
-│       │   │                            (Tier 3, opt-in)
+│       │   ├── image_client.py          Multi-provider image-gen client
+│       │   │                            (Tier 3, opt-in). v0.3.x ships CBORG
+│       │   │                            (OpenAI-compat); M5b/D-062 adds
+│       │   │                            Google AI Studio native :generateContent
+│       │   │                            (`gemini-3-pro-image-preview` →
+│       │   │                            `gemini-3.1-flash-image-preview` →
+│       │   │                            `gemini-2.5-flash-image` chain per
+│       │   │                            D-035-rev1). New `probe` subcommand
+│       │   │                            resolves AI Studio model + caches at
+│       │   │                            `audit/ai_image_gen_probe.json`
+│       │   │                            (D-063 sidecar). D-064 hybrid fallback
+│       │   │                            on probe failure (silent → CBORG if
+│       │   │                            available; else loud-warning disable).
 │       │   ├── poster_fill.py           poster template placeholder fill
 │       │   ├── validate_presentation.py P1–P10 mechanized checks
 │       │   ├── assemble_pptx.py         slide_spec.json → pptx
@@ -641,16 +652,30 @@ Tests verify the master output is reproducible from the same inputs
 The poster templates ship as-is from Adam's uploads (already KBase-
 branded fill templates); no derived-master step needed for posters.
 
-## 14. Image-gen client (opt-in, CBORG-default)
+## 14. Image-gen client (opt-in; CBORG or AI Studio)
 
 `tools/image_client.py` — provider-abstraction layer for AI-image-gen.
-v0.1 supports:
+Two providers:
 
-- **CBORG (default).** Endpoint `https://api.cborg.lbl.gov`,
+- **CBORG (v0.3.x baseline).** Endpoint `https://api.cborg.lbl.gov`,
   Bearer-auth via `CBORG_API_KEY`. Models: `google/gemini-pro-image`
-  and `google/gemini-3-pro-image-preview`.
-- **Direct keys.** Reserved for v0.2: `GOOGLE_AI_STUDIO_API_KEY`,
-  `OPENAI_API_KEY` for direct routing if CBORG quality disappoints.
+  and `google/gemini-3-pro-image-preview` (OpenAI-compatible
+  `/v1/images/generations` shape).
+- **Google AI Studio (M5b / D-062).** Endpoint
+  `https://generativelanguage.googleapis.com/v1beta`,
+  `x-goog-api-key`-auth via `GOOGLE_AI_STUDIO_API_KEY`. Native Gemini
+  `:generateContent` API. Honours the user's own AI Studio license
+  per V0_4_ARCHITECTURE §14.1. Model fallback chain (D-035-rev1):
+  `gemini-3-pro-image-preview` → `gemini-3.1-flash-image-preview` →
+  `gemini-2.5-flash-image`. The model in use on a given draft is
+  resolved by `image_client.py probe` (sidecar cache at
+  `audit/ai_image_gen_probe.json`, D-063).
+
+Provider precedence resolved by the orchestrator:
+`--image-provider` CLI arg → `GOOGLE_AI_STUDIO_API_KEY` present
+→ `CBORG_API_KEY` present → image-gen disabled. D-064 hybrid fallback
+on probe failure: silent → CBORG if `CBORG_API_KEY` set; else
+loud-warning disable for the run.
 
 Common interface:
 

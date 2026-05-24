@@ -1258,3 +1258,89 @@ review-cascade: 586 finding(s) across 3 tier(s) ($0.0000, short-circuited at tie
 - **B lift everything to aggregator** — rejected; loses fail-fast on high-stakes numbers.
 
 **Related:** [M5a_PUNCH_LIST.md](M5a_PUNCH_LIST.md) DQ3 + DQ4; [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §13 (hard-reject contract); `tools/revise_invariance.py` (CLI rc=1 hard reject); `tools/revise_loop.py` `_check_revise_invariance` + `LoopState.findings_invariance_violated`; `tools/validate_presentation.py` `validate_p3_numeric_provenance` (high-only lifter); `tools/review_cascade.py` `_read_quantitative_grounding` (medium/low aggregator).
+
+---
+
+## D-035-rev1 — 2026-05-24 — M5b Tier A: AI Studio fallback chain updated for May-2026 model names
+
+**Decision:** The D-035 model fallback chain is updated to match Google's actual May-2026 published model names (verified via WebFetch against `ai.google.dev/gemini-api/docs/image-generation` at M5b Tier A). New chain (`tools/image_client.py::AI_STUDIO_MODEL_FALLBACK_CHAIN`):
+
+  `gemini-3-pro-image-preview` → `gemini-3.1-flash-image-preview` → `gemini-2.5-flash-image`
+
+D-035's original chain was `gemini-3-pro-image → gemini-2.5-flash-image → fail`; Google's model line shifted under it. Specifically: the 3.x line on AI Studio carries a `-preview` suffix (CBORG's proxy strips it, which is why the original D-035 didn't anticipate); a new mid-tier `gemini-3.1-flash-image-preview` ("Nano Banana 2") is the May-2026 primary recommendation and slots between the pro and the prior-gen 2.5-flash.
+
+**Rationale:** D-035's *intent* — "prefer pro lineage if available, fall back to flash, fail loudly if neither" — is unchanged. Only the *names* changed. Treating this as a rev rather than a new D-N preserves the cross-reference history (M5b carry-out items still cite D-035) while documenting the actual shipped chain.
+
+**Alternatives considered:** New D-N for the chain — rejected; the intent and posture are identical to D-035. Hard-code only the May-2026 primary — rejected; the probe + fallback is the whole point of D-035.
+
+**Related:** [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §14.2 (probe contract); D-035 (original chain); [M5b_PUNCH_LIST.md](M5b_PUNCH_LIST.md) Tier A; `tools/image_client.py::AI_STUDIO_MODEL_FALLBACK_CHAIN`; `resolve_ai_studio_model` test pins (test_image_client.py:test_ai_studio_fallback_chain_order, test_resolve_picks_pro_over_flash_when_both_available).
+
+---
+
+## D-062 — 2026-05-24 — M5b: AI Studio image-gen auth discovery lives in the shell orchestrator (DQ1)
+
+**Decision:** Provider precedence and auth-discovery for the AI Studio image-gen path live in `tools/presentation_maker.sh`, NOT in a new Python helper. The existing `CBORG_API_KEY` `.env` resolution block (v0.3.3) is extended to a single-pass loop that also resolves `GOOGLE_AI_STUDIO_API_KEY`. Provider precedence:
+
+1. Explicit `--image-provider {cborg|google_ai_studio}` wins (validated at parse time; unknown values exit 2 with clear error).
+2. `GOOGLE_AI_STUDIO_API_KEY` present → `IMAGE_PROVIDER=google_ai_studio` (honours Adam's stated intent in §14.1).
+3. `CBORG_API_KEY` present → `IMAGE_PROVIDER=cborg`.
+4. Neither → `IMAGE_PROVIDER=""`; downstream `image_client.py` invocation defaults to `cborg` and exits 3 with the "CBORG_API_KEY not set" message — surfaces the misconfiguration loudly.
+
+Resolved `IMAGE_PROVIDER` is exported + threaded into the `image_client.py generate` invocation via `--provider $IMAGE_PROVIDER`.
+
+**Rationale:** Smallest blast radius. The CBORG `.env` parse already exists, is well-tested, and follows the `feedback_secret_file_handling` discipline (never echo values; extract single vars; strip matched quotes). Extending it costs ~5 lines of Python heredoc + a `while-read` loop in shell. A new `tools/auth_discovery.py` helper would have been over-engineered for two env vars; embedding the resolution in `image_client.py` would have duplicated the `.env` walk that the shell already does.
+
+**Alternatives considered:**
+- **`image_client.py` self-resolves** — rejected; duplicates the shell's `.env` walk.
+- **New `tools/auth_discovery.py`** — rejected; over-engineered for two env vars + cross-language invocation cost.
+- **`commands/configure.py`** (named in §14.2's original wording) — that file doesn't exist; would have been a third option but isn't built.
+
+**Related:** [M5b_PUNCH_LIST.md](M5b_PUNCH_LIST.md) DQ1; [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §14.2; `tools/presentation_maker.sh` (auth-discovery + provider-precedence block, lines ~356-440); `tests/unit/test_orchestrator_image_provider.py` (13 tests pinning precedence + .env loading + defensive non-echo).
+
+---
+
+## D-063 — 2026-05-24 — M5b: AI Studio model probe caches in `audit/ai_image_gen_probe.json` sidecar (DQ2)
+
+**Decision:** The AI Studio model-availability probe (M5b Tier C / D-035-rev1) caches its result in `<draft>/audit/ai_image_gen_probe.json`. Cache schema (`schema_version: "ai-image-gen-probe.v1"`):
+
+  - `api_key_fingerprint`: short (8-hex) sha256 of the key; detects rotation without persisting the key.
+  - `probed_at`: ISO-8601 timestamp.
+  - `available_models`: full list returned by the probe (image-capable filter applied).
+  - `resolved_model`: the chain-walk result (may be `null` → triggers D-064).
+  - `from_override`: `true` if `GOOGLE_AI_STUDIO_MODEL` env var was used (probe skipped).
+  - `chain_walked`: the D-035-rev1 fallback chain at the time of write.
+
+Cache hit logic: same `schema_version` AND same `api_key_fingerprint` → return cached record (one HTTP probe per draft + key combination). Corrupt JSON re-probes defensively. `--force-refresh` re-probes unconditionally.
+
+**Rationale:** Per-draft scope, one-time cost (~200ms HTTP). Doesn't depend on the still-settling v0.4 `state.json` schema (M6 will migrate v0.3→v0.4; adding fields now would risk rework). Matches the audit-file pattern used throughout v0.4 (`audit/review_cascade.json`, `audit/review_tier2.json`, `audit/visual_qa.json`, `audit/quantitative_grounding.json`, `audit/revise_invariance/<finding_id>.json`).
+
+Fingerprinting the key (not persisting it) is the safety property — operators auditing the sidecar see only the first 8 hex chars of a SHA-256 hash, never the raw key. Collision resistance at that length is fine for the "did the key change?" use case (NOT cryptographic identity).
+
+**Alternatives considered:**
+- **`state.json` per-draft** (per §14.2's original wording) — rejected; couples to a schema that's in flux at M6.
+- **No cache; probe every invocation** — rejected; burns AI Studio's rate-limit budget for a value that almost never changes mid-draft (~200ms per call × ~30 images = ~6s wall-clock saved per draft + free-tier quota preserved).
+- **Workspace-level cache (one for all drafts)** — rejected; cross-draft staleness would silently mask a user changing their `GOOGLE_AI_STUDIO_API_KEY` between drafts.
+
+**Related:** [M5b_PUNCH_LIST.md](M5b_PUNCH_LIST.md) DQ2; `tools/image_client.py::load_or_probe_ai_studio_model`, `_fingerprint_api_key`, `PROBE_SCHEMA_VERSION`; [SPEC.md](SPEC.md) §8.3.2 (probe + cache narrative); `tests/unit/test_image_client.py` (sidecar round-trip, key-fingerprint rotation, corrupt-cache recovery, schema-version pin).
+
+---
+
+## D-064 — 2026-05-24 — M5b: AI Studio probe-failure posture is hybrid (silent CBORG fallback if available; else loud-warning disable) (DQ3)
+
+**Decision:** When the AI Studio probe finds no usable model in the D-035-rev1 fallback chain, behavior depends on whether CBORG is also configured:
+
+- **`CBORG_API_KEY` set** → silent fallback to CBORG: override `IMAGE_PROVIDER=cborg` for the rest of this draft + emit a one-line stderr log: `[image-gen probe] AI Studio probe found no usable model; falling back to CBORG (silent fallback per D-064; CBORG_API_KEY is set)`. The image-gen stage proceeds.
+- **No `CBORG_API_KEY`** → loud-warning disable: emit a multi-line stderr diagnostic naming each chain model with present/absent marker + image-capable models seen on the key + explicit actionable next steps (set `CBORG_API_KEY`, set `GOOGLE_AI_STUDIO_MODEL=<name>` to pin, or fix AI Studio access). Image-gen is disabled for this run (treat as `--no-images`).
+
+The probe CLI emits `rc=5` for "no usable model" + writes the diagnostic to stderr; the orchestrator branches based on `${CBORG_API_KEY:+set}`.
+
+**Rationale:** Preserves the user's stated intent ("use my Gemini Studio license if available" — §14.1) while not breaking the run when the license is misconfigured. The silent CBORG fallback IS the kindness — if we already have a working alternative, use it without forcing the user to re-invoke. The loud-warning branch ensures the user is NEVER silently downgraded without seeing exactly what was tried (which provider, which model chain, which env vars detected, what to do next).
+
+The single-line "silent" fallback log message is still visible — it's not literally silent; it's just not a wall of text. Operators tailing stderr see the fallback happened; they don't get a 10-line diagnostic for a path that's working.
+
+**Alternatives considered:**
+- **Hard-fail on probe failure** (matching D-035's original "→ fail" terminator) — rejected; too brittle when CBORG is available as an obvious fallback.
+- **Always silent fallback to CBORG (when set)** with no log — rejected; operators need to see the fallback happened, even briefly.
+- **Always disable image-gen on probe failure** — rejected; ignores Adam's stated intent; CBORG is a working path.
+
+**Related:** [M5b_PUNCH_LIST.md](M5b_PUNCH_LIST.md) DQ3; [SPEC.md](SPEC.md) §8.3.2 (D-064 narrative); `tools/image_client.py::format_probe_failure_diagnostic`, `_cmd_probe` (rc=5 + stderr); `tools/presentation_maker.sh::stage_image_gen` (probe block + hybrid branching); `tests/unit/test_image_client.py` (diagnostic tests for both branches; CLI rc=5 pin).
