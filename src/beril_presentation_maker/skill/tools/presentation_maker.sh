@@ -80,8 +80,18 @@
 #                            runs a vision claude -p over them to flag
 #                            render-quality defects (overflow, overlap,
 #                            footer collisions, illegible scale, headline↔body
-#                            mismatch). Advisory (rc=0). Adds ~$0.02-0.05 +
-#                            ~30s per run for a talk-30 deck. Off by default.
+#                            mismatch). Advisory (rc=0). Adds ~$0.6-0.8 +
+#                            ~30s per run for a talk-30 deck. Off by default
+#                            (requires LibreOffice + Poppler on host).
+#   --no-review-cascade      Skip the tiered review cascade (v0.4 M4b). The
+#                            cascade AUTO-RUNS by default — it wraps
+#                            Tier 1 (P1-P10 + advisory checks + opt-in
+#                            visual-QA findings) + Tier 2 (Haiku) + Tier 3
+#                            (canonical adversarial) with fail-fast on a
+#                            Tier-1 P0. Writes audit/review_cascade.{md,json}.
+#                            Use this flag to skip; the standalone
+#                            stage_adversarial_review still runs unless
+#                            --no-adversarial is also set.
 #   --help                   Show this message
 
 set -euo pipefail
@@ -113,6 +123,13 @@ IMAGE_STYLE=""                # optional style override forwarded to ai_image_pr
 # Off by default; vision-LLM call + LibreOffice render adds cost per
 # run, so opt-in until M4b's cascade exists (which may absorb it).
 VISUAL_QA=0
+
+# v0.4 M4b Tier A — tiered review cascade (DQ1 — Adam 2026-05-24).
+# Auto-runs by default; opt out via --no-review-cascade. Produces
+# audit/review_cascade.{md,json}. Tier A ships scaffolding only
+# (per-tier dispatchers return 'not-implemented'); cascade is
+# always advisory until Tiers B/C/D fill in.
+NO_REVIEW_CASCADE=0
 
 CLAUDE_TOOLS="Read,Write,Bash,Grep,Glob,WebSearch,Agent,ToolSearch"
 
@@ -153,6 +170,8 @@ while [[ $# -gt 0 ]]; do
     --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
     # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
     --visual-qa)         VISUAL_QA=1; shift ;;
+    # v0.4 M4b Tier A — review cascade is auto-run; opt out with this flag
+    --no-review-cascade) NO_REVIEW_CASCADE=1; shift ;;
     --help)              usage ;;
     -*)                  echo "Error: Unknown option $1" >&2; usage 1 ;;
     *)
@@ -1990,6 +2009,25 @@ stage_merge_and_assemble() {
 }
 
 # ==============================================================================
+# v0.4 M4b — review cascade orchestrator (Tier A scaffolding)
+# ==============================================================================
+
+stage_review_cascade() {
+  # v0.4 M4b Tier A (Adam 2026-05-24 — DQ1 auto-run): run the tiered
+  # review cascade. Tier A ships scaffolding only — per-tier dispatchers
+  # return 'not-implemented' until Tiers B/C/D fill them in. Tier-A
+  # cascade is therefore advisory: writes audit/review_cascade.{md,json}
+  # with all three tiers marked 'not-implemented', total cost $0.
+  # Always rc=0 (advisory; matches reconcile_deck.py + visual_qa.py).
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[Stage 11.5/13] review_cascade (M4b Tier A scaffolding)" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/review_cascade.py" \
+    "$OUTDIR" 2>&1 | sed 's/^/  /' >&2 || true
+}
+
+# ==============================================================================
 # 2026-04-29 v0.3.0 — review-rewrite loop stages
 # ==============================================================================
 
@@ -2262,6 +2300,19 @@ fi
 
 # merge always runs (it's the final assembly step; cheap)
 stage_merge_and_assemble    || { echo "FAIL at merge/assemble" >&2; exit 1; }
+
+# v0.4 M4b Tier A: review cascade orchestrator. Auto-runs by default
+# (DQ1); opt out with --no-review-cascade. Tier A is scaffolding —
+# per-tier dispatchers return 'not-implemented'; Tiers B/C/D fill in.
+# The standalone stage_adversarial_review below still runs as today
+# (cascade Tier 3 is not yet wired to elide it; that's Tier D).
+if [[ $NO_REVIEW_CASCADE -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
+  stage_review_cascade
+else
+  if [[ $NO_REVIEW_CASCADE -eq 1 ]]; then
+    echo "[skip] review_cascade (--no-review-cascade)" >&2
+  fi
+fi
 
 # v0.3.0: adversarial review-rewrite loop (after assembly, before final summary).
 # Skip when --no-adversarial OR when --skip-assembly (no spec to review).
