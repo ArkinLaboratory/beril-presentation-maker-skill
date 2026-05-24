@@ -734,6 +734,28 @@ def test_layout_handlers_dispatch_covers_full_vocabulary(ss, asm):
     assert set(asm.LAYOUT_HANDLERS.keys()) == set(ss.LAYOUTS)
 
 
+def test_graphite_gray_is_slate_dark(asm):
+    """M4a Tier E round 2 (2026-05-23): GRAPHITE_GRAY_RGB is the
+    secondary-text color used by step_captions, source_footers,
+    citation bands, AI-disclosure footers, table data cells, etc.
+    The pre-round-2 value (157, 146, 135) — a light tan-gray drawn
+    from the KBase brand-token `graphite_gray` — washed out against
+    the master's cream background. Round 2 bumped it to slate-dark
+    (80, 75, 70) — a warm-tinted near-black that holds contrast on
+    cream + post-watermark-strip flat backgrounds while keeping the
+    visual hierarchy between primary (body) and secondary text.
+
+    Pin: the value must be substantially darker than (140, 140, 140).
+    """
+    r, g, b = asm.GRAPHITE_GRAY_RGB
+    # Each channel below 140 = visibly darker than 'gray'
+    assert r < 140 and g < 140 and b < 140, (
+        f"GRAPHITE_GRAY_RGB={asm.GRAPHITE_GRAY_RGB} — secondary text "
+        f"must be substantially darker than the pre-round-2 value "
+        f"(157, 146, 135) for contrast against the cream master."
+    )
+
+
 # ---------------------------------------------------------------------------
 # M4a Tier A — explicit-fontScale shrink-to-fit + footer-safety geometry
 # ---------------------------------------------------------------------------

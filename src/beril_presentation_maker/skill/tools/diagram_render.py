@@ -78,6 +78,19 @@ DEFAULT_NODE_FILL = "freshwater_blue"
 DEFAULT_NODE_TEXT = "white"
 DEFAULT_SWIMLANE_BORDER = "graphite_gray"
 
+# M4a Tier E round 2 (2026-05-23): connector lines and edge labels
+# moved off the brand's `graphite_gray` (#9D9389 — a light tan-gray,
+# documented brand identity for soft elements like swimlane borders)
+# onto a slate-dark tone that holds contrast against cream backgrounds
+# and the new (post-watermark-strip) flat slide background. Tier E
+# round-1 visual-QA found the connector lines on slides 6/10/19 were
+# essentially invisible against the watermark; the same color value is
+# still washed out on the flat cream background. swimlane borders
+# (DEFAULT_SWIMLANE_BORDER) intentionally keep graphite_gray — they
+# ARE meant to recede.
+from pptx.dml.color import RGBColor as _RGBColor
+_CONNECTOR_RGB = _RGBColor(80, 75, 70)   # slate-dark; matches assemble_pptx.GRAPHITE_GRAY_RGB
+
 # Hardcoded fallback hexes if brand_tokens not provided. Matches
 # kbase-brand-tokens.json (KBase Style Guide June 2022).
 _FALLBACK_HEX = {
@@ -378,10 +391,9 @@ def _render_edge_line(
         Inches(src.cx), Inches(src.cy),
         Inches(dst.cx), Inches(dst.cy),
     )
-    # Color the line graphite-gray (KBase palette neutral)
-    line.line.color.rgb = resolve_color(
-        "graphite_gray", brand_tokens, "graphite_gray",
-    )
+    # Color the line slate-dark (M4a Tier E round 2). Was graphite_gray,
+    # which washed out against the master's cream tone — see _CONNECTOR_RGB.
+    line.line.color.rgb = _CONNECTOR_RGB
 
 
 def _render_edge_label(
@@ -432,9 +444,9 @@ def _render_edge_label(
     for paragraph in tb.text_frame.paragraphs:
         for run in paragraph.runs:
             run.font.size = Pt(9)
-            run.font.color.rgb = resolve_color(
-                "graphite_gray", brand_tokens, "graphite_gray",
-            )
+            # Slate-dark for contrast against the (post-watermark-strip)
+            # cream background. Bumped 2026-05-23 (M4a Tier E round 2).
+            run.font.color.rgb = _CONNECTOR_RGB
 
 
 # ---------------------------------------------------------------------------

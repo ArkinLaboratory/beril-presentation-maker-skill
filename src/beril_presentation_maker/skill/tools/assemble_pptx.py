@@ -675,7 +675,16 @@ CAPTION_BAND = (0.30, 4.48, 9.40, 0.40)   # secondary-text strip, ends 4.88
 CITATION_BAND = (0.30, 4.58, 9.40, 0.30)  # citation strip, ends 4.88
 AI_DISCLOSURE_BAND = (0.30, 4.70, 9.40, 0.20)  # 8pt graphite-gray, ends 4.90
 
-GRAPHITE_GRAY_RGB = (157, 146, 135)  # KBase secondary palette
+# M4a Tier E round 2 (2026-05-23): darken from (157, 146, 135) — a
+# light tan-gray calibrated for pure-white backgrounds — to a slate-
+# dark tone that retains a warm tint matching the master's cream theme
+# but holds contrast across cream + (post-watermark-strip) flat
+# backgrounds. The previous value washed out against the (now-removed)
+# plant-stem watermark and remained borderline even on the flat cream
+# master. Used by step_captions, source_footers, citation bands,
+# AI-disclosure footers, table data cells, etc. — every "secondary
+# text" rendered by assemble_pptx + diagram_render.
+GRAPHITE_GRAY_RGB = (80, 75, 70)   # slate-dark, warm-tinted
 
 # v0.3.2: KBase brand palette (full hex for data_table styling)
 KBASE_BLUE_RGB   = (0x00, 0x7D, 0xC3)   # #007DC3 — table header bg, links
@@ -965,10 +974,25 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
             # figure H 3.50 → 3.15 (FIGURE_REGIONS update above) so
             # figure ends at y=4.45; caption sits at 4.50..4.85 in the
             # cleared 0.40 in band; logos start at 5.00.
-            _add_textbox(slide, content["figure_caption"],
-                         5.30, 4.50, 4.50, 0.35,
-                         font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
-                         word_wrap=True)
+            # M4a Tier E round 2 (2026-05-23): wrap with _fit_textbox.
+            # Tier E round 1 visual-QA flagged Slide 13's figure_caption
+            # spilling into the DOE/KBase logo strip — the caption box
+            # is only 0.35in tall (~2 lines at 11pt) and word_wrap alone
+            # wraps without shrinking; long captions visually exceed the
+            # box and collide with the bottom-right KBase logo. Mirrors
+            # the data_figure caption pattern (which uses shrink_to_fit;
+            # _fit_textbox is the v0.4 replacement that LibreOffice
+            # actually honors). Ladder tuned for the 4.50 x 0.35in band.
+            cap_tb = _add_textbox(slide, content["figure_caption"],
+                                  5.30, 4.50, 4.50, 0.35,
+                                  font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+                                  word_wrap=True)
+            _fit_textbox(cap_tb,
+                         ladder=((100, 100000), (150, 90000), (200, 80000), (260, 70000)),
+                         full_below=100,
+                         warnings=warnings,
+                         where=f"claim_evidence figure_caption "
+                               f"(slide {getattr(slide, 'slide_id', '?')})")
     else:
         # No figure — bullets fill the body placeholder. Trim it clear
         # of the footer band + add autofit (the master body runs to

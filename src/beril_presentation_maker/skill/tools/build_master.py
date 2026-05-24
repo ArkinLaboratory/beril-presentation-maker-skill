@@ -376,21 +376,19 @@ LAYOUT_FIXES: dict[str, dict] = {
     },
 
     # --- concept_illustration -----------------------------------------------
-    # Adam's edits: pull a hidden decorative shape onto the slide edge, and
-    # narrow the body so an AI-generated image has room beside it.
+    # Narrow the body so an AI-generated image has room beside it.
+    # M4a Tier E round 2 (2026-05-23): dropped the "pull decorative shape
+    # to slide edge" edit — that edit targeted the full-slide watermark
+    # picture (by_shape_index=0 was the source-deck watermark), which
+    # _strip_full_slide_watermarks now removes entirely. Without the
+    # watermark to reposition, the edit was either a no-op or (worse)
+    # hitting the wrong shape after the strip changed shape ordinals.
     "concept_illustration": {
         "rationale": (
-            "AI-generated illustration slides need a visible visual anchor "
-            "beside the title text. The source layout had a decorative shape "
-            "hidden far off-screen; pulling it to the edge frames the body."
+            "AI-generated illustration slides need the body placeholder "
+            "narrowed to leave room for the image on the right."
         ),
         "shape_edits": [
-            # Hidden decorative shape — pull to slide edge
-            {
-                "by_shape_index": 0,
-                "xfrm": {"off_x": -3, "off_y": 0,
-                         "ext_cx": 9144003, "ext_cy": 5143501},
-            },
             # Body placeholder — narrow to leave room for image on right
             {
                 "by_ph": ("body", "1"),
@@ -794,6 +792,75 @@ def _apply_layout_fixes(prs, verbose: bool = True) -> list[str]:
     return applied
 
 
+# M4a Tier E (round 2, 2026-05-23): strip the full-slide plant-stem
+# watermark from every layout that carries it. The source .potx bakes a
+# 10.0 x 5.6in decorative PICTURE into 12 of 15 layouts (workflow_diagram,
+# big_number, data_figure, methods_summary, qa_anticipated, references,
+# claim_evidence, section_divider, acknowledgments, implications,
+# concept_illustration, cross_tenant_integration). It paints UNDER the
+# body content (z-order is correct) but its mid-tone green visually
+# competes with diagram boxes, dilutes graphite-gray secondary text, and
+# obscures pale connector lines — Tier E round-1 visual-QA found every
+# affected slide had a degraded read of either the diagram or the
+# captions. Removing the watermark returns the body region to the
+# master's flat cream background while preserving the DOE/KBase logo
+# strip (the small bottom-right pictures, which are NOT full-slide and
+# stay).
+#
+# Heuristic for "is this a watermark": full-slide-ish PICTURE shape
+# (width > 8in AND height > 4.5in on a 10.0 x 5.625in slide). The two
+# logos in each layout are ~1.5 x 0.5in and survive.
+_WATERMARK_MIN_W_IN = 8.0
+_WATERMARK_MIN_H_IN = 4.5
+_EMU_PER_INCH = 914400
+
+
+def _strip_full_slide_watermarks(prs, verbose: bool = True) -> list[tuple[str, int]]:
+    """Remove every full-slide PICTURE shape from every layout in master 0.
+
+    Returns list of (layout_name, n_removed) tuples. The DOE + KBase
+    logo pictures are too small to match the heuristic and stay.
+    """
+    removed: list[tuple[str, int]] = []
+    master0 = prs.slide_masters[0]
+    for layout in master0.slide_layouts:
+        sptree = layout.element.find(
+            f".//{{{P_NS}}}cSld/{{{P_NS}}}spTree"
+        )
+        if sptree is None:
+            continue
+        to_remove = []
+        for child in sptree:
+            local = etree.QName(child).localname
+            if local != "pic":
+                continue
+            # <p:pic> geometry lives in <p:spPr>/<a:xfrm>/<a:ext>
+            ext = child.find(
+                f"{{{P_NS}}}spPr/{{{A_NS}}}xfrm/{{{A_NS}}}ext"
+            )
+            if ext is None:
+                continue
+            try:
+                cx = int(ext.get("cx", "0"))
+                cy = int(ext.get("cy", "0"))
+            except (TypeError, ValueError):
+                continue
+            w_in = cx / _EMU_PER_INCH
+            h_in = cy / _EMU_PER_INCH
+            if w_in >= _WATERMARK_MIN_W_IN and h_in >= _WATERMARK_MIN_H_IN:
+                to_remove.append(child)
+        for child in to_remove:
+            sptree.remove(child)
+        if to_remove:
+            removed.append((layout.name, len(to_remove)))
+            if verbose:
+                print(
+                    f"[build_master] stripped {len(to_remove)} full-slide "
+                    f"watermark(s) from layout '{layout.name}'"
+                )
+    return removed
+
+
 # Layouts where LAYOUT_FIXES intentionally sets noAutofit on the title and
 # we should NOT override (the title font size is part of the design intent).
 # big_number: 96pt headline that must NEVER shrink (the number IS the slide).
@@ -982,7 +1049,18 @@ def build_master(source_potx: Path, dest_pptx: Path, brand_tokens_dest: Path,
     applied_fixes = _apply_layout_fixes(prs, verbose=verbose)
     report["applied_fixes"] = applied_fixes
 
-    # Step 5b: universal title-autofit sweep — every layout except those
+    # Step 5c (M4a Tier E round 2, 2026-05-23): strip the full-slide
+    # plant-stem watermark from every layout that carries one. See
+    # _strip_full_slide_watermarks for the rationale (the watermark
+    # visually competes with body content; Tier E round-1 visual-QA
+    # found every watermark-bearing layout had degraded reads). DOE +
+    # KBase logos survive (too small for the heuristic).
+    stripped_watermarks = _strip_full_slide_watermarks(prs, verbose=verbose)
+    report["stripped_watermarks"] = [
+        {"layout": name, "n_removed": n} for name, n in stripped_watermarks
+    ]
+
+    # Step 5d: universal title-autofit sweep — every layout except those
     # in _LAYOUTS_WITH_INTENTIONAL_NO_AUTOFIT_TITLE gets explicit
     # normAutofit + anchor=t on its title placeholder. Fixes the
     # 2026-04-26 visual review finding that 19/21 slides had title text

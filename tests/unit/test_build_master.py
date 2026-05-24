@@ -439,6 +439,67 @@ def test_build_emits_expected_report_keys(tmp_path: Path):
 
 
 @requires_source
+def test_build_strips_full_slide_watermarks(tmp_path: Path):
+    """M4a Tier E round 2 (2026-05-23): every layout that carried a
+    full-slide plant-stem watermark in the source .potx must have it
+    removed in the derived master. Tier E round-1 visual-QA found the
+    watermark visually competed with body content on 9 of 28 slides
+    (workflow_diagram, methods_summary, qa_anticipated, etc.). Strip
+    is bounded to full-slide pictures (w >= 8in AND h >= 4.5in); DOE
+    + KBase logos (small bottom-right pictures) survive.
+    """
+    bm = _import_build_master()
+    out = tmp_path / "build.pptx"
+    bt = tmp_path / "tokens.json"
+    report = bm.build_master(SOURCE_POTX, out, bt, verbose=False)
+    assert "stripped_watermarks" in report, "report missing stripped_watermarks key"
+    # At least 10 layouts should be stripped (we observed 12 in the source
+    # .potx; allow some variance if the brand template changes upstream)
+    assert len(report["stripped_watermarks"]) >= 10, (
+        f"expected ≥10 layouts stripped of full-slide watermarks; "
+        f"got {report['stripped_watermarks']}"
+    )
+    # The four canonical content-bearing layouts MUST be in the stripped list
+    stripped_names = {item["layout"] for item in report["stripped_watermarks"]}
+    for required in ("workflow_diagram", "methods_summary",
+                     "qa_anticipated", "data_figure"):
+        assert required in stripped_names, (
+            f"layout {required!r} must have its watermark stripped "
+            f"(visual-QA round-1 found these were the worst offenders)"
+        )
+
+
+@requires_source
+def test_build_preserves_logo_pictures(tmp_path: Path):
+    """The watermark-strip uses a full-slide heuristic; the DOE + KBase
+    logos (~1.5 x 0.5in, bottom-right) must NOT be removed."""
+    from pptx import Presentation
+    bm = _import_build_master()
+    out = tmp_path / "build.pptx"
+    bt = tmp_path / "tokens.json"
+    bm.build_master(SOURCE_POTX, out, bt, verbose=False)
+    prs = Presentation(out)
+    EMU = 914400
+    # Sample two layouts known to carry logos: workflow_diagram
+    # (watermark stripped) and title (no watermark, has subtitle slot).
+    for layout_name in ("workflow_diagram",):
+        layout = next((l for l in prs.slide_masters[0].slide_layouts
+                       if l.name == layout_name), None)
+        assert layout is not None, f"layout {layout_name!r} missing"
+        small_pics = [
+            shp for shp in layout.shapes
+            if str(shp.shape_type) == "PICTURE (13)"
+            and shp.width and shp.height
+            and (shp.width / EMU) < 8.0   # below the watermark heuristic
+        ]
+        # Workflow_diagram had 2 logos (DOE + KBase) in addition to the watermark
+        assert len(small_pics) >= 2, (
+            f"layout {layout_name!r}: expected ≥2 small pictures (logos) "
+            f"to survive watermark strip; got {len(small_pics)}"
+        )
+
+
+@requires_source
 def test_build_strips_all_source_slides(tmp_path: Path):
     """The source .potx contains 32 example slides (the Gazi 2026 deck);
     the derived master must ship zero slides."""

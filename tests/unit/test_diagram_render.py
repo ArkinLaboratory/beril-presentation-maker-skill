@@ -264,6 +264,24 @@ def test_apply_fontscale_to_shape_long_label_clamps_at_floor(dr, blank_slide):
         f"150-char label should clamp at floor (60%), got {norm.get('fontScale')}"
 
 
+def test_connector_color_is_slate_dark(dr):
+    """M4a Tier E round 2 (2026-05-23): connector lines and edge labels
+    moved off the brand's `graphite_gray` (#9D9389) onto a slate-dark
+    tone (80, 75, 70) that holds contrast against cream backgrounds.
+    Round-1 visual-QA found the connector lines were essentially
+    invisible against the watermark + cream background. swimlane
+    borders intentionally keep graphite_gray — they ARE meant to
+    recede."""
+    r, g, b = dr._CONNECTOR_RGB[0], dr._CONNECTOR_RGB[1], dr._CONNECTOR_RGB[2]
+    assert r < 140 and g < 140 and b < 140, (
+        f"_CONNECTOR_RGB={(r, g, b)} — connector lines/labels must be "
+        f"substantially darker than graphite_gray for legibility "
+        f"against the cream master."
+    )
+    # swimlane border stays graphite_gray (intentional softness)
+    assert dr.DEFAULT_SWIMLANE_BORDER == "graphite_gray"
+
+
 def test_render_diagram_edge_labels_paint_after_nodes(dr, blank_slide):
     """M4a Tier A3: label textboxes render AFTER node shapes in
     document/paint order — z-order = paint order in python-pptx, so a
