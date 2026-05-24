@@ -168,16 +168,20 @@ def test_e2e_clean_spec_runs_all_three_tiers(rc, ss, tmp_path, monkeypatch):
     # returns rc=0 + we pre-write audit/adversarial_review.json.
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
-    def _stub_t3(d, adversarial_bin="beril-adversarial"):
+    def _stub_t3(d, adversarial_bin="beril-adversarial", beril_root=None):
         return (0, "ok", "", 30.0)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial", _stub_t3)
     audit = tmp_path / "audit"
     audit.mkdir(parents=True, exist_ok=True)
+    # Real v3 schema (`adversarial-review-presentation.v3`): uses
+    # `class` (not `kind`), `issue` (not `summary`), severity in
+    # {P0, P1, info}.
     (audit / "adversarial_review.json").write_text(json.dumps({
-        "schema_version": "presentation-adversarial.v3",
+        "schema_version": "adversarial-review-presentation.v3",
         "findings": [
-            {"id": "F001", "slide_id": 1, "kind": "evidence_gap",
-             "severity": "major", "summary": "synthetic Tier-3 finding"},
+            {"id": "F001", "slide_id": 1, "class": "claim_evidence",
+             "severity": "P1", "confidence": "high",
+             "issue": "synthetic Tier-3 finding"},
         ],
     }))
 
@@ -204,7 +208,7 @@ def test_e2e_clean_spec_runs_all_three_tiers(rc, ss, tmp_path, monkeypatch):
     # Findings tally across all three tiers
     all_kinds = [f["kind"] for t in payload["tiers"] for f in t["findings"]]
     assert "register_drift" in all_kinds   # Tier 2
-    assert "evidence_gap" in all_kinds      # Tier 3
+    assert "claim_evidence" in all_kinds   # Tier 3 (real v3 class)
 
 
 # ---------------------------------------------------------------------------

@@ -340,7 +340,8 @@ def test_tier3_returns_error_when_adversarial_subprocess_fails(rc, tmp_path, mon
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial",
-                        lambda d, adversarial_bin="beril-adversarial":
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
                             (2, "", "model rate-limited", 1.0))
     result = rc.run_tier3(tmp_path)
     assert result.status == "error"
@@ -354,7 +355,8 @@ def test_tier3_returns_error_when_no_audit_json_post_invoke(rc, tmp_path, monkey
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial",
-                        lambda d, adversarial_bin="beril-adversarial":
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
                             (0, "ok", "", 2.0))
     # No audit/adversarial_review.json pre-written
     result = rc.run_tier3(tmp_path)
@@ -364,45 +366,70 @@ def test_tier3_returns_error_when_no_audit_json_post_invoke(rc, tmp_path, monkey
 
 def test_tier3_lifts_v3_findings_into_cascade_findings(rc, tmp_path, monkeypatch):
     """Happy path: adversarial v3 JSON present → cascade lifts each
-    finding as CascadeFinding(tier='tier3'); central_objection also
-    lifted. All P1 per D2 (Tier 3 has full editorial authority but
-    cascade doesn't gate on it — the revise loop owns the response)."""
+    finding as CascadeFinding(tier='tier3').
+
+    M4b Tier E live-data fix (2026-05-24): the real v3 schema
+    (`adversarial-review-presentation.v3`) uses `class` (not `kind`),
+    `issue` (not `summary`), and central_objection is a regular
+    finding with `class="central_objection"` (NOT a top-level
+    field). Severity is preserved from the v3 finding (P0/P1/info
+    → cascade P0/P1/P2)."""
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial",
-                        lambda d, adversarial_bin="beril-adversarial":
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
                             (0, "ok", "", 25.0))
 
     audit = tmp_path / "audit"
     audit.mkdir(parents=True, exist_ok=True)
     (audit / "adversarial_review.json").write_text(json.dumps({
-        "schema_version": "presentation-adversarial.v3",
+        "schema_version": "adversarial-review-presentation.v3",
+        "project_id": "x", "draft_number": 1,
+        "reviewer_model": "claude-sonnet-4-6",
+        "prompt_version": "adversarial_presentation.v3",
+        "tier": "STRONG",
+        "summary": "test",
         "findings": [
-            {"id": "F001", "slide_id": 7, "kind": "evidence_gap",
-             "severity": "major", "summary": "94.7% lacks per-cohort breakdown",
-             "recommendation": "add cohort qualifier to subtitle"},
-            {"id": "F002", "slide_id": 13, "kind": "register_drift",
-             "severity": "minor", "summary": "passive voice on STRONG claim",
+            {"id": "F001", "class": "throughline",
+             "severity": "P0", "confidence": "high",
+             "slide_id": 1, "title_quote": "...",
+             "issue": "throughline contradicts REPORT",
+             "recommendation": "fix throughline"},
+            {"id": "F002", "class": "register_drift",
+             "severity": "P1", "confidence": "medium",
+             "slide_id": 13,
+             "issue": "passive voice on STRONG claim",
              "recommendation": "rewrite active"},
+            {"id": "F003", "class": "central_objection",
+             "severity": "info", "confidence": "high",
+             "slide_id": None,
+             "issue": "deck weakness: gap between ecotype claim and clinical action",
+             "recommendation": "add slide on AIEC strain-resolution gap"},
         ],
-        "central_objection": {
-            "id": "CO1", "slide_id": None,
-            "summary": "deck pivots on PhageFoundry coverage without "
-                       "naming the per-patient diagnostic gap",
-            "recommendation": "add a slide on the AIEC strain-resolution gap",
-        },
     }))
     result = rc.run_tier3(tmp_path)
     assert result.status == "advisory"
-    # 2 findings + 1 central_objection = 3 total
     assert len(result.findings) == 3
     assert all(f.tier == "tier3" for f in result.findings)
-    assert all(f.severity == "P1" for f in result.findings)
-    assert result.has_p0 is False   # Tier 3 doesn't short-circuit either
-    kinds = {f.kind for f in result.findings}
-    assert "evidence_gap" in kinds
-    assert "register_drift" in kinds
-    assert "central_objection" in kinds
+    # Severities preserved: P0 → P0, P1 → P1, info → P2
+    sevs = {f.kind: f.severity for f in result.findings}
+    assert sevs["throughline"] == "P0"
+    assert sevs["register_drift"] == "P1"
+    assert sevs["central_objection"] == "P2"   # info → P2
+    # cascade severity P0 on Tier 3 does NOT trigger short-circuit
+    # (Tier 3 is the bottom tier; nothing to short-circuit). The
+    # cascade orchestrator reads has_p0 ONLY on Tier 1.
+    assert result.has_p0 is True
+    # Details lifted from v3's `issue` field (not `summary`)
+    details = {f.kind: f.detail for f in result.findings}
+    assert "throughline contradicts" in details["throughline"]
+    assert "passive voice" in details["register_drift"]
+    # central_objection has its own class; evidence captures the
+    # v3 input severity so consumers can distinguish from a v3 P0
+    # that happened to be tagged differently.
+    co = next(f for f in result.findings if f.kind == "central_objection")
+    assert co.evidence["v3_severity"] == "info"
 
 
 def test_tier3_skipped_finding_status_pass_when_no_findings(rc, tmp_path, monkeypatch):
@@ -411,7 +438,8 @@ def test_tier3_skipped_finding_status_pass_when_no_findings(rc, tmp_path, monkey
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial",
-                        lambda d, adversarial_bin="beril-adversarial":
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
                             (0, "ok", "", 25.0))
     audit = tmp_path / "audit"
     audit.mkdir(parents=True, exist_ok=True)

@@ -785,37 +785,54 @@ def run_tier3(
             duration_sec=duration,
         )
 
-    # Lift v3 findings into cascade findings. beril-adversarial v3
-    # schema (per CONTRACT.md) names findings under top-level
-    # `findings` and a separate `central_objection` (singular, may be
-    # absent). Both are surfaced as P1 (advisory) — Tier 3 has full
-    # editorial authority but the cascade doesn't gate Tier 3's
-    # findings beyond surfacing them (the revise loop owns response).
+    # Lift v3 findings into cascade findings.
+    # beril-adversarial v3 schema (`adversarial-review-presentation.v3`)
+    # per direct inspection of audit/adversarial_review.json on
+    # ibd_phage_targeting/draft_1:
+    #   {id, class, severity, confidence, slide_id?, slide_position?,
+    #    slide_layout?, substory_id?, title_quote?, issue,
+    #    report_evidence?, recommendation?, ...}
+    # Top-level keys: schema_version, draft_dir, project_id,
+    # draft_number, reviewed_at, reviewer_model, prompt_version,
+    # tier, summary, findings.
+    # `central_objection` is NOT a top-level field; it's a regular
+    # finding with class="central_objection".
+    #
+    # Severity preservation (M4b Tier E hotpatch, 2026-05-24):
+    # the previous version blindly stamped every Tier 3 finding as
+    # P1 (cascade severity). That LOST the v3 schema's own P0/P1/
+    # info distinction — a v3 P0 finding (severe, e.g., a
+    # throughline contradicting REPORT) is materially different
+    # from a v3 P1 (advisory). The revise loop reads the audit JSON
+    # directly so it didn't lose this info, BUT the cascade JSON
+    # consumer (and future Tier-4 escalation logic) should see the
+    # severity stratification. Tier 3 still doesn't short-circuit
+    # anything below it (it IS the bottom tier).
     findings: list[CascadeFinding] = []
     for f in payload.get("findings", []) or []:
-        # v3 finding shape (per CONTRACT.md): {id, slide_id?, kind,
-        # severity?, summary, evidence?, recommendation?, ...}
+        v3_severity = f.get("severity", "P1")
+        # Map v3 severities to cascade severities. v3 uses {P0, P1,
+        # info}; cascade uses {P0, P1, P2}. Map info → P2.
+        if v3_severity == "info":
+            sev = "P2"
+        elif v3_severity in ("P0", "P1"):
+            sev = v3_severity
+        else:
+            sev = "P1"   # unknown / future v3 severity → conservative P1
         findings.append(CascadeFinding(
             tier="tier3",
-            kind=f.get("kind", "adversarial"),
-            severity="P1",
+            kind=f.get("class", "adversarial"),
+            severity=sev,
             slide_id=f.get("slide_id"),
-            detail=f.get("summary", "<no summary>"),
+            detail=f.get("issue", "<no issue>"),
             evidence={"id": f.get("id"),
-                      "input_severity": f.get("severity"),
+                      "v3_severity": v3_severity,
+                      "v3_confidence": f.get("confidence"),
+                      "slide_position": f.get("slide_position"),
+                      "slide_layout": f.get("slide_layout"),
+                      "substory_id": f.get("substory_id"),
+                      "title_quote": f.get("title_quote"),
                       "recommendation": f.get("recommendation")},
-        ))
-    central = payload.get("central_objection")
-    if isinstance(central, dict):
-        findings.append(CascadeFinding(
-            tier="tier3",
-            kind="central_objection",
-            severity="P1",
-            slide_id=central.get("slide_id"),
-            detail=central.get("summary", "<no summary>"),
-            evidence={"id": central.get("id"),
-                      "recommendation": central.get("recommendation"),
-                      "kind": "central_objection"},
         ))
 
     return TierResult(
