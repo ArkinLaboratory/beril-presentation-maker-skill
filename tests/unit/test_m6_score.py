@@ -100,6 +100,79 @@ def test_aggregate_runs_returns_empty_on_missing_dir(m6, tmp_path):
     assert out.total_cost_usd == 0.0
 
 
+def test_aggregate_runs_wall_clock_uses_timestamp_delta(m6, tmp_path):
+    """M6 Tier A.1: metric 1's wall_clock_seconds is (latest_finished -
+    earliest_started), NOT sum(per-stage elapsed). This is the
+    user-perceived clock. For a single-run draft, the two should
+    match when stages run sequentially; for parallel-compose
+    architectures (v0.4), wall-clock < sum(elapsed)."""
+    audit = _make_audit_dir(tmp_path, runs=[
+        # Single run: 10 min wall-clock end-to-end
+        {"total_cost_usd": 5.0,
+         "total_elapsed_seconds": 600,  # sequential equivalent
+         "started_at": "2026-05-25T10:00:00Z",
+         "finished_at": "2026-05-25T10:10:00Z", "exit_code": 0}])
+    out = m6.aggregate_runs(audit)
+    # timestamp delta = 10 min = 600s
+    assert out.wall_clock_seconds == 600.0
+    assert out.total_elapsed_seconds == 600.0  # both agree here
+
+
+def test_aggregate_runs_wall_clock_correctly_attributes_parallelism(m6, tmp_path):
+    """The architectural promise of v0.4 parallel-compose: 4 substories
+    composing in parallel for 10 min each take 10 min of wall-clock
+    but sum to 40 min of stage-elapsed. wall_clock_seconds must
+    measure the wall-clock; total_elapsed_seconds keeps the (larger)
+    summed view. M6 metric 1 uses wall_clock_seconds."""
+    audit = _make_audit_dir(tmp_path, runs=[
+        # Simulated v0.4 parallel-compose: 4 stages × 10min each ran
+        # concurrently. finalize_run.py sums to 40 min; wrapper
+        # observes 10 min.
+        {"total_cost_usd": 5.0,
+         "total_elapsed_seconds": 2400,  # 4 × 600s (double-counted)
+         "started_at": "2026-05-25T10:00:00Z",
+         "finished_at": "2026-05-25T10:10:00Z", "exit_code": 0}])
+    out = m6.aggregate_runs(audit)
+    assert out.wall_clock_seconds == 600.0       # 10 min wrapper
+    assert out.total_elapsed_seconds == 2400.0   # 40 min sum (kept for ref)
+
+
+def test_aggregate_runs_wall_clock_spans_multiple_runs(m6, tmp_path):
+    """For a draft with multiple runs (initial + resume), wall_clock
+    spans from the earliest started to the latest finished — captures
+    real wall-clock attributable to the draft. Doesn't double-count
+    pauses between runs (operator-time isn't pipeline-time, but the
+    delta-based measure captures all of it as a single span — the
+    sum-based measure would skip the gap)."""
+    audit = _make_audit_dir(tmp_path, runs=[
+        {"total_cost_usd": 2.0, "total_elapsed_seconds": 300,
+         "started_at": "2026-05-25T10:00:00Z",
+         "finished_at": "2026-05-25T10:05:00Z", "exit_code": 0},
+        # 2 hour gap (operator iteration)
+        {"total_cost_usd": 3.0, "total_elapsed_seconds": 600,
+         "started_at": "2026-05-25T12:00:00Z",
+         "finished_at": "2026-05-25T12:10:00Z", "exit_code": 0},
+    ])
+    out = m6.aggregate_runs(audit)
+    # earliest_started → latest_finished = 2h 10min = 7800s
+    assert out.wall_clock_seconds == 7800.0
+    # sum of per-stage elapsed: 900s (does NOT include the 2h gap)
+    assert out.total_elapsed_seconds == 900.0
+
+
+def test_aggregate_runs_wall_clock_falls_back_when_timestamps_missing(m6, tmp_path):
+    """If summary.json doesn't have started_at/finished_at (legacy or
+    malformed), wall_clock_seconds falls back to total_elapsed_seconds
+    rather than 0 (which would falsely show v0.4 as infinitely fast)."""
+    audit = _make_audit_dir(tmp_path, runs=[
+        {"total_cost_usd": 1.0, "total_elapsed_seconds": 500,
+         "exit_code": 0}])  # no started_at / finished_at
+    out = m6.aggregate_runs(audit)
+    assert out.wall_clock_seconds == 500.0  # fell back
+    assert out.earliest_started is None
+    assert out.latest_finished is None
+
+
 def test_aggregate_runs_ignores_malformed_json(m6, tmp_path):
     audit = tmp_path / "audit"
     audit.mkdir()

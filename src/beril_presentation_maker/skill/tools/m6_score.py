@@ -85,10 +85,26 @@ class RunSummary:
     one draft's audit dir."""
     n_runs: int = 0
     total_cost_usd: float = 0.0
-    total_elapsed_seconds: float = 0.0
+    total_elapsed_seconds: float = 0.0  # sum of per-stage elapsed (kept for ref)
+    wall_clock_seconds: float = 0.0     # (latest_finished - earliest_started)
     earliest_started: Optional[str] = None
     latest_finished: Optional[str] = None
     exit_codes: list[int] = field(default_factory=list)
+
+
+def _parse_iso_to_seconds(ts: str) -> Optional[float]:
+    """Parse an ISO-8601 UTC timestamp like `2026-05-25T11:16:59Z` to
+    POSIX seconds. Returns None on parse failure. Handles trailing 'Z'."""
+    from datetime import datetime, timezone
+    try:
+        # Python 3.14's fromisoformat handles trailing Z natively, but
+        # be defensive for older formats.
+        s = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
+        return datetime.fromisoformat(s).replace(
+            tzinfo=datetime.fromisoformat(s).tzinfo or timezone.utc
+        ).timestamp()
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def aggregate_runs(audit_dir: Path) -> RunSummary:
@@ -97,6 +113,29 @@ def aggregate_runs(audit_dir: Path) -> RunSummary:
     A draft may have multiple runs (initial + resume-from-stage
     re-runs). The A/B comparison sums everything — both pipelines
     get the same opportunity to iterate.
+
+    Two elapsed measures are captured:
+
+    - `wall_clock_seconds` (load-bearing for M6 metric 1): the
+      orchestrator-observed duration from earliest_started to
+      latest_finished across all runs. This is what the user
+      experiences and what V0_4_ARCHITECTURE §15 metric 1 means
+      ("first-byte to last-byte"). It correctly attributes v0.4's
+      parallel-compose architecture as a wall-clock win — when 4
+      substories compose in parallel for 10min each, this measure
+      adds 10min.
+
+    - `total_elapsed_seconds` (kept for reference): the sum of per-
+      stage `elapsed_seconds` values from finalize_run.py's
+      stage-metadata aggregation. Double-counts parallel work; not
+      used by the M6 decision rule. Useful for "where did the
+      pipeline spend its compute" diagnostics.
+
+    M6 Tier A.1 (2026-05-25): added wall_clock_seconds + parsing
+    logic. Tier-B clean run on ibd_phage_targeting surfaced the
+    mismatch: wrapper wall-clock was 85min v0.3 vs 72min v0.4
+    (-15%), while sum(stage-elapsed) was 65.5min vs 66.4min
+    (+1.5%, false tie). The wrapper is correct.
     """
     runs_dir = audit_dir / "runs"
     out = RunSummary()
@@ -121,6 +160,20 @@ def aggregate_runs(audit_dir: Path) -> RunSummary:
         ec = d.get("exit_code")
         if ec is not None:
             out.exit_codes.append(int(ec))
+
+    # Compute wall_clock_seconds from the orchestrator-level
+    # timestamp delta. Falls back to total_elapsed_seconds if either
+    # timestamp is missing or unparseable (defensive — the M6 fixture
+    # expectations include malformed-JSON skipping).
+    if out.earliest_started and out.latest_finished:
+        start_s = _parse_iso_to_seconds(out.earliest_started)
+        end_s = _parse_iso_to_seconds(out.latest_finished)
+        if start_s is not None and end_s is not None and end_s >= start_s:
+            out.wall_clock_seconds = end_s - start_s
+        else:
+            out.wall_clock_seconds = out.total_elapsed_seconds
+    else:
+        out.wall_clock_seconds = out.total_elapsed_seconds
     return out
 
 
@@ -285,14 +338,17 @@ def score_project(
 
     score = ProjectScore(project_label=project_label)
 
-    # Metric 1: wall-clock (lower is better)
+    # Metric 1: wall-clock (lower is better). Per M6 Tier A.1, this
+    # is the orchestrator-observed (finished_at - started_at) duration,
+    # NOT sum(per-stage elapsed) — the latter double-counts parallel
+    # work and would erase v0.4's architectural win.
     winner, delta = compare_lower_is_better(
-        v3_runs.total_elapsed_seconds, v4_runs.total_elapsed_seconds,
+        v3_runs.wall_clock_seconds, v4_runs.wall_clock_seconds,
         tie_band_pct=tie_band_pct)
     score.metrics.append(MetricResult(
         name="1. wall-clock",
-        v0_3=v3_runs.total_elapsed_seconds,
-        v0_4=v4_runs.total_elapsed_seconds,
+        v0_3=v3_runs.wall_clock_seconds,
+        v0_4=v4_runs.wall_clock_seconds,
         unit="s",
         winner=winner, delta_pct=delta,
     ))
