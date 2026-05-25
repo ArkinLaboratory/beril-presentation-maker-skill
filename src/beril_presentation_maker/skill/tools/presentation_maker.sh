@@ -2193,8 +2193,14 @@ stage_adversarial_review() {
   fi
 
   if [[ $has_review_subcmd -eq 1 ]]; then
-    # v0.6.0+ path — clean Python CLI dispatch
-    beril-adversarial review --type presentation "$OUTDIR" || {
+    # v0.6.0+ path — clean Python CLI dispatch.
+    # M6 Tier B fix: pass --beril-root explicitly (mirrors the
+    # cascade Tier-3 fix from M4b Tier E round 2 / D-058 — without
+    # it, beril-adversarial resolves BERIL_ROOT from its own pipx
+    # install path and fails with "does not contain .claude/skills/").
+    beril-adversarial review --type presentation \
+        --beril-root "$BERIL_ROOT" \
+        "$OUTDIR" || {
       echo "  beril-adversarial review failed (rc=$?); revise loop will halt" >&2
       return 1
     }

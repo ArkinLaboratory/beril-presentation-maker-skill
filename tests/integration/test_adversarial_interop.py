@@ -71,14 +71,25 @@ def test_orchestrator_passes_outdir_as_draft_dir_positional():
     """The v0.6.0+ CLI takes <draft_dir> as positional after
     `--type presentation`. Confirm we pass `$OUTDIR` (the resolved
     draft directory) and not `$PROJECT_ID` (would be the v0.5
-    legacy shape)."""
+    legacy shape). M6 Tier B.1: invocation also passes
+    `--beril-root "$BERIL_ROOT"` (without it, beril-adversarial
+    resolves BERIL_ROOT from its own pipx install path and fails)."""
     text = _ORCHESTRATOR.read_text(encoding="utf-8")
-    # Look for the actual exec line shape
-    invocation = "beril-adversarial review --type presentation \"$OUTDIR\""
-    assert invocation in text, (
-        f"orchestrator missing expected invocation:\n  {invocation}\n"
-        "Cross-check stage_adversarial_review."
-    )
+    # Per M6 Tier B.1, the invocation spans multiple lines (continuation
+    # backslashes for readability). Assert all three required pieces
+    # appear in the same stage function:
+    assert "beril-adversarial review --type presentation" in text, (
+        "orchestrator missing the v0.6.0+ review subcommand exec")
+    assert '"$OUTDIR"' in text, (
+        "orchestrator missing $OUTDIR positional draft_dir arg")
+    # M6 Tier B.1: --beril-root must be passed explicitly to
+    # beril-adversarial. Without it, the subprocess resolves
+    # BERIL_ROOT from its own pipx install path and exits 1 with
+    # "does not contain .claude/skills/" — caught live in M6 Tier B.
+    assert '--beril-root "$BERIL_ROOT"' in text, (
+        "orchestrator missing explicit --beril-root \"$BERIL_ROOT\" "
+        "for beril-adversarial (M6 Tier B.1; mirrors the cascade "
+        "Tier-3 fix from M4b Tier E round 2 / D-058)")
 
 
 def test_orchestrator_handles_adversarial_not_installed_gracefully():
