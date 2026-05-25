@@ -728,12 +728,22 @@ def run_tier3(
     but never short-circuit. The revise loop owns the response;
     cascade just surfaces.
 
-    Status mapping:
+    Status mapping (M6 Tier B.3 update for v0.7.0.7+v0.7.0.8
+    exit-code contract):
       adversarial CLI missing  → "skipped" (note: install hint)
-      adversarial rc=0 + JSON  → "pass" / "advisory" based on findings
-      adversarial rc != 0      → "error" (note: stderr tail)
-      JSON missing post-run    → "error" (note: invocation succeeded
-                                  but contract violation)
+      rc=0 → "pass" / "advisory" based on findings (consumer-safe)
+      rc=2 → same as rc=0 (auto-repaired but consumer-safe per
+             CONTRACT.md); audit signal preserved in note field
+      rc=4 → "error" + JSON QUARANTINED (`.json.quarantined-rc4`).
+             Schema-invalid file PARSES, so a downstream consumer
+             that only checks file-existence would consume broken
+             findings. Quarantine matches the Stage-12 fix in
+             stage_adversarial_review (presentation_maker.sh) +
+             paper-writer v1.0.1 pattern. The .md is always intact
+             per CONTRACT.md.
+      rc=3 → "error" (config error; stderr tail)
+      other → "error" (unexpected failure; stderr tail)
+      JSON missing post-run → "error" (contract violation)
     """
     t0 = datetime.now(timezone.utc)
     if not _adversarial_cli_available(adversarial_bin):
@@ -753,7 +763,34 @@ def run_tier3(
     review_path = draft_dir / "audit" / "adversarial_review.json"
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
 
-    if rc != 0:
+    # M6 Tier B.3: explicit branching on the v0.7.0.7+v0.7.0.8
+    # exit-code contract. Critical: rc=4 means the .json is NOT
+    # consumer-safe even though it may parse — quarantine it so
+    # downstream file-existence checks (and any future cascade
+    # consumer) see the canonical path as absent.
+    if rc == 4:
+        if review_path.is_file():
+            quarantine = review_path.with_suffix(
+                review_path.suffix + ".quarantined-rc4")
+            try:
+                review_path.rename(quarantine)
+                quarantine_note = (
+                    f"; quarantined .json → {quarantine.name} "
+                    f"(.md intact)")
+            except OSError as exc:
+                quarantine_note = f"; quarantine failed: {exc}"
+        else:
+            quarantine_note = " (no .json to quarantine)"
+        return TierResult(
+            name="tier3",
+            status="error",
+            note=(f"beril-adversarial review rc=4: JSON NOT consumer-"
+                  f"safe (schema-invalid or unparseable after failed "
+                  f"auto-repair){quarantine_note}; "
+                  f"stderr tail: {stderr_tail[:200]}"),
+            duration_sec=duration,
+        )
+    if rc not in (0, 2):
         return TierResult(
             name="tier3",
             status="error",
@@ -761,6 +798,14 @@ def run_tier3(
                   f"stderr tail: {stderr_tail[:200]}"),
             duration_sec=duration,
         )
+    if rc == 2:
+        # Auto-repaired but consumer-safe per CONTRACT.md; proceed
+        # to parsing but record the audit signal so review_cascade
+        # consumers (e.g., revise_loop.py via the cascade's findings
+        # array) know the adversarial path took the recovery branch.
+        # No structural difference in handling vs rc=0 below; signal
+        # is preserved in the TierResult's note when we land it.
+        pass  # informational only here; handled in the rc=0 success path
 
     if not review_path.is_file():
         return TierResult(
@@ -831,10 +876,19 @@ def run_tier3(
                       "recommendation": f.get("recommendation")},
         ))
 
+    # M6 Tier B.3: surface the rc=2 auto-repair audit signal in the
+    # note field when present. Downstream consumers (review_cascade.md
+    # / .json) can see that adversarial took the recovery branch even
+    # though the findings themselves are consumer-safe.
+    rc2_note = (" (adversarial auto-repaired its JSON output; rc=2 "
+                "per v0.7.0.7 contract — findings consumer-safe)"
+                if rc == 2 else "")
     return TierResult(
         name="tier3",
         status="advisory" if findings else "pass",
         findings=findings,
+        note=(f"{len(findings)} finding(s) lifted from v3 review"
+              f"{rc2_note}"),
         cost_usd=0.0,        # beril-adversarial's own cost log is the
                               # source of truth; cascade doesn't double-count
         duration_sec=duration,

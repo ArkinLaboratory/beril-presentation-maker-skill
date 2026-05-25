@@ -335,17 +335,104 @@ def test_tier3_returns_skipped_when_adversarial_cli_missing(rc, tmp_path, monkey
 
 
 def test_tier3_returns_error_when_adversarial_subprocess_fails(rc, tmp_path, monkeypatch):
-    """beril-adversarial rc != 0 → status='error' (distinct from
-    'skipped' which means cli missing). Cascade still completes."""
+    """beril-adversarial generic non-zero (non-contract) → status='error'.
+    M6 Tier B.3 contract: rc=0/2 are consumer-safe; rc=3 (config),
+    rc=4 (NOT consumer-safe; quarantine), and other rc values all
+    map to error status. This test pins the "other" / rc=1 path."""
     monkeypatch.setattr(rc, "_adversarial_cli_available",
                         lambda bin="beril-adversarial": True)
     monkeypatch.setattr(rc, "_invoke_beril_adversarial",
                         lambda d, adversarial_bin="beril-adversarial",
                                beril_root=None:
-                            (2, "", "model rate-limited", 1.0))
+                            (1, "", "model rate-limited", 1.0))
     result = rc.run_tier3(tmp_path)
     assert result.status == "error"
     assert "rate-limited" in result.note
+
+
+def test_tier3_rc4_quarantines_json_and_returns_error(rc, tmp_path, monkeypatch):
+    """M6 Tier B.3 (per adversarial v0.7.0.8 contract): rc=4 means the
+    .json is NOT consumer-safe (schema-invalid or unparseable after
+    failed auto-repair). Cascade must quarantine the file so any
+    downstream file-existence consumer doesn't load broken findings.
+    Parallel-fix to stage_adversarial_review's rc=4 quarantine in
+    presentation_maker.sh."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    # Simulate beril-adversarial v0.7.0.8 returning rc=4 + having
+    # written a (broken) JSON file to disk first.
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    bad_json_path = audit_dir / "adversarial_review.json"
+    bad_json_path.write_text('{"schema_version":"v3","findings":[]}',
+                              encoding="utf-8")  # parses but schema-invalid
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
+                            (4, "", "schema validation failed", 1.0))
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "error"
+    # JSON quarantined (renamed) — original path absent, .quarantined-rc4 present
+    assert not bad_json_path.is_file(), (
+        f"rc=4 must quarantine the .json (rename); original path "
+        f"still exists: {bad_json_path}")
+    quarantine = bad_json_path.with_suffix(".json.quarantined-rc4")
+    assert quarantine.is_file(), (
+        f"rc=4 quarantine target missing: {quarantine}")
+    # Note names rc=4 + quarantine + .md-intact-by-implication
+    assert "rc=4" in result.note
+    assert "quarantined" in result.note.lower()
+    assert "schema-invalid" in result.note.lower() or "consumer-safe" in result.note.lower()
+
+
+def test_tier3_rc4_handles_missing_json_gracefully(rc, tmp_path, monkeypatch):
+    """rc=4 path doesn't crash if the .json was never written
+    (e.g., adversarial failed before its Write step). Still returns
+    error status with a note explaining there was nothing to quarantine."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
+                            (4, "", "unparseable after auto-repair", 1.0))
+    # No audit/ dir; no JSON to quarantine
+    result = rc.run_tier3(tmp_path)
+    assert result.status == "error"
+    assert "rc=4" in result.note
+    assert "no .json to quarantine" in result.note or "quarantine" in result.note.lower()
+
+
+def test_tier3_rc2_treats_as_consumer_safe(rc, tmp_path, monkeypatch):
+    """M6 Tier B.3: rc=2 (auto-repaired but still consumer-safe per
+    v0.7.0.7 contract) flows through the success path. The TierResult
+    note records the auto-repair audit signal so downstream consumers
+    can distinguish rc=0 (clean first try) from rc=2 (recovered)."""
+    monkeypatch.setattr(rc, "_adversarial_cli_available",
+                        lambda bin="beril-adversarial": True)
+    monkeypatch.setattr(rc, "_invoke_beril_adversarial",
+                        lambda d, adversarial_bin="beril-adversarial",
+                               beril_root=None:
+                            (2, "", "auto-repaired", 1.0))
+    # Create a valid v3-shape JSON so the success path completes
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    valid_json_path = audit_dir / "adversarial_review.json"
+    valid_json_path.write_text(
+        '{"schema_version":"adversarial-review-presentation.v3",'
+        '"summary":{"total_findings":2},'
+        '"findings":[{"id":"F001","class":"throughline","severity":"P1",'
+        '"issue":"x"},{"id":"F002","class":"claim_evidence",'
+        '"severity":"P0","issue":"y"}]}',
+        encoding="utf-8",
+    )
+    result = rc.run_tier3(tmp_path)
+    # Success path, not error
+    assert result.status in ("advisory", "pass"), (
+        f"rc=2 should be consumer-safe; got status={result.status} "
+        f"note={result.note}")
+    assert len(result.findings) == 2
+    # Audit signal preserved
+    assert "auto-repaired" in result.note.lower() or "rc=2" in result.note
 
 
 def test_tier3_returns_error_when_no_audit_json_post_invoke(rc, tmp_path, monkeypatch):
