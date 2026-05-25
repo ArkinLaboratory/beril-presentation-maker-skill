@@ -197,19 +197,21 @@ def _size_to_ai_studio_config(size: tuple[int, int]) -> tuple[str, str]:
 # and (b) led users to default --max-image-cost-usd 0.50 just to
 # satisfy the preflight even when their actual budget was $0.10.
 #
-# New bound: $0.05 — ~3.7× calibrated mean, generous headroom against
-# rate-card drift, but tight enough that --max-image-cost-usd 0.10
-# clears (~7 images per cap rather than ~12 falsely rejected ones).
+# New bound: $0.05 — ~3.7× CBORG calibrated mean, generous headroom
+# against rate-card drift, but tight enough that --max-image-cost-usd
+# 0.10 clears (~7 images per cap rather than ~12 falsely rejected ones).
 # Re-run image_gen_calibration.py if the model id or rate card changes.
 #
-# M5b status: shared constant across both providers until M5b Tier E
-# calibrates the AI Studio path. AI Studio's `gemini-2.5-flash-image`
-# has different per-image token economics from CBORG's
-# `gemini-3-pro-image`; the $0.05 cap is held provisionally and re-
-# evaluated at Tier E. If AI Studio's calibrated mean is materially
-# higher, the band test below will flag it and a per-provider split
-# may be warranted (deferred follow-up; not in M5b scope).
-_WORST_CASE_COST_USD = 0.05
+# M5b Tier E3 (2026-05-24): AI Studio calibration on
+# gemini-3.1-flash-image-preview (8 successful trials of 13;
+# audit/image_gen_calibration_ai_studio_2026-05-24.md):
+#   mean=$0.0463, σ=$0.0013, min=$0.0446, max=$0.0485
+# AI Studio mean is ~3.3× CBORG's $0.014 mean; observed max is right
+# AT the previous $0.05 bound (1.03× margin). Raised to $0.08 to give
+# 1.65× margin over the AI Studio observed max while staying inside
+# the [0.03, 0.10] band test (so --max-image-cost-usd 0.10 still
+# clears one image; the orchestrator default of 0.50 clears ~6 images).
+_WORST_CASE_COST_USD = 0.08
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +270,7 @@ class ImageClient:
         base_url: str = DEFAULT_CBORG_BASE_URL,
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
-        timeout_s: int = 120,
+        timeout_s: int = 360,
         request_session: requests.Session | None = None,
     ):
         self.provider = provider
