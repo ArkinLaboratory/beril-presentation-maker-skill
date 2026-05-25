@@ -462,9 +462,15 @@ def test_ai_studio_rate_card_has_may_2026_models(ic):
 # _call_google_ai_studio — request shape
 
 def test_ai_studio_request_shape(ic):
-    """Pin the request shape against Google's published API contract
-    (May 2026). If this test breaks, the API likely changed; re-fetch
-    https://ai.google.dev/gemini-api/docs/image-generation and update."""
+    """Pin the request shape against Google's v1beta discovery doc
+    (verified 2026-05-24). M5b Tier A.1: the human-docs page suggested
+    `generationConfig.responseFormat.image.*` but the API rejects it
+    (responseFormat takes ResponseFormatConfig, NOT ImageConfig). The
+    canonical wrapper is `generationConfig.imageConfig.*` per the
+    discovery doc's GenerationConfig.imageConfig → ImageConfig schema.
+    If this test breaks, the API likely changed; re-fetch
+    https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta
+    and update."""
     sess = MagicMock()
     sess.post.return_value = _mock_ai_studio_response(
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
@@ -484,14 +490,53 @@ def test_ai_studio_request_shape(ic):
     assert kwargs["headers"]["Content-Type"] == "application/json"
     # NOT an Authorization Bearer header (would be CBORG-style)
     assert "Authorization" not in kwargs["headers"]
-    # Body shape: contents[0].parts[0].text + generationConfig
+    # Body shape: contents[0].parts[0].text + generationConfig.imageConfig
     body = kwargs["json"]
     assert body["contents"][0]["parts"][0]["text"] == "A glowing brain"
     gen_cfg = body["generationConfig"]
     assert gen_cfg["responseModalities"] == ["IMAGE"]
-    img_cfg = gen_cfg["responseFormat"]["image"]
+    img_cfg = gen_cfg["imageConfig"]
     assert img_cfg["aspectRatio"] == "1:1"
     assert img_cfg["imageSize"] == "1K"
+
+
+def test_ai_studio_request_shape_does_not_use_response_format_wrapper(ic):
+    """Regression pin (M5b Tier A.1, live-discovered 2026-05-24): the
+    initial Tier-A implementation wrapped image config under
+    `generationConfig.responseFormat.image.*` based on the ai.google.dev
+    human-docs page, but Google's v1beta API rejects that with
+    INVALID_ARGUMENT (responseFormat expects a different schema —
+    ResponseFormatConfig, not ImageConfig). The canonical wrapper is
+    `generationConfig.imageConfig.*` per the v1beta discovery doc.
+
+    This test asserts the *absence* of the wrong wrapper. If a future
+    refactor reintroduces `responseFormat.image` here, the live API
+    will 400 on the first call — pinning this prevents that recurrence.
+    """
+    sess = MagicMock()
+    sess.post.return_value = _mock_ai_studio_response()
+    client = ic.ImageClient.google_ai_studio(api_key="x",
+                                              request_session=sess)
+    client.generate(prompt="x", budget_remaining_usd=10.00)
+    body = sess.post.call_args[1]["json"]
+    gen_cfg = body["generationConfig"]
+    # The wrong wrapper must NOT appear.
+    assert "responseFormat" not in gen_cfg, (
+        f"AI Studio body should not include `responseFormat`; "
+        f"image config goes under `imageConfig` per v1beta discovery "
+        f"doc. Saw: {gen_cfg}"
+    )
+    # The right wrapper must appear.
+    assert "imageConfig" in gen_cfg
+    img_cfg = gen_cfg["imageConfig"]
+    # Friendly aspect-ratio strings (NOT proto enum names like
+    # ASPECT_RATIO_ONE_BY_ONE; those belong to ResponseFormatConfig's
+    # schema, not ImageConfig). Discovery doc:
+    #   "Supported aspect ratios: `1:1`, `1:4`, `4:1`, ... `16:9`, ..."
+    assert ":" in img_cfg["aspectRatio"]  # friendly form, e.g. "1:1"
+    # Friendly imageSize bucket names (NOT IMAGE_SIZE_1K). Discovery:
+    #   "Supported values are `512`, `1K`, `2K`, `4K`."
+    assert img_cfg["imageSize"] in {"512", "1K", "2K", "4K"}
 
 
 # _call_google_ai_studio — response parsing

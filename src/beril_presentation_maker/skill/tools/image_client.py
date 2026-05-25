@@ -484,17 +484,23 @@ class ImageClient:
         """POST to AI Studio's native Gemini :generateContent endpoint.
         Returns (image_bytes, usage_dict). M5b/D-062.
 
-        API contract per https://ai.google.dev/gemini-api/docs/image-generation
-        (verified 2026-05-24 — May 2026 Gemini API).
+        API contract per the v1beta discovery doc at
+        https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta
+        (`GenerationConfig.imageConfig` → `ImageConfig` schema; verified
+        2026-05-24 via live probe — see M5b Tier E1/A.1 retrospective.
+        The ai.google.dev human docs page initially suggested
+        `responseFormat.image` — that's the wrong wrapper; the API
+        rejects it with `INVALID_ARGUMENT` because `responseFormat`
+        takes the `ResponseFormatConfig` schema, NOT `ImageConfig`).
 
         Request shape:
           POST /v1beta/models/<MODEL>:generateContent
           Headers: x-goog-api-key, Content-Type
           Body: {"contents":[{"parts":[{"text": prompt}]}],
                  "generationConfig":{"responseModalities":["IMAGE"],
-                                     "responseFormat":{"image":{
+                                     "imageConfig":{
                                        "aspectRatio": "1:1"|...,
-                                       "imageSize": "1K"|"2K"|...}}}}
+                                       "imageSize": "1K"|"2K"|...}}}
 
         Response shape: image bytes at
           candidates[0].content.parts[N].inlineData.data (base64).
@@ -517,11 +523,9 @@ class ImageClient:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "responseModalities": ["IMAGE"],
-                "responseFormat": {
-                    "image": {
-                        "aspectRatio": aspect_ratio,
-                        "imageSize": image_size,
-                    },
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size,
                 },
             },
         }
