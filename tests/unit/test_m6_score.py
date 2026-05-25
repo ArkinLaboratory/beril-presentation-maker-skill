@@ -228,6 +228,60 @@ def test_adversarial_findings_adversarial_review_wins_over_cascade(m6, tmp_path)
     assert m6.count_adversarial_findings(audit) == 14
 
 
+def test_adversarial_findings_malformed_json_returns_none_not_fallback(m6, tmp_path):
+    """M6 Tier C.1 (live-discovered on fdm draft_2): beril-adversarial
+    can emit JSON with unescaped double-quotes inside string values
+    (e.g., reviewer quotes containing `"validate"`). The file exists
+    but doesn't parse.
+
+    Behaviour: return None, NOT fall through to cascade Tier-3 count.
+    The two cases are semantically distinct:
+      - "adversarial wasn't run" (absent file) → cascade Tier-3 IS the
+        right fallback (the cascade may have run it as Tier-3 of the
+        cascade itself).
+      - "adversarial WAS run but emitted bad JSON" (malformed file) →
+        we can't determine the count from a corrupt file; n/a is
+        the honest answer. Falling through to cascade Tier-3 here
+        would silently conflate "0 findings" with "couldn't parse."
+    """
+    audit = tmp_path / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    # Write malformed JSON exactly like beril-adversarial's bug:
+    # an unescaped " inside a string value. (Trigger from live data:
+    # the reviewer's hostile-question quote contained `"validate"`.)
+    (audit / "adversarial_review.json").write_text(
+        '{"summary": {"total_findings": 5}, '
+        '"findings": [{"detail": "He asked: in what sense does this '
+        '"validate" the concordance?"}]}',
+        encoding="utf-8",
+    )
+    # And the cascade Tier 3 has some other count — proving we DON'T
+    # silently fall through to it.
+    (audit / "review_cascade.json").write_text(json.dumps({
+        "tiers": [{}, {}, {"findings": [{"x": 1}, {"x": 2}]}],
+    }), encoding="utf-8")
+
+    result = m6.count_adversarial_findings(audit)
+    assert result is None, (
+        f"malformed adversarial_review.json must return None (not "
+        f"fall through to cascade); got {result}. The cascade would "
+        f"have given 2 (silently wrong)."
+    )
+
+
+def test_adversarial_findings_falls_back_only_when_truly_absent(m6, tmp_path):
+    """The cascade Tier-3 fallback is reserved for 'adversarial wasn't
+    run' (file absent), NOT for 'adversarial ran but file is corrupt'.
+    Distinct behaviour pin (companion to malformed-returns-none).
+    """
+    # adversarial_review.json absent; cascade has 7 tier-3 findings
+    audit = _make_audit_dir(tmp_path, cascade={
+        "tiers": [{}, {}, {"findings": [{"x": i} for i in range(7)]}],
+    })
+    assert (audit / "adversarial_review.json").is_file() is False
+    assert m6.count_adversarial_findings(audit) == 7
+
+
 # ---------------------------------------------------------------------------
 # count_validator_failures
 # ---------------------------------------------------------------------------

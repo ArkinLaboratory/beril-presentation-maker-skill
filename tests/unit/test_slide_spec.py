@@ -913,10 +913,22 @@ def test_diagram_node_label_advisory_cap_emits_soft_warning(ss):
                for i in soft), soft
 
 
-def test_data_figure_caption_remains_hard_error(ss):
-    """The pre-existing DATA_FIGURE_CAPTION_MAX_CHARS=280 hard-reject
-    is unchanged by Tier B (it's load-bearing for the no-shrink render
-    of the data_figure caption — v0.3.5; see slide_spec.py docstring)."""
+def test_data_figure_caption_demoted_to_soft_warning(ss):
+    """M6 Tier C.1 (D-068): DATA_FIGURE_CAPTION_MAX_CHARS=280 demoted
+    from hard error → soft-warning. The original v0.3.5 hard-reject
+    motivation (no shrink-to-fit fallback at the time) is obsolete:
+    `assemble_pptx._fill_data_figure` now sets
+    MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE on the caption textbox, absorbing
+    long captions. Matches the M4a Tier B / DQ4 posture for the other
+    4 length caps (BIG_NUMBER_SUBTITLE, WORKFLOW_STEP_CAPTION,
+    QA_ANSWER_SUMMARY, DIAGRAM_NODE_LABEL).
+
+    Live trigger: 2026-05-25 fdm v0.4 draft_3 slide 13, caption was
+    290 chars (10 over the cap); pipeline hard-failed for a render
+    artifact that shrink-to-fit absorbs. v0.3 on the same project
+    produced 273 chars (within band but close) — both pipelines can
+    land in the 280-300 range stochastically.
+    """
     long_cap = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)
     slide = {
         "id": 1, "substory_id": None, "layout": "data_figure",
@@ -927,11 +939,25 @@ def test_data_figure_caption_remains_hard_error(ss):
         },
     }
     issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
-    # The caption check appends an error-severity issue (no `severity=`
-    # keyword passed → default "error").
+    # No hard error on caption length.
     errors = [i for i in issues if i.severity == "error"
               and "caption" in i.path]
-    assert errors, f"expected hard error on long data_figure caption, got {issues}"
+    assert errors == [], (
+        f"data_figure caption should be soft-warning per D-068, got "
+        f"hard errors: {errors}")
+    # Soft-warning IS emitted (operator sees it in the assembler's
+    # warnings channel, M4a Tier B pattern).
+    soft = [i for i in issues if i.severity == "soft-warning"
+            and "caption" in i.path]
+    assert soft, (
+        f"expected soft-warning on long data_figure caption per D-068, "
+        f"got {issues}")
+    # Advisory diagnostic still names the 280 threshold + shrink-to-fit
+    # fallback (so an operator reading the warning understands why
+    # it's not a hard fail anymore).
+    msg = soft[0].message
+    assert "280" in msg or "advisory cap" in msg
+    assert "shrink-to-fit" in msg.lower() or "absorbs" in msg.lower()
 
 
 def test_validator_issue_format_marks_soft_warnings(ss):
@@ -970,18 +996,21 @@ def test_cli_validate_rc0_on_soft_warnings_only(ss, tmp_path, capsys):
 
 
 def test_cli_validate_rc1_on_hard_errors(ss, tmp_path, capsys):
-    """The CLI must still rc=1 on hard errors (data_figure caption
-    overflow is the load-bearing hard cap; DQ4 didn't touch it)."""
-    long_caption = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)
+    """The CLI must still rc=1 on hard errors. After D-068 demoted the
+    data_figure caption cap to soft-warning, this test uses a
+    missing-required-field hard error (data_figure with no `figure`
+    path) — the layout's required-field check is unaffected by D-068
+    and still load-bearing."""
     spec = {
         "schema_version": ss.SCHEMA_VERSION,
         "project_id": "x",
         "mode": "talk-30", "audience": "peer", "tier": "STRONG",
         "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
         "substories": [],
+        # Missing required `figure` field → hard error from layout checker
         "slides": [{"id": 1, "substory_id": None, "layout": "data_figure",
-                    "content": {"title": "t", "figure": "figures/x.png",
-                                "caption": long_caption}}],
+                    "content": {"title": "t",
+                                "caption": "short caption ok"}}],
     }
     p = tmp_path / "spec.json"
     p.write_text(json.dumps(spec))
@@ -990,8 +1019,9 @@ def test_cli_validate_rc1_on_hard_errors(ss, tmp_path, capsys):
 
 
 def test_cli_validate_rc1_when_errors_and_soft_warnings_mixed(ss, tmp_path):
-    """If both severities fire, rc=1 (the errors are still load-bearing)."""
-    long_caption = "x" * (ss.DATA_FIGURE_CAPTION_MAX_CHARS + 50)   # hard
+    """If both severities fire, rc=1 (the errors are still load-bearing).
+    After D-068, the hard-error fixture uses missing-required-field
+    rather than caption overflow."""
     long_subtitle = "x" * (ss.BIG_NUMBER_SUBTITLE_MAX_CHARS + 50)   # soft
     spec = {
         "schema_version": ss.SCHEMA_VERSION,
@@ -1000,9 +1030,11 @@ def test_cli_validate_rc1_when_errors_and_soft_warnings_mixed(ss, tmp_path):
         "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
         "substories": [],
         "slides": [
+            # Hard error: missing required `figure` field
             {"id": 1, "substory_id": None, "layout": "data_figure",
-             "content": {"title": "t", "figure": "figures/x.png",
-                         "caption": long_caption}},
+             "content": {"title": "t",
+                         "caption": "short caption ok"}},
+            # Soft warning: big_number subtitle overflow
             {"id": 2, "substory_id": None, "layout": "big_number",
              "content": {"headline": "42", "subtitle": long_subtitle}},
         ],

@@ -179,17 +179,43 @@ def aggregate_runs(audit_dir: Path) -> RunSummary:
 
 def count_adversarial_findings(audit_dir: Path) -> Optional[int]:
     """Read `audit/adversarial_review.json`'s `summary.total_findings`.
-    Falls back to `audit/review_cascade.json` tiers[2].findings count
-    if adversarial_review.json is absent. Returns None if neither
-    file is present or parseable."""
+
+    Three failure-distinguishing branches (M6 Tier C.1, live-discovered
+    on fdm draft_2 2026-05-25: beril-adversarial's LLM emitted
+    invalid JSON — unescaped " inside string values — so the file
+    exists but doesn't parse):
+
+    1. adversarial_review.json parses cleanly → return its count.
+    2. adversarial_review.json is PRESENT but malformed → return None
+       ("couldn't determine" → metric shows n/a, NOT a misleading 0).
+       The file's existence signals adversarial WAS run; the parse
+       failure is upstream (beril-adversarial bug), not a missing
+       capability.
+    3. adversarial_review.json is ABSENT → fall back to
+       `review_cascade.json` tiers[2] (the cascade's Tier-3 adversarial
+       wrapper, which may have run during the cascade); return None
+       if that's also absent or malformed.
+
+    This distinguishes "adversarial wasn't run" (legitimate cascade
+    fallback) from "adversarial ran but produced unparseable output"
+    (data quality issue worth surfacing).
+    """
     advers = audit_dir / "adversarial_review.json"
     if advers.is_file():
         try:
             d = json.loads(advers.read_text(encoding="utf-8"))
             return int(d.get("summary", {}).get("total_findings", 0))
-        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # File exists but malformed — adversarial ran but emitted
+            # bad JSON (upstream beril-adversarial issue). Don't fall
+            # through to cascade (would conflate with "adversarial
+            # not run"); return None so metric shows n/a.
+            return None
+        except OSError:
+            # I/O error reading the file — distinct from JSON parse;
+            # treat as absent and try cascade fallback.
             pass
-    # Fall back to cascade tier 3
+    # adversarial_review.json absent: fall back to cascade tier 3
     cascade = audit_dir / "review_cascade.json"
     if cascade.is_file():
         try:

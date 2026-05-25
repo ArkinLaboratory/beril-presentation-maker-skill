@@ -434,20 +434,46 @@ def _check_two_column_compare(content: dict, path: str) -> list[ValidatorIssue]:
     return iss
 
 
-# v0.3.5: data_figure caption cap. Pins the slide_compose.v1.md /
-# revise_slide.v1.md prompt's 280-char hard limit. Captions exceeding
-# this hard-fail in validate_slide_spec → assemble.py rejects the spec
-# and the revise-loop must re-run with shorter caption.
+# v0.3.5 → M6 Tier C.1: data_figure caption cap.
 #
-# Live failure 2026-05-04 (gene_function_ecological_agora draft_1
-# slides 21+23): revise-loop produced ~410-char captions; with
-# FIGURE_REGIONS["data_figure"] H 2.85 ending at y=4.15 and the
-# data_source band at y=4.83 → caption text wrapped past the data_source
-# anchor and into the y=5.00 logo strip. Per memory
-# feedback_prompt_tool_contract_drift.md, prompt-only caps drift; pin
-# in code. The render-side MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE in
-# assemble_pptx._fill_data_figure is the third layer (belt-and-
-# suspenders) for any case the validator misses or is bypassed.
+# v0.3.5 original (HARD-error):
+#   "Captions exceeding this hard-fail in validate_slide_spec →
+#   assemble.py rejects the spec and the revise-loop must re-run with
+#   shorter caption."
+#
+# Motivation: live failure 2026-05-04 (gene_function_ecological_agora
+# draft_1 slides 21+23) where the revise-loop produced ~410-char
+# captions; with FIGURE_REGIONS["data_figure"] H 2.85 ending at y=4.15
+# and the data_source band at y=4.83 → caption text wrapped past the
+# data_source anchor and into the y=5.00 logo strip. At that time,
+# the render-side shrink-to-fit fallback did not exist; the validator
+# was the only safety net.
+#
+# M6 Tier C.1 demote to soft-warning (2026-05-25):
+#   The original "no shrink-to-fit fallback" premise no longer holds.
+#   `assemble_pptx._fill_data_figure` sets MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+#   on the caption textbox — long text now shrinks rather than spilling
+#   into the brand strip. This is the same defense M4a Tier B added for
+#   the OTHER length caps (BIG_NUMBER_SUBTITLE, WORKFLOW_STEP_CAPTION,
+#   QA_ANSWER_SUMMARY, DIAGRAM_NODE_LABEL) — all of which were classed
+#   as soft-warning per DQ4 / D-053.
+#
+#   The prompts (slide_compose.v1.md + .v2.md) already say "validator
+#   will flag captions over 280 chars at advisory severity" — the code
+#   was emitting an error instead of an advisory, contradicting the
+#   prompt's promise.
+#
+#   Live trigger 2026-05-25 (functional_dark_matter v0.4 draft_3
+#   slide 13): caption 290 chars (only 10 over the cap). The v0.3 run
+#   on the same project produced a 273-char caption — within band, but
+#   close to. Both pipelines can stochastically land in the 280-300
+#   range; under the old hard-error rule, that ~3% of runs hard-failed
+#   for a render artifact that shrink-to-fit absorbs.
+#
+# Reclassified as soft-warning. The 280 stays as the advisory
+# threshold; renderer's TEXT_TO_FIT_SHAPE is the load-bearing
+# protection. Matches the M4a Tier B posture for the other 4 length
+# caps. See M6 Tier C investigation + DECISION D-068.
 DATA_FIGURE_CAPTION_MAX_CHARS = 280
 
 
@@ -513,13 +539,23 @@ def _check_data_figure(content: dict, path: str) -> list[ValidatorIssue]:
     # docstring above for the live-failure motivation.
     cap = content.get("caption")
     if isinstance(cap, str) and len(cap) > DATA_FIGURE_CAPTION_MAX_CHARS:
+        # M6 Tier C.1 (D-068): soft-warning, not hard error. The
+        # renderer's MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE in
+        # assemble_pptx._fill_data_figure is the load-bearing
+        # protection against brand-strip overflow now; this validator
+        # is advisory (matching the M4a Tier B / DQ4 posture for the
+        # other 4 length caps). Pre-2026-05-25 this was severity="error"
+        # — see DATA_FIGURE_CAPTION_MAX_CHARS docstring for the
+        # demote rationale.
         iss.append(ValidatorIssue(
             f"{path}.caption",
-            f"data_figure caption is {len(cap)} chars; max "
+            f"data_figure caption is {len(cap)} chars; advisory cap "
             f"{DATA_FIGURE_CAPTION_MAX_CHARS} (overflow risks running into "
-            f"the brand strip at y=5.00). Move citations to data_source, "
-            f"drop redundant phrasing, or split insight across multiple "
-            f"slides. See slide_compose.v1.md / revise_slide.v1.md."
+            f"the brand strip at y=5.00; renderer shrink-to-fit absorbs). "
+            f"Move citations to data_source, drop redundant phrasing, "
+            f"or split insight across multiple slides for readability. "
+            f"See slide_compose.v1.md / revise_slide.v1.md.",
+            severity="soft-warning",
         ))
     return iss
 
