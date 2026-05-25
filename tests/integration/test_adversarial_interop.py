@@ -103,6 +103,54 @@ def test_orchestrator_handles_adversarial_not_installed_gracefully():
     )
 
 
+def test_orchestrator_branches_on_adversarial_exit_code():
+    """M6 Tier B.2 (per adversarial v0.7.0.7 + v0.7.0.8 exit-code
+    contract): stage_adversarial_review MUST capture the exit code and
+    branch explicitly on rc=4 (not just `|| {warn}` catch-all).
+
+    Per CONTRACT.md:
+      rc=0 → JSON consumer-safe
+      rc=2 → auto-repaired but still consumer-safe
+      rc=3 → config error
+      rc=4 → JSON NOT consumer-safe (unparseable OR schema-invalid);
+              .md is intact, do not parse the .json
+      other → unexpected failure
+
+    The adversarial team explicitly corrected an earlier "messaging-only"
+    framing — catching rc=4 with a logging-only catch-all is NOT
+    correctness-safe. A schema-invalid file PARSES; a downstream
+    `if [[ -f $JSON ]]; then load_it` gate would see it present and
+    revise_loop would iterate on broken findings. Paper-writer hit
+    this; ship the fix per their v1.0.1 pattern (quarantine the .json).
+    """
+    text = _ORCHESTRATOR.read_text(encoding="utf-8")
+    # Must capture exit code, not just truthy-check
+    assert "local rc=$?" in text, (
+        "stage_adversarial_review must capture beril-adversarial's exit "
+        "code into a local var (M6 Tier B.2; was `|| { return 1 }` "
+        "which collapses rc=4 with rc=1/2/3)")
+    # Must branch on rc=4 specifically
+    assert "case " in text and '"$rc"' in text, (
+        "stage_adversarial_review must use `case $rc in` to branch on "
+        "exit code per v0.7.0.7+v0.7.0.8 contract")
+    assert "    4)" in text or "  4)" in text, (
+        "stage_adversarial_review missing explicit rc=4 branch")
+    # Must quarantine the .json on rc=4 (paper-writer v1.0.1 pattern)
+    assert "quarantined-rc4" in text, (
+        "stage_adversarial_review missing .json quarantine on rc=4. "
+        "Without quarantine, the downstream file-existence check sees "
+        "the schema-invalid file as present and revise_loop iterates "
+        "on broken findings (paper-writer v1.0.1 fix pattern)")
+    # Must NOT quarantine the .md (always intact per contract)
+    assert "review_md" in text, (
+        "stage_adversarial_review must preserve the .md (always intact "
+        "regardless of rc per CONTRACT.md)")
+    # Must distinguish rc=2 from rc=0 in messaging (audit-trail value)
+    assert "auto-repaired" in text.lower() or "rc=2" in text, (
+        "stage_adversarial_review missing rc=2 distinct messaging "
+        "(v0.7.0.7 auto-repair audit signal)")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: live integration (marker-gated; costs LLM money)
 # ---------------------------------------------------------------------------

@@ -2194,16 +2194,61 @@ stage_adversarial_review() {
 
   if [[ $has_review_subcmd -eq 1 ]]; then
     # v0.6.0+ path — clean Python CLI dispatch.
-    # M6 Tier B fix: pass --beril-root explicitly (mirrors the
-    # cascade Tier-3 fix from M4b Tier E round 2 / D-058 — without
-    # it, beril-adversarial resolves BERIL_ROOT from its own pipx
-    # install path and fails with "does not contain .claude/skills/").
+    # M6 Tier B.1: pass --beril-root explicitly (mirrors the cascade
+    # Tier-3 fix from M4b Tier E round 2 / D-058 — without it,
+    # beril-adversarial resolves BERIL_ROOT from its own pipx install
+    # path and fails with "does not contain .claude/skills/").
+    #
+    # M6 Tier B.2 (v0.7.0.7+v0.7.0.8 exit-code contract; adversarial
+    # team correction 2026-05-25): explicit rc branching is REQUIRED
+    # for correctness, not just messaging. v0.7.0.8's rc=4 means
+    # "schema-invalid JSON; do not consume." A schema-invalid file
+    # PARSES — so a downstream `if [[ -f $JSON ]]; then load_it`
+    # gate sees it as present and revise_loop.py iterates on broken
+    # findings. paper-writer hit exactly this; ship-the-fix per their
+    # v1.0.1 pattern: quarantine the .json (rename) so the cross-
+    # phase file-existence check sees absent. The .md is always
+    # intact regardless of rc; never quarantine the .md.
+    set +e
     beril-adversarial review --type presentation \
         --beril-root "$BERIL_ROOT" \
-        "$OUTDIR" || {
-      echo "  beril-adversarial review failed (rc=$?); revise loop will halt" >&2
-      return 1
-    }
+        "$OUTDIR"
+    local rc=$?
+    set -e
+    case "$rc" in
+      0)
+        # JSON parses cleanly + schema-valid; safe to consume.
+        :
+        ;;
+      2)
+        # Per CONTRACT.md (v0.7.0.7): auto-repaired but still safe.
+        echo "  beril-adversarial review: auto-repaired JSON (rc=2; .json consumer-safe)" >&2
+        ;;
+      4)
+        # CONTRACT.md (v0.7.0.7+v0.7.0.8): JSON is NOT consumer-safe.
+        # Quarantine to prevent the downstream file-existence gate
+        # from loading it (revise_loop would iterate on broken
+        # findings). .md is intact; operator inspects that.
+        echo "  beril-adversarial review: rc=4 — JSON is NOT consumer-safe" >&2
+        echo "    (either unparseable after failed auto-repair, or schema-invalid)" >&2
+        if [[ -f "$review_path" ]]; then
+          local quarantine="${review_path}.quarantined-rc4"
+          mv "$review_path" "$quarantine"
+          echo "  quarantined: $review_path → $(basename "$quarantine")" >&2
+          echo "  .md intact: $review_md (inspect this for the review content)" >&2
+        fi
+        echo "  revise loop will halt (no consumer-safe adversarial_review.json)" >&2
+        return 1
+        ;;
+      3)
+        echo "  beril-adversarial review: rc=3 — config error (check --beril-root, install-skill, etc.)" >&2
+        return 1
+        ;;
+      *)
+        echo "  beril-adversarial review failed (rc=$rc); revise loop will halt" >&2
+        return 1
+        ;;
+    esac
   else
     # Legacy fallback — find the sibling shell script and invoke it.
     # This path is for beril-adversarial v0.5.x installs that predate
@@ -2493,8 +2538,14 @@ if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
     echo "[skip] adversarial_review (cascade Tier 3 already ran; audit/adversarial_review.json populated)" >&2
   elif should_run adversarial_review; then
     stage_adversarial_review || {
-      echo "[warn] adversarial_review failed — revise loop will use whatever JSON exists" >&2
-      echo "       Inspect: $ADVERSARIAL_REVIEW_JSON (if any)" >&2
+      # M6 Tier B.2: stage_adversarial_review already handled exit-code
+      # branching including v0.7.0.8 rc=4 quarantine. The contract is
+      # now: if $ADVERSARIAL_REVIEW_JSON exists at the file-check below,
+      # it's consumer-safe. The .md is always preserved (rc=4 path
+      # only quarantines the .json + keeps the .md).
+      echo "[warn] adversarial_review stage returned non-zero — revise loop will skip" >&2
+      echo "       (any .json was quarantined or absent; .md preserved if produced)" >&2
+      echo "       Inspect: $ADVERSARIAL_REVIEW_MD" >&2
     }
   else
     echo "[skip] adversarial_review (resume from $RESUME_FROM)" >&2
