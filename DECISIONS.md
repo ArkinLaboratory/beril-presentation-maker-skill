@@ -1344,3 +1344,66 @@ The single-line "silent" fallback log message is still visible — it's not lite
 - **Always disable image-gen on probe failure** — rejected; ignores Adam's stated intent; CBORG is a working path.
 
 **Related:** [M5b_PUNCH_LIST.md](M5b_PUNCH_LIST.md) DQ3; [SPEC.md](SPEC.md) §8.3.2 (D-064 narrative); `tools/image_client.py::format_probe_failure_diagnostic`, `_cmd_probe` (rc=5 + stderr); `tools/presentation_maker.sh::stage_image_gen` (probe block + hybrid branching); `tests/unit/test_image_client.py` (diagnostic tests for both branches; CLI rc=5 pin).
+
+---
+
+## D-065 — 2026-05-24 — M6: drop metric 7 (paper-review skill quality) from the A/B cut-over gate (DQ2)
+
+**Decision:** Drop §15 metric 7 ("Paper-review skill quality assessment of the deck's narrative arc") from the M6 A/B cut-over decision rule. The adjusted decision rule: v0.4 must dominate v0.3.8 on **≥4 of 6** metrics (was ≥5 of 7); primary wall-clock metric remains mandatory.
+
+**Rationale:** There is no skill named `paper-review` in the workspace. The §15 reference was a phantom dependency carried over from `SPEC_v0_8.md`'s pattern. The paper-writer skill drafts manuscripts; the adversarial skill reviews; neither has a "paper-review" verb that operates on presentations. Building one for M6 alone is out of scope (and unclear what the contract would even be — paper-writer expects a manuscript; an unedited deck's speaker-notes export isn't quite the same shape).
+
+**Alternatives considered:**
+- **Build `tools/m6_review_pass.py` that re-runs adversarial with narrative-quality filter** — rejected as duplicating metric 3 (adversarial findings count). The filter logic would be subjective and would itself need calibration.
+- **Replace metric 7 with "Adam reads both decks and rates quality 1–5"** — rejected as overlapping metric 5 (cross-substory arc coherence; also Adam-subjective). Two subjective metrics from one reader on the same input is double-counting.
+- **Defer the metric to v0.4.1 once a paper-review skill exists** — rejected as kicking the decision down the road. The cut-over gate needs to be runnable now.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) DQ2; [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §15 (the original 7-metric list; this DECISION supersedes the metric-7 line); `tools/m6_score.py` (M6 Tier A; implements the 6-metric scoring + the ≥4/6 decision-rule check).
+
+---
+
+## D-066 — 2026-05-24 — M6: Adam-veto is explicit; the ≥4/6 metric rule is advisory (DQ4)
+
+**Decision:** The M6 cut-over decision is **panel-of-one-final**. The ≥4/6 metric rule (per D-065) + the wall-clock primary gate are **advisory**; Adam reads both pairs of decks (ibd_phage_targeting v0.3 vs v0.4; functional_dark_matter v0.3 vs v0.4) and casts an explicit veto either way. Three veto outcomes:
+
+- **Ship**: v0.4 becomes default; v0.3 prompts move to `prompts/archive/v0_3/`.
+- **Don't ship**: v0.4 stays opt-in via `--architecture-pipeline v0_4`; v0.3 remains default; failed-metric follow-ups filed.
+- **Ship-but-flag**: v0.4 becomes default but a stderr warning prints "v0.4 pipeline (experimental — known regressions: X, Y)" for one release.
+
+The veto can override the count either direction: ship despite missing a metric if the failure is non-substantive; don't-ship despite dominating ≥4/6 if Adam reads the decks and judges v0.4's narrative inferior.
+
+**Rationale:** Per the augmentation-stream project's panel-of-one posture. Mechanical scores aggregate signals but don't capture the actual ship-quality judgment — that's the human reviewer's job. The score rule exists to keep the decision *honest* (forces concrete metric capture; surfaces tradeoffs) rather than to *make* the decision.
+
+**Alternatives considered:**
+- **Hard "≥4/6 OR fail" rule** with no veto — rejected; under-specifies what to do on edge cases (e.g., 4/6 with a major adversarial regression vs 4/6 with all-positive deltas of varying magnitude).
+- **Second hard gate: metric 3 cannot regress >20%** — rejected; encodes a specific concern (adversarial regression) into the gate rule, but the same logic could apply to any metric. Better to let the human reviewer handle individual-metric concerns.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) DQ4 + Tier D (Adam-veto decision artifact); [V0_4_ARCHITECTURE.md](V0_4_ARCHITECTURE.md) §15 (the original mechanical rule wording); D-065 (the ≥4/6 adjusted rule this veto can override).
+
+---
+
+## D-067 — 2026-05-24 — M6 Tier 0: drop the v0.3 → v0.4 state-schema migration deliverable; D-038 obsoleted
+
+**Decision:** The "state-schema v0.3 → v0.4 migration script" deliverable named in §16 M6 (and ratified at M0 as D-038) is **dropped from M6 entirely**. No migration script is built; no centralized `state.json` is introduced for presentation-maker. D-038 is obsoleted as written. The orchestrator-canonical state model (variables + per-stage audit JSONs) remains the contract.
+
+**Rationale (M6 Tier 0 investigation, 2026-05-24):**
+
+1. **No v0.3 schema exists to migrate FROM.** Presentation-maker has never had a centralized `state.json`. The orchestrator's own comment at `presentation_maker.sh:19` says "no centralized state.json yet — the orchestrator is canonical." `find ... -name 'state.json'` in `talks/` returns zero files across all projects. D-038 was framed as "v0.3 → v0.4 migration" but the v0.3 schema to migrate FROM doesn't exist.
+
+2. **M6 A/B scoring doesn't need state.json.** The data needed for metrics 1, 2, 3, 4, 6 is already on disk in per-stage audit JSONs and per-run summaries:
+   - `audit/runs/run-N/summary.json` (schema `run-summary.v1`, written by `finalize_run.py` via an EXIT trap): `total_elapsed_seconds`, `total_cost_usd`, `total_input_tokens`/`output_tokens`, `stages_run`, `exit_code` — metrics 1 + 2.
+   - `audit/stage-metadata.json` (schema `stage-metadata.v1`): per-stage cost/tokens/wall-clock — finer-grained breakdown.
+   - `audit/review_cascade.json`: tier-3 adversarial findings — metric 3.
+   - `audit/presentation_validation.json`: P1–P10 violations — metric 4.
+   - `audit/image_provenance.json`: per-image costs — metric 6.
+
+3. **No operational request for resume-with-state-restore.** A grep across auto-memory turned up zero `feedback_*_state_*` or similar entries. The only `state.json` reference in memory was MY OWN deflection in M5b D-063 ("doesn't couple to the still-settling state.json schema"). Resume-from-stage today works on file-presence (`validate_resume_prereqs` checks for upstream artifacts on disk; no state needed).
+
+4. **Paper-writer's pattern is real value but a different scope.** Paper-writer's `state.py` is 687 lines: `DraftState` with 13 fields, `ArtifactHash` + `compute_artifact_hashes` + `diff_artifacts` for hash-based source-change detection, `is_user_edited` for user-edit detection on writer-generated manuscripts. The value proposition is "re-run `continue`, paper-writer reports which source artifacts changed since last build, refuses to silently overwrite user edits." Presentation-maker's source surface is different (REPORT.md + notebooks + figures vs paper-writer's manuscript pipeline) and the user-edit-detection isn't applicable to a deck (slide_spec.json is generated end-to-end per run, not iteratively edited). Adopting paper-writer's pattern at scale would be a v0.5 milestone, not an M6 deliverable.
+
+**Alternatives considered:**
+
+- **(b) Adopt paper-writer pattern at scale** — rejected for M6 (3–5 days of work; pushes M6 substantially; no demonstrated user need). Could be a v0.5 milestone if hash-diff source-change detection becomes valuable.
+- **(c) Lightweight state.json without hash-diff** (~1 day, fits in M6) — rejected; the data it would capture is already in `runs/run-N/summary.json` + `stage-metadata.json`. Duplicating means two sources of truth + drift risk. The "lightweight state.json" would be solving a problem we don't have.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) DQ1 + Tier 0 (this investigation); D-038 (2026-05-12 M0 decision; **OBSOLETED** by this DECISION); D-040 (Phase enum from paper-writer; the corresponding port for presentation-maker is also moot per this DECISION); paper-writer `src/beril_paper_writer/state.py` (687 lines; reference implementation NOT being adopted here); `tools/finalize_run.py` (the actual mechanism: writes `audit/runs/run-N/summary.json` on EXIT trap; `run-summary.v1` schema); `tools/presentation_maker.sh:19` (line that names the orchestrator-canonical posture).
