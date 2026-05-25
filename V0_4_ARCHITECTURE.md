@@ -1301,12 +1301,85 @@ first per Adam's reorder 2026-05-24.
     - Portable visual-QA path for end-user revise loops (carried
       from M4a).
 
-- **M5b — AI Studio image-gen multi-provider.** AI Studio provider
-  in `image_client.py`; auth discovery; model-availability probe
-  (`gemini-3-pro-image` → `gemini-2.5-flash-image` → fail per D-035);
-  calibration re-run. Pure provider extension; no architectural
-  change. Deferred from M5a per Adam's reorder (ship cheap-wins
-  first).
+- **M5b — AI Studio image-gen multi-provider — SHIPPED 2026-05-24.**
+  Six tiers + one mid-stream patch (A.1, live-discovered at Tier E);
+  per-tier ship table in `M5b_PUNCH_LIST.md`; DQ1–DQ4 resolutions
+  land as D-062..D-064 + D-035-rev1 in `DECISIONS.md`; M5b
+  retrospective in auto-memory `project_presentation_maker_v0_4_m5b.md`.
+  Pure provider extension; no architectural change.
+  - **Tier A — `image_client.py` provider extension** (commit
+    `83e9a14`): new `ImageClient.google_ai_studio` classmethod +
+    `_call_google_ai_studio` against native
+    `:generateContent`; `_size_to_ai_studio_config((w,h))` helper
+    maps to bucketed `aspectRatio` + `imageSize`; rate-card adds 3
+    May-2026 models; CLI `--provider` flag wired.
+    **D-035-rev1**: model fallback chain updated to match Google's
+    actual May-2026 model names (`-preview` suffix on the 3.x line;
+    `gemini-3-pro-image-preview` → `gemini-3.1-flash-image-preview`
+    → `gemini-2.5-flash-image`) — discovered via WebFetch of
+    `ai.google.dev/gemini-api/docs/image-generation`. 24 new tests.
+  - **Tier A.1 — `imageConfig` wrapper fix** (commit `766cadc`):
+    Tier E live-smoke surfaced an `HTTP 400 INVALID_ARGUMENT` — the
+    Tier-A code emitted `generationConfig.responseFormat.image.*`
+    per the ai.google.dev human-docs page, but the v1beta
+    `$discovery/rest` schema reveals the canonical wrapper is
+    `generationConfig.imageConfig.*` (`responseFormat` takes a
+    different schema, `ResponseFormatConfig`, with proto-enum
+    aspect-ratio names that the human docs page conflated). Body
+    fix + regression test pinning the absence of the wrong wrapper.
+  - **Tier B — orchestrator auth discovery + `--image-provider`
+    flag** (commit `05a8091`): per **D-062**, the existing CBORG
+    `.env` parse extended into a single-pass loop resolving BOTH
+    `CBORG_API_KEY` + `GOOGLE_AI_STUDIO_API_KEY`; new
+    `IMAGE_PROVIDER` precedence block resolves the active provider
+    (`--image-provider` arg → AI Studio env → CBORG env → empty);
+    `image_client.py generate` invocation gains `--provider` arg.
+    13 new orchestrator-snippet tests (via `bash -c` against
+    synthetic `.env` files; defensive non-echo asserted).
+  - **Tier C — model-availability probe + sidecar cache + D-064
+    hybrid fallback** (commit `99817d9`): 5 new module-level
+    helpers in `image_client.py` (`probe_available_models`,
+    `resolve_ai_studio_model`, `_fingerprint_api_key`,
+    `load_or_probe_ai_studio_model`,
+    `format_probe_failure_diagnostic`); new `probe` CLI subcommand;
+    orchestrator stage_image_gen runs probe once + branches per
+    **D-064** hybrid (rc=0→use resolved; rc=5+CBORG→silent CBORG
+    fallback; rc=5+no-CBORG→loud-warning disable);
+    `GOOGLE_AI_STUDIO_MODEL` env override (C5); sidecar cache at
+    `audit/ai_image_gen_probe.json` per **D-063** with sha256-prefix
+    fingerprint (no raw key persisted). 29 new tests.
+  - **Tier D — docs** (commit `85b87ac`): `SPEC.md` §8.3 + new
+    §8.3.2; `LAYOUT.md` short + §14 long-form image-gen-client
+    sections; `DECISIONS.md` D-035-rev1, D-062, D-063, D-064;
+    `V0_4_ARCHITECTURE.md` §14.2 probe section updated.
+  - **Tier E — live smoke + calibration** (commit `e14d617`): E1
+    probe (free; sidecar verified); E2 single-image render via
+    production CLI ($0.045 / 25s; provenance correctly recorded);
+    E3 calibration (13 trials; 8 ok / 5 timeouts at 300s; cost
+    mean $0.0463 σ $0.0013 max $0.0485; cumulative $0.3705).
+    **Two calibration-driven constant updates**:
+    `_WORST_CASE_COST_USD` 0.05 → 0.08 (1.65× margin over observed
+    max; was 1.03×) and default `timeout_s` 120 → 360 (1.66× margin
+    over observed 217s max — pre-existing 120s default would have
+    falsely failed 5/13 calibration trials). Calibration artifact
+    at `<BERDL_FORK>/.../audit/image_gen_calibration_ai_studio_
+    2026-05-24.md`. **CBORG image-gen verified NON-FUNCTIONAL** on
+    Adam's CBORG tenant (0 image-gen-capable Gemini models exposed
+    on this key as of 2026-05-24; documented as out-of-scope for
+    M5b — tracked separately for a CBORG-admin conversation).
+  - **Tier F — closeout**: this section; `LAYOUT.md` already
+    updated at Tier D; `M5b_PUNCH_LIST.md` status table closed;
+    auto-memory updated.
+  - **Carried out of M5b** (deferred):
+    - Per-provider `_WORST_CASE_COST_USD` split (CBORG mean $0.014
+      vs AI Studio mean $0.0463; ~3.3× divergence — the unified
+      $0.08 cap is operationally fine).
+    - CBORG image-gen tenant issue (DEFAULT_MODEL invalid; no
+      image-gen-capable models on Adam's CBORG inventory).
+    - Bimodal wall-clock investigation (AI Studio ~38% timeout
+      rate at 300s in calibration; orchestrator's per-image
+      approval gate may want a "this can take 3+ min" advisory if
+      the behaviour persists in operational use).
 
 **M6 — A/B test + cut-over decision.** Score sheet on
 `ibd_phage_targeting`; sanity check on `functional_dark_matter`;
