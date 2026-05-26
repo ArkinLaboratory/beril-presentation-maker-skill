@@ -95,6 +95,12 @@
 #                            Independent axis from --architecture-pipeline.
 #                            Default v2 per D-074 until v0.5 cut-over A/B
 #                            passes; flip to v3 at v0.5.x.
+#                            v3 requires a fresh smoke-pass record
+#                            per D-076; see --force-v3-smoke-stale.
+#   --force-v3-smoke-stale   Bypass the D-076 smoke-pass gate. Use ONLY
+#                            when you intentionally want to run v3 without
+#                            a fresh smoke (emergency re-runs, etc.).
+#                            Logged loudly to stderr.
 #   --visual-qa              Run the visual-QA pass after assembly (v0.4 M4a
 #                            Tier C). Renders the deck to per-slide PNGs and
 #                            runs a vision claude -p over them to flag
@@ -151,6 +157,11 @@ IMAGE_PROVIDER=""
 # helpers. Independent axis from --architecture-pipeline.
 PROMPTS_VERSION="v2"
 
+# v0.5.1 D-076: live-LLM smoke-pass gate for --prompts-version v3.
+# Off by default; --force-v3-smoke-stale sets it to bypass the gate
+# in the operator-knows-what-they're-doing case (logged loudly).
+FORCE_V3_SMOKE_STALE=0
+
 # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1 — Adam 2026-05-23).
 # Off by default; vision-LLM call + LibreOffice render adds cost per
 # run, so opt-in until M4b's cascade exists (which may absorb it).
@@ -204,6 +215,10 @@ while [[ $# -gt 0 ]]; do
     --image-provider)        IMAGE_PROVIDER="$2"; shift 2 ;;
     # v0.5/D-074: prompts version selection (default v2; v3 opt-in)
     --prompts-version)       PROMPTS_VERSION="$2"; shift 2 ;;
+    # v0.5.1/D-076: bypass the v3 smoke-pass gate. Use only when
+    # you intentionally want to run v3 without a fresh smoke
+    # (e.g., emergency re-runs). Logged loudly to stderr.
+    --force-v3-smoke-stale)  FORCE_V3_SMOKE_STALE=1; shift ;;
     # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
     --visual-qa)         VISUAL_QA=1; shift ;;
     # v0.4 M4b Tier A — review cascade is auto-run; opt out with this flag
@@ -313,6 +328,41 @@ case "$PROMPTS_VERSION" in
     exit 2
     ;;
 esac
+
+# v0.5.1/D-076: live-LLM smoke-pass gate. When --prompts-version v3
+# is passed, require a fresh smoke-pass record (per
+# `tools/smoke_v3_prompt.py --check-recent`). The gate catches the
+# 2026-05-26 morning-abort recurrence class: prompt-vs-schema drift
+# that unit tests (which mock the LLM) can't detect. Bypass via
+# --force-v3-smoke-stale.
+if [[ "$PROMPTS_VERSION" == "v3" && "$FORCE_V3_SMOKE_STALE" != "1" ]]; then
+  # Pre-flight relies on $TOOLS_DIR resolved further down; resolve it
+  # locally for the gate-check.
+  _v3_gate_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  _v3_gate_skill_dir="$(cd "$_v3_gate_script_dir/.." && pwd -P)"
+  if ! python3 "$_v3_gate_skill_dir/tools/smoke_v3_prompt.py" \
+        --check-recent >/dev/null 2>&1; then
+    echo "Error: --prompts-version v3 requires a fresh smoke-pass record." >&2
+    # `| sed` pipes through with `pipefail`; the rc=1 from python3
+    # would otherwise abort the shell under `set -e` before we
+    # reach `exit 2`. `|| true` tolerates the non-zero rc on the
+    # diagnostic call so the structured exit-2 below fires.
+    python3 "$_v3_gate_skill_dir/tools/smoke_v3_prompt.py" \
+        --check-recent 2>&1 | sed 's/^/  /' >&2 || true
+    echo "" >&2
+    echo "  Run the live-LLM smoke once (~\$0.60):" >&2
+    echo "    python $_v3_gate_skill_dir/tools/smoke_v3_prompt.py" >&2
+    echo "" >&2
+    echo "  Or bypass the gate (only when intentional):" >&2
+    echo "    $0 ... --prompts-version v3 --force-v3-smoke-stale" >&2
+    exit 2
+  fi
+elif [[ "$PROMPTS_VERSION" == "v3" && "$FORCE_V3_SMOKE_STALE" == "1" ]]; then
+  echo "[orchestrator] WARNING: --prompts-version v3 with" >&2
+  echo "[orchestrator]          --force-v3-smoke-stale (D-076 gate bypassed)." >&2
+  echo "[orchestrator]          Recurrence of the 2026-05-26 schema-drift" >&2
+  echo "[orchestrator]          bug is possible. Document why." >&2
+fi
 
 # v0.5/D-074: prompt-file dispatch by version. The substory_design
 # stage uses v1 for both v1+v2 prompts-versions (v1/v2 substory_design

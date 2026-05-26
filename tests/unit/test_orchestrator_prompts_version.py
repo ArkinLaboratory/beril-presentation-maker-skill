@@ -552,6 +552,80 @@ def test_q_slide_references_section_divider_punchline():
         "not `title`; got block:\n" + ap_block[:600])
 
 
+# ---------------------------------------------------------------------------
+# v0.5.1 Tier B — D-076 smoke-pass gate
+# ---------------------------------------------------------------------------
+#
+# When --prompts-version v3 is passed, the orchestrator must
+# refuse to run unless `tools/smoke_v3_prompt.py --check-recent`
+# returns rc=0. Bypass via --force-v3-smoke-stale.
+
+def test_orchestrator_rejects_v3_when_no_smoke_pass_record(tmp_path):
+    """A fresh checkout (no audit/v3_smoke_pass.json) + invocation
+    with --prompts-version v3 must exit rc=2 with a clear message
+    telling the operator to run the smoke or use --force."""
+    # The orchestrator's gate-check uses the smoke tool's own
+    # SMOKE_DIR/PASS_RECORD, which is a fixed path under the skill
+    # repo root. To exercise the rejection branch we use HOME
+    # override on the smoke tool's record path won't work via env
+    # — easier: assert that the gate-check code block exists +
+    # correctly fires when the real PASS_RECORD is absent.
+    # The "exists" pin is in test_orchestrator_has_v3_smoke_gate
+    # below; this test runs the orchestrator with v3 + EXPECTS rc=2
+    # IFF the pass record is absent at the moment of test.
+    pass_record = (REPO_ROOT / "audit" / "v3_smoke_pass.json")
+    if pass_record.is_file():
+        pytest.skip(
+            "v3 smoke-pass record exists; gate-rejection path can't "
+            "be exercised. Move/rename the record + re-run to test "
+            "the rejection branch.")
+    beril_root = (Path("/Users/aparkin/Documents/Claude/Projects/"
+                       "research-coscientist-dev/spike/beril-extended"))
+    project = "ibd_phage_targeting"
+    if not (beril_root / "projects" / project).is_dir():
+        pytest.skip(f"fixture project missing at {beril_root}/projects/"
+                    f"{project}")
+    result = subprocess.run(
+        ["bash", str(ORCH_SH), project,
+         "--beril-root", str(beril_root),
+         "--prompts-version", "v3"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 2, (
+        f"expected rc=2 on v3 without smoke-pass record; got "
+        f"{result.returncode}; stderr:\n{result.stderr[-2000:]}")
+    assert "smoke-pass record" in result.stderr or \
+           "smoke_v3_prompt.py" in result.stderr, (
+        "stderr should explain the smoke-gate failure; got:\n"
+        f"{result.stderr[-2000:]}")
+
+
+def test_orchestrator_has_v3_smoke_gate():
+    """The orchestrator source must include the D-076 gate-check
+    code path. Pin the literal strings so a future refactor
+    can't accidentally drop the gate."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # Gate-check block must reference the smoke tool + check-recent
+    assert "smoke_v3_prompt.py" in text
+    assert "--check-recent" in text
+    # Gate guards on PROMPTS_VERSION=v3 + FORCE_V3_SMOKE_STALE
+    assert 'PROMPTS_VERSION" == "v3"' in text
+    assert 'FORCE_V3_SMOKE_STALE' in text
+    # Bypass flag exists in arg parser
+    assert '--force-v3-smoke-stale' in text
+
+
+def test_orchestrator_help_documents_force_v3_smoke_stale():
+    """The --help docstring lists --force-v3-smoke-stale so
+    operators discover it when the gate rejects them."""
+    result = subprocess.run(
+        ["bash", str(ORCH_SH), "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    help_text = result.stdout + result.stderr
+    assert "--force-v3-smoke-stale" in help_text
+
+
 def test_inviolable_rules_name_both_field_names_explicitly():
     """The inviolable-rules section must enumerate the
     layout-specific field names for both Q-slide layouts
