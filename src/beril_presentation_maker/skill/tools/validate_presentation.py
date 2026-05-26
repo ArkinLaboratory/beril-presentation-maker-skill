@@ -799,6 +799,105 @@ def validate_p10_density(spec: dict) -> ValidatorResult:
 
 
 # ---------------------------------------------------------------------------
+# P11 — Register-discipline (v0.5 Tier A.1 / D-072)
+# ---------------------------------------------------------------------------
+
+
+def _load_check_register_discipline_module():
+    """Sibling-module loader. Matches the pattern used by
+    `validate_p3_numeric_provenance` for `check_quantitative_grounding`
+    (M5a Tier C); keeps the validator wrapper a thin shim around the
+    standalone module.
+    """
+    path = _THIS_DIR / "check_register_discipline.py"
+    spec = importlib.util.spec_from_file_location(
+        "check_register_discipline", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"cannot load check_register_discipline from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["check_register_discipline"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def validate_p11_register_discipline(
+    spec: dict,
+    project_dir: Path | None = None,
+) -> ValidatorResult:
+    """P11 — Register-discipline (v0.5 Tier A.1 / D-072).
+
+    Thin wrapper around `tools/check_register_discipline.py`. Lifts
+    register-violation findings into the P-validator surface so the
+    M4b cascade Tier-1 aggregator picks them up automatically.
+
+    Soft-warning severity per D-072 (matches the M4a Tier B / D-053 /
+    M6 Tier C.1 / D-068 posture for advisory length-cap-style
+    validators that the renderer/audience can absorb).
+
+    Per-project allowlist loaded from
+    `<project_dir>/references/register_allowlist.md` if present.
+
+    Args:
+      spec: parsed slide_spec.json dict.
+      project_dir: optional project root for allowlist loading.
+        v0.5 doesn't yet pass this through `validate_presentation`'s
+        signature — when None, no allowlist is applied (safe default;
+        all matches use built-in pattern severity).
+
+    Returns:
+      ValidatorResult with status "pass" if zero soft-warnings,
+      "soft-warning" otherwise. Per-violation Violation entries
+      carry severity="warning" (matches the existing ValidatorResult
+      contract where status="soft-warning" implies violations are
+      advisory).
+    """
+    try:
+        crd = _load_check_register_discipline_module()
+    except RuntimeError as e:
+        # check_register_discipline.py missing → skip gracefully.
+        return ValidatorResult(
+            "P11", "Register discipline", "skipped",
+            [Violation(
+                severity="warning",
+                where="(global)",
+                message=f"check_register_discipline module unavailable: {e}",
+                escalation_path="n/a",
+            )],
+        )
+
+    report = crd.check_register_discipline(spec, project_dir=project_dir)
+
+    # Only emit slide-level Violations for non-allowed violations
+    # (allowlisted entries are emitted by the standalone tool for
+    # audit visibility but shouldn't surface as P11 warnings).
+    violations: list[Violation] = []
+    for v in report.violations:
+        if v.severity == "allowed":
+            continue
+        # Build a Violation entry. severity="warning" maps to the
+        # ValidatorResult.status="soft-warning" below per the
+        # existing contract.
+        where = (f"slide[{v.slide_id}].content.{v.field_path}"
+                 if v.slide_id is not None
+                 else f"content.{v.field_path}")
+        violations.append(Violation(
+            severity="warning",
+            where=where,
+            message=(f"register-discipline: {v.pattern_name} `{v.matched_text}` "
+                     f"in {v.field_class} field (...{v.context_snippet}...). "
+                     f"Audience prose should avoid specialist references; "
+                     f"see D-072."),
+            escalation_path="user-modify",
+        ))
+
+    if not violations:
+        return ValidatorResult("P11", "Register discipline", "pass")
+    return ValidatorResult(
+        "P11", "Register discipline", "soft-warning", violations)
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry
 # ---------------------------------------------------------------------------
 
@@ -852,6 +951,21 @@ def validate_presentation(
     results.append(validate_p9_no_orphan_citations(spec))
     # P10 — spec only
     results.append(validate_p10_density(spec))
+    # P11 — register-discipline (v0.5 Tier A.1 / D-072). Soft-warning;
+    # consumes optional per-project allowlist from
+    # `<project_dir>/references/register_allowlist.md`. project_dir is
+    # derived from draft_dir via walk-up when available (the BERDL
+    # layout convention is `<project_dir>/talks/draft_N/`); falls
+    # through to None (no allowlist) otherwise — safe default.
+    project_dir = None
+    if draft_dir is not None:
+        # Walk up: draft_N → talks → <project_id>. project_id is
+        # the v0.5 allowlist root.
+        try:
+            project_dir = draft_dir.parent.parent  # type: ignore[union-attr]
+        except (AttributeError, IndexError):
+            project_dir = None
+    results.append(validate_p11_register_discipline(spec, project_dir))
 
     return ValidationReport(
         slide_spec_path=slide_spec_path,

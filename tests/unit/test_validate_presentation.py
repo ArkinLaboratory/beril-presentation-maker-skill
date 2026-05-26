@@ -529,13 +529,14 @@ def test_p10_acknowledgments_exempt_from_punchline_rule(vp, ss):
 # ---------------------------------------------------------------------------
 
 def test_validate_presentation_returns_report(vp, ss):
+    """P1–P11 (v0.5 Tier A.1 / D-072 added P11 register-discipline)."""
     spec = _full_talk_30_spec(ss, vp)
     report = vp.validate_presentation(spec)
     assert report.n_slides == len(spec["slides"])
     assert report.mode == "talk-30"
-    assert len(report.validators) == 10
+    assert len(report.validators) == 11
     ids = {v.id for v in report.validators}
-    assert ids == {f"P{i}" for i in range(1, 11)}
+    assert ids == {f"P{i}" for i in range(1, 12)}
 
 
 def test_overall_status_pass_when_all_pass(vp, ss):
