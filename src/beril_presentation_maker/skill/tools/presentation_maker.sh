@@ -85,12 +85,15 @@
 #                                   (v0.3.x; pre-M3 sequential composer)
 #                              v2 → substory_design.v1.md + slide_compose.v2.md
 #                                   (v0.4 M3 parallel-compose + fused notes)
-#                              v3 → substory_design.v3.md + slide_compose.v3.md
+#                              v3 → substory_design.v3.md +
+#                                   slide_compose.v2.md ++ slide_compose.v3_overlay.md
 #                                   (v0.5 D-071/D-072 Q/A/R/C contract +
-#                                   register-discipline-aware composer)
+#                                   register-discipline-aware composer;
+#                                   v3 slide_compose is built at orchestrator
+#                                   start as a concat per D-075).
 #                            Independent axis from --architecture-pipeline.
 #                            Default v2 per D-074 until v0.5 cut-over A/B
-#                            passes; flip to v3 at v0.5.1.
+#                            passes; flip to v3 at v0.5.x.
 #   --visual-qa              Run the visual-QA pass after assembly (v0.4 M4a
 #                            Tier C). Renders the deck to per-slide PNGs and
 #                            runs a vision claude -p over them to flag
@@ -294,7 +297,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -313,19 +316,66 @@ esac
 # v0.5/D-074: prompt-file dispatch by version. The substory_design
 # stage uses v1 for both v1+v2 prompts-versions (v1/v2 substory_design
 # shape is identical; v3 introduces the Q/A/R/C contract per D-071).
-# slide_compose uses v1 for v1, v2 for v2, v3 for v3.
+# slide_compose uses v1 for v1, v2 for v2; v3 emits a *concatenated*
+# v2-body + v3-overlay built once at orchestrator start (D-075). The
+# concat lives under $AUDIT_DIR/_prompts/ for per-run audit + safe
+# parallel-runs isolation (Tier C + Tier D launched together cannot
+# race on a shared /tmp path). Path is populated by
+# build_v3_concat_prompts() after set_draft_paths.
+SLIDE_COMPOSE_V3_CONCAT_PATH=""
+SUBSTORY_DESIGN_V3_CONCAT_PATH=""
+
 _substory_design_prompt_path() {
   case "$PROMPTS_VERSION" in
     v1|v2) echo "$PROMPTS_DIR/substory_design.v1.md" ;;
-    v3)    echo "$PROMPTS_DIR/substory_design.v3.md" ;;
+    v3)    echo "$SUBSTORY_DESIGN_V3_CONCAT_PATH" ;;
   esac
 }
 _slide_compose_prompt_path() {
   case "$PROMPTS_VERSION" in
     v1) echo "$PROMPTS_DIR/slide_compose.v1.md" ;;
     v2) echo "$PROMPTS_DIR/slide_compose.v2.md" ;;
-    v3) echo "$PROMPTS_DIR/slide_compose.v3.md" ;;
+    v3) echo "$SLIDE_COMPOSE_V3_CONCAT_PATH" ;;
   esac
+}
+
+# v0.5.1/D-075: build concatenated v3 prompt files at orchestrator
+# start. v3 is a small overlay (~250 lines) that ADDS register-
+# discipline + Q/A/R/C role guidance on top of v2's full per-layout
+# authoring rules. The LLM receives `cat slide_compose.v2.md
+# slide_compose.v3_overlay.md` as a single --system-prompt. Concat
+# order is v2 first + overlay last (LLM attention strongest at
+# system-prompt tail; overlay wins on conflicts). Idempotent — if
+# the file already exists (e.g., a resumed run), it gets rebuilt
+# from current prompt sources rather than reused; cheap (~250 lines
+# of disk I/O).
+#
+# Only runs when PROMPTS_VERSION=v3; v1/v2 paths skip entirely. The
+# concat lives under audit/_prompts/ (per-project; audit trail) and
+# is cleaned up implicitly with the audit/ tree at finalize-run
+# time (not its own EXIT-trap action — keeping the concat around
+# at exit is intentional so a debug-after-fail can inspect what
+# prompt the LLM actually saw).
+build_v3_concat_prompts() {
+  [[ "$PROMPTS_VERSION" != "v3" ]] && return 0
+
+  local concat_dir="$AUDIT_DIR/_prompts"
+  mkdir -p "$concat_dir"
+
+  local slide_v2="$PROMPTS_DIR/slide_compose.v2.md"
+  local slide_overlay="$PROMPTS_DIR/slide_compose.v3_overlay.md"
+  SLIDE_COMPOSE_V3_CONCAT_PATH="$concat_dir/slide_compose.v3.concat.md"
+  cat "$slide_v2" "$slide_overlay" > "$SLIDE_COMPOSE_V3_CONCAT_PATH"
+
+  # substory_design v3: same overlay pattern per D-078, but the
+  # overlay file lands in Tier A.2. Until then, fall back to the
+  # current standalone substory_design.v3.md (D-078 will replace
+  # this stanza). Marked TODO so Tier A.2 knows to edit here.
+  # TODO(v0.5.1 Tier A.2 / D-078): concat substory_design.v1.md +
+  # substory_design.v3_overlay.md once the overlay lands.
+  SUBSTORY_DESIGN_V3_CONCAT_PATH="$PROMPTS_DIR/substory_design.v3.md"
+
+  echo "[orchestrator] v3 concat prompt: $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2
 }
 
 # v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
@@ -601,6 +651,9 @@ set_draft_paths() {
 
 init_draft_layout "$OUTDIR"
 set_draft_paths "$OUTDIR"
+# v0.5.1/D-075: build the v3 concat-prompt files now that $AUDIT_DIR is
+# populated. No-op for v1/v2 paths.
+build_v3_concat_prompts
 
 # --- v0.3.4.2 finalize-on-exit hook ---
 # Run finalize_run.py at the end of every orchestrator invocation
