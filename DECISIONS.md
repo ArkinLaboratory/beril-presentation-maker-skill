@@ -1623,3 +1623,241 @@ New substory-level metadata fields in `substory_design.v3.md` output:
 - **(c) v3 only on architecture=v0_4 (couple to the experimental axis)** — rejected; couples two orthogonal axes for no benefit; if v3 prompts work cleanly on v0_3 sequential dispatch, they should be available there.
 
 **Related:** [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) DQ4 + Tier A.3 (flag wiring); D-069 (v0.4 opt-in posture v0.5 mirrors); D-066 (Adam-veto pattern continues at v0.5 cut-over Tier E); `tools/presentation_maker.sh` `--architecture-pipeline` flag (the precedent dispatch shape); v0.5 Tier E (the gate for default-flip).
+
+---
+
+## D-075 — 2026-05-26 — v0.5.1 Tier 0 / DQ1: v3 prompts compose via runtime concatenation of v2 body + v3 overlay
+
+**Context:** v0.5 Tier C/D live A/B on 2026-05-26 morning hard-failed
+at schema validation with 21 identical `required field missing`
+errors per run on both ibd + fdm. Root cause: `slide_compose.v3.md`
+is a 380-line standalone prompt that describes v2's per-layout
+authoring rules as "(Unchanged from v2)" without including the
+~900-line body. The orchestrator passes the v3 file as
+`--system-prompt` (presentation_maker.sh:730); the LLM has zero
+access to v2 when running v3, so it hallucinates field names
+(`title`/`subtitle` instead of v2's `punchline`/`substory_number`
+for `section_divider`; `headline` instead of layout-specific names
+for `big_number`; etc.). See
+`project_presentation_maker_v0_5_morning_abort.md` for the full
+forensic record.
+
+**Decision:** Restructure v3 as a runtime concatenation of v2's
+full body + a small v3 overlay file. Specifically:
+
+- `prompts/slide_compose.v3.md` is renamed to
+  `prompts/slide_compose.v3_overlay.md` (~150 lines) containing
+  ONLY the v3-additive sections: header banner, register-discipline
+  preamble (D-072), Q/A/R/C role guidance (D-071), post-composition
+  self-check, anti-patterns, and the v3-additions to "Inviolable
+  rules."
+- `prompts/substory_design.v3.md` gets the same treatment per
+  DQ4 inspection (also a standalone-with-disclaimers problem;
+  see D-078).
+- `_slide_compose_prompt_path` (in `tools/presentation_maker.sh`)
+  for `PROMPTS_VERSION=v3` emits a concatenated temp file =
+  `cat slide_compose.v2.md slide_compose.v3_overlay.md` written
+  to `audit/_prompts/slide_compose.v3.concat.md` (per project)
+  once at orchestrator start. Cached for the run; cleaned up at
+  EXIT trap. Same for `_substory_design_prompt_path`.
+- Concat order: **v2 first, overlay last.** The LLM's attention
+  is strongest at the tail of the system prompt; putting the
+  overlay last lets it override v2 on conflicts (e.g., the
+  register-discipline rule).
+
+**Rationale:** The LLM running v3 needs to see v2's per-layout
+field names verbatim — anything less is hallucination-bait. The
+concat fix gives v3 the LLM-attention parity of a full self-contained
+prompt without the maintenance drift risk of a v2-cloned-and-edited
+file (which would diverge every time v2 gets a fix). The
+implementation is small (~30 min of dispatcher work + 5 min of
+EXIT-trap cleanup); the prompt-token cost increase is ~10% of
+system-prompt size (~140 of ~1400 lines added); user-prompt and
+tool-results dominate the per-invocation cost so the impact is
+negligible. The pattern is also reusable for any future "vN-as-
+overlay-on-vN-1" prompt-version transition.
+
+**Alternatives considered:**
+
+- **(b) Self-contained clone (v2 → v3 + inline overlays)** —
+  rejected; produces a ~1400-line standalone v3.md that every
+  future v2 fix must be ported to manually. Drift risk in the
+  near term (we're actively iterating on v2 prompts per M4b
+  Tier-2 calibration carry items). The concat fix is strictly
+  better unless the temp-file lifecycle proves unworkable, which
+  it isn't — the orchestrator already uses similar per-run
+  artifacts under `audit/_prompts/` and `audit/snapshots/`.
+- **(c) Runtime overlay via user-prompt heredoc** — rejected;
+  asymmetric attention weight between system + user prompt
+  weakens the v3 overlay enforcement (Anthropic guidance: system
+  prompt anchors model behavior; user prompt is "data + per-call
+  instructions"). The overlay IS authoring guidance, which
+  belongs in system. The morning abort suggests the v3 overlay
+  rules need MORE attention weight, not less.
+
+**Related:** [V0_5_1_PUNCH_LIST.md](V0_5_1_PUNCH_LIST.md) DQ1 + Tier
+A; D-074 (`--prompts-version` flag — unchanged); D-072
+(register-discipline scope); D-071 (Q/A/R/C contract scope);
+`prompts/slide_compose.v2.md` (the authoritative per-layout
+vocabulary v3 must inherit); `tools/presentation_maker.sh:730`
+(the single-cat-file invariant the concat fix preserves);
+`project_presentation_maker_v0_5_morning_abort.md` (root cause
++ forensic evidence).
+
+---
+
+## D-076 — 2026-05-26 — v0.5.1 Tier 0 / DQ2: `--prompts-version v3` gated on a recent live-LLM smoke-pass record
+
+**Context:** Per the cross-cutting lesson now thrice-recurring (M5b
+Tier A.1 imageConfig wrapper; v0.5 morning abort lessons #1 + #2):
+unit tests that mock the LLM's output can't catch prompt-vs-schema
+drift, because they NEVER call the real LLM. The morning abort
+burned ~$30 surfacing two LLM-output-shape bugs (top-level shape +
+per-layout field names) that 1404 unit tests passed cleanly. A
+$0.30 single-substory live smoke would have caught both before
+spending $13 on the full ibd run.
+
+**Decision:** Add `tools/smoke_v3_prompt.py` that:
+
+- Composes ONE substory fragment against the real LLM using the
+  current concatenated v3 prompt (D-075).
+- Validates the fragment against the `compose-fragment.v2` /
+  `.v3` schema using `slide_spec.py::_cli_validate` (the same
+  validator the orchestrator's `[Final] merge` stage hits).
+- On pass: writes `audit/v3_smoke_pass.json` to the skill repo
+  (NOT to a per-project audit dir — the smoke is prompt-level,
+  not project-level) with timestamp + commit-sha of `prompts/`
+  + sha of the concatenated prompt body.
+- On fail: writes `audit/v3_smoke_fail.json` with the validation
+  errors + the broken fragment for inspection.
+
+Gate `--prompts-version v3` in `presentation_maker.sh` on a fresh
+smoke-pass: if `--prompts-version v3` is passed and no
+`audit/v3_smoke_pass.json` exists, OR the recorded prompt-body sha
+doesn't match the current prompts, OR the record is > 7 days old,
+refuse to run with rc=2 + a clear message telling the operator to
+run `tools/smoke_v3_prompt.py` first.
+
+**Rationale:** $0.30 per smoke vs $30 lesson per missed bug; pays
+for itself in O(1) recurrences. Sidecar JSON cache pattern matches
+M5b's `ai_image_gen_probe.json` (D-064). Gating forces operator
+discipline — the morning's runbook had "verify state" as Step 1
+but the verification was mechanical (does the file exist?) rather
+than semantic (does the prompt actually compose validly?). The
+gate makes the semantic check mandatory.
+
+**Alternatives considered:**
+
+- **(a) Build smoke without gate; operator-discretion** —
+  rejected; the morning abort proved operator-discretion gets
+  skipped under time pressure. Adam approved the morning run on
+  the strength of the unit-test suite passing; a non-gated smoke
+  would have been skipped under the same pressure.
+- **(c) Defer to v0.5.2** — rejected; if v0.5.1 ships a fixed v3
+  but no smoke gate, the next prompt-content change (likely v0.6
+  throughline-bridge or figure-utilization) will recur the same
+  failure mode. The smoke gate is anti-recurrence infrastructure
+  that pays for itself the first time it catches a regression.
+
+**Related:** [V0_5_1_PUNCH_LIST.md](V0_5_1_PUNCH_LIST.md) DQ2 + Tier
+B; D-064 (M5b sidecar cache pattern this reuses); M5b Tier A.1
+imageConfig retro (precedent recurrence of the lesson);
+`project_presentation_maker_v0_5_morning_abort.md` lesson 1.
+
+---
+
+## D-077 — 2026-05-26 — v0.5.1 Tier 0 / DQ3: v3 overlay's anti-pattern bullets fix verbatim against v2 field names
+
+**Context:** `slide_compose.v3.md` lines 341-356 contain anti-pattern
+bullets that name the WRONG field names: "Opening section_divider
+whose `title` is a topic name…" — v2's actual `section_divider`
+schema requires `{punchline, substory_number}` (slide_compose.v2.md
+line 569); `title` isn't even a field on section_divider. Same for
+the C-slide bullet ("Closing claim_evidence whose `punchline`
+doesn't STATE the SUBSTORY_CONCLUSION" — `punchline` is correct
+there; checked claim_evidence's v2 schema). The Q-slide + C-slide
+bullets are inconsistent: one is right, one is wrong, because the
+v3 prompt-author (Claude, 2026-05-25 evening) didn't know v2's
+field-name vocabulary.
+
+**Decision:** Mechanical find-and-replace fix:
+
+- Q-slide anti-pattern (line 351): `title` → `punchline` (the
+  section_divider's principal field per v2:569).
+- C-slide anti-pattern (line 354-355): keep `punchline` — already
+  correct.
+- Audit pass: walk the rest of v3_overlay.md (the v3 overlay file
+  per D-075) for any other field-name references and verify each
+  against v2's per-layout schema in slide_compose.v2.md.
+
+Add one unit test pinning the corrected field name (snapshot test
+on the rendered v3 overlay).
+
+**Rationale:** Mechanical fix; ~5 minutes. The bug was a sin of
+hubris not omission — the v3-prompt-author assumed they knew
+v2's schema without checking. The test pins it so the regression
+can't recur via a future re-edit.
+
+**Alternatives considered:**
+
+- **(b) Reframe layout-agnostic** ("section_divider whose
+  principal-text-field is a topic…") — rejected; adds vague
+  language. The whole point of fixing v3 is to make field names
+  *more* concrete, not less.
+- **(c) Drop the anti-pattern bullets** — rejected; the
+  register-discipline + Q/A/R/C role guidance live elsewhere in
+  v3 overlay, but the anti-pattern bullets serve a different
+  pedagogical role (named failure modes for the LLM to
+  recognize). Removing them weakens the overlay's teaching value.
+
+**Related:** [V0_5_1_PUNCH_LIST.md](V0_5_1_PUNCH_LIST.md) DQ3 + Tier
+A.1; D-075 (the concat fix this sits within);
+`prompts/slide_compose.v2.md` line 569 (the field-name authority).
+
+---
+
+## D-078 — 2026-05-26 — v0.5.1 Tier 0 / DQ4: `substory_design.v3.md` also restructured per D-075 concat fix
+
+**Context:** Per DQ4 inspection at v0.5.1 Tier 0: `substory_design.v3.md`
+is 369 lines (vs v1's 448 lines) with 11 "Unchanged from v" disclaimers.
+SAME standalone-vs-overlay problem as slide_compose.v3.md per D-075
+root cause. The morning abort didn't trip a substory_design schema
+bug because the substory_design output is markdown (not JSON), so
+"missing field" doesn't fail-fast the same way — but the v3 prompt's
+Q + Conclusion-for-next-substory authoring still happens without
+the LLM seeing v1's clustering discipline, tier-aware framing,
+self-review pass, etc. That's latent risk: the substories the v3
+prompt produces could be subtly off-contract (wrong clustering
+granularity, missing tier hedging) without ever tripping a
+schema error.
+
+**Decision:** Apply the same concat fix per D-075:
+
+- Rename `prompts/substory_design.v3.md` →
+  `prompts/substory_design.v3_overlay.md` (~80 lines containing
+  ONLY the D-071 Q/A/R/C contract additions + anti-pattern bullets).
+- `_substory_design_prompt_path` for `PROMPTS_VERSION=v3` emits
+  `cat substory_design.v1.md substory_design.v3_overlay.md` to
+  `audit/_prompts/substory_design.v3.concat.md` (per project; same
+  cache-and-cleanup pattern as the slide_compose concat).
+- Audit the v3 overlay's field-name and section references for the
+  same kind of D-077 hallucination bug.
+
+**Rationale:** Same root cause; same fix. Doing both in v0.5.1 Tier A
+batches the work efficiently (one dispatcher change pattern applied
+to two helpers). Leaving substory_design.v3 broken would mean v0.5.1
+ships a prompt-architecture inconsistency: slide_compose is now
+overlay-on-v2, but substory_design is still standalone-pretending-
+to-overlay-on-v1. The asymmetry would be a footgun for v0.6.
+
+**Alternatives considered:**
+
+- **(b) Defer substory_design.v3 fix to v0.5.2** — rejected;
+  inconsistent prompt architecture costs more in cognitive load
+  than the ~15 minutes of additional work the fix takes. Same
+  pattern, same test surface.
+
+**Related:** [V0_5_1_PUNCH_LIST.md](V0_5_1_PUNCH_LIST.md) DQ4 + Tier
+A.2; D-075 (the parent decision this mirrors); D-071 (the Q/A/R/C
+contract substory_design.v3 implements).
+
