@@ -58,7 +58,7 @@ for ongoing benchmarking.
 
 | Tier | Scope | Status |
 |---|---|---|
-| 0 — orientation read + v3 prompt design DQs sign-off | research + DQs | ⬜ not started |
+| 0 — orientation read + v3 prompt design DQs sign-off | research + DQs | ✅ committed 2026-05-25 (read substory_design.v1.md + slide_compose.v1/v2.md end-to-end; verified contract has Punchline + Critical analyses + Cluster rationale but ZERO question/conclusion/handoff fields; audited 4 M6 drafts (ibd v0.3/v0.4 + fdm v0.3/v0.4) confirmed all 4 had 0 question fields, 0 conclusion fields, 0 handoff fields; inventoried register-discipline violations with field-class split — NB-refs in audience-facing fields: ibd-v0.3=8, ibd-v0.4=18, fdm-v0.3=9, fdm-v0.4=1 — wildly project+pipeline dependent; D-071 (Q/A/R/C slide-shape mapping per DQ1 (b) middle ground), D-072 (field-class-aware register heuristic + per-project allowlist + soft-warning per DQ2), D-073 (substory-shape via cascade Tier-2 substory_arc findings per DQ3 (c)), D-074 (--prompts-version default v2 until A/B passes per DQ4 (b)) all drafted) |
 | A — `substory_design.v3.md` (Q/A/R/C contract) + `slide_compose.v3.md` (register-aware) + `--prompts-version` flag | prompts + orchestrator | ⬜ not started |
 | A.1 — `tools/check_register_discipline.py` heuristic + design | new tool + tests | ⬜ not started |
 | B — `tools/check_substory_shape.py` post-composer Q/A/R/C check | new tool + tests | ⬜ not started |

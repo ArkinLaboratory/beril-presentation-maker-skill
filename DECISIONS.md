@@ -1506,3 +1506,120 @@ The M6 A/B surfaced that v0.4 vs v0.3 was the wrong question. Both pipelines fee
 - **Defer v0.5 indefinitely; ship v0.4-experimental + walk away.** Rejected per Adam's call 2026-05-25 ("Let's review the full deck creation strategy"); the M6 finding is too valuable to leave un-acted-upon.
 
 **Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) Tier D (the Adam read that drove this); D-069 (v0.4 ships as experimental; v0.5 is the next default-target); D-066 (Adam-veto pattern continues at v0.5 cut-over); [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) (v0.5 scope + DQs); auto-memory `project_presentation_maker_v0_4_m6.md` (M6 retrospective including the read that drove v0.5 framing).
+
+---
+
+## D-071 — 2026-05-25 — v0.5 Tier 0 / DQ1: Q/A/R/C contract shape — slide-shape mapping (middle ground)
+
+**Decision:** v0.5's substory Q/A/R/C contract is implemented as **slide-shape mapping** per V0_5_PUNCH_LIST.md DQ1 option (b). Each substory gets explicit slide-role slots: Q-slide, A-slide(s), R-slide(s), C-slide. The composer picks which layouts (from the existing 16-layout vocabulary) fill each slot — preserving layout flexibility while enforcing the analytical arc.
+
+New substory-level metadata fields in `substory_design.v3.md` output:
+- `question:` — the one scientific question this substory answers (≤25 words; mandatory).
+- `conclusion_for_next_substory:` — one-sentence handoff to next (≤25 words; mandatory unless this is the final substory).
+- `slide_roles:` (implicit via slide ordering; Q-slide is position 0 or 1 of the substory, A-slide(s) follow, R-slide(s) follow, C-slide is the substory's last content slide before the next divider).
+
+**Rationale:**
+
+1. **Today's contract has zero arc-shape.** Tier-0 audit: all four M6 drafts (ibd+fdm, v0.3+v0.4) have `**Punchline:**` fields but ZERO `**Question:**`, `**Conclusion:**`, or `**Handoff:**` fields. The substory_design.v1.md template asks for punchline + critical-analyses list + cluster rationale — no analytical-arc field. The Adam M6 read ("no question → analysis → results → conclusions") is structurally caused: the contract doesn't ask for those, so the LLM doesn't emit them.
+
+2. **Option (a) substory-level explicit Q/A/R/C fields** rejected: too rigid — forces a 4-slot decomposition even when a substory's natural shape is more like 1 Q-slide + 3 R-slides + 1 C-slide. The slide-role-via-position approach (b) gives the composer flexibility while still enforcing the question + conclusion fields.
+
+3. **Option (c) soft framing in prompt only** rejected: today's prompt already SAYS "tell a story" without enforcing structure; the result is what M6 surfaced. Soft framing without field-level enforcement doesn't change LLM behavior reliably.
+
+**Alternatives considered (with detail):**
+
+- **(a) Substory-level Q/A/R/C fields with mandatory 4 fields**: rejected as documented above; over-engineered.
+- **(c) Prompt-only ("organize the slide map as a Q→A→R→C arc")**: rejected as documented above; v0.3 prompts already gestured at narrative discipline without enforcement and produced the M6 result.
+- **(d) Per-slide role tag** (each slide has `slide_role: Q|A|R|C`): considered but rejected as adding complexity to slide_spec without adding capability beyond (b).
+
+**Related:** [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) DQ1 + Tier A; D-070 (v0.5 scope); M6 Tier D Adam read (the gap this addresses); `prompts/substory_design.v1.md` (the v0.5 Tier-A target for v3 rewrite); Tier-0 audit script in this session (all 4 M6 drafts had 0 question fields).
+
+---
+
+## D-072 — 2026-05-25 — v0.5 Tier 0 / DQ2: register-discipline heuristic is field-class-aware soft-warning
+
+**Decision:** The register-discipline validator (`tools/check_register_discipline.py`, v0.5 Tier A.1) is **field-class-aware**: distinct severity rules for operator-facing fields (`data_source`, `notes`) vs audience-facing fields (`title`, `headline`, `subtitle`, `caption`, `bullets`, `answer_summary`, `step_caption`, etc.) vs structural fields (`workflow_diagram.nodes[].label`, `methods_summary.method_*`). Lands as **P11** validator (next slot after P10). Severity: **soft-warning** by default per D-053 / M4a Tier B posture; per-project allowlist mechanism.
+
+**Heuristic specification (per Tier-0 audit data):**
+
+| Pattern | Regex | Operator-field severity | Audience-field severity |
+|---|---|---|---|
+| Notebook IDs (`NB##`, `NB##b`) | `\bNB\d+\w?(?:\s*§\d+)?\b` | allowed | **soft-warning** |
+| Notebook filenames (`##_name.ipynb`) | `\b\d{2}_\w+\.ipynb\b` | allowed | **soft-warning** |
+| REPORT section markers (`§Finding N`, `§Step N`) | `§(?:Finding\|Step\|Interpretation\|Hypothesis)\s+\d+` | allowed | **soft-warning** |
+| Notebook cell refs (`cell N`) | `\bcell\s+\d+\b` | allowed | **soft-warning** |
+| Figure filenames (`fig##_*.png`) | `\bf?ig?\d{1,3}[a-z]?_\w+\.(?:png\|jpg\|svg\|pdf)\b` | allowed | **soft-warning** |
+| Tool versions (`Bakta v1.12.0`) | `\b[A-Z][a-z]+\s+v\d+(?:\.\d+){1,3}\b` | allowed | allowed (audience-relevant) |
+| Schema versions (`slide_spec.v1`) | `\b[a-z_]+\.v\d+\b` | allowed | **soft-warning** (rarely needed in audience prose) |
+
+**Allowlist mechanism (per-project escape hatch):**
+- A `references/register_allowlist.md` file at the project root may list terms that the validator permits in audience-facing prose for that talk. Format: one allowed term per line, free text.
+- Allowlist applies only to audience-facing fields. Operator fields don't need an allowlist (everything is allowed there).
+- Allowlist matches as literal substring (case-sensitive) — keeps the matcher simple; project-specific (e.g., "RAST", "Bakta" could be permitted if a particular talk needs to name the tool).
+
+**Output:** `audit/presentation_validation.json` gains a `P11` entry (matches the M4b cascade Tier-1 aggregator's expected validator shape); soft-warning per-slide entries reference the specific pattern + the field; cascade Tier-1 reads it and surfaces as advisory.
+
+**Rationale (per Tier-0 audit on 4 M6 drafts):**
+
+1. **Field-class matters.** Many notebook-ID violations live in `data_source` fields, which are intentional operator-facing provenance (e.g., `"data_source": "REPORT.md §Finding 13; 09_final_synthesis.ipynb"`). A flat "no NB-refs anywhere" rule would generate huge false-positive volume. Audit data: ibd-v0.3 has 3 op-field NB-refs vs 8 audience-field — only the latter are the bug.
+
+2. **Project-dependent severity.** ibd-v0.4 had MORE audience-field NB-refs (18) than v0.3 (8); fdm-v0.4 had FEWER (1 vs 9). Project-dependent + pipeline-dependent — needs a tunable allowlist, not a hard-coded blocklist.
+
+3. **Tool names + audience-relevance.** "Bakta v1.12.0" sometimes IS what the audience needs (the talk's contribution is "annotation tool version matters"); sometimes it's specialist leakage. The default rule for tool-version names is **allowed** (don't false-positive flag); the allowlist lets a project add specific tools to a no-list if its talk is general-audience.
+
+4. **Soft-warning matches D-053 / M4a Tier B precedent.** The 4 existing length-cap validators are soft-warning; the renderer/audience absorbs minor noise; revise-loop can act on them via the M4b cascade. Same posture here. The bar to promote to error is "M6-style cut-over A/B shows soft-warning is being ignored at high enough rate to materially degrade decks" — TBD post-v0.5 ship.
+
+**Alternatives considered:**
+
+- **Hard error severity by default** — rejected; would force revise-loop iteration on every register-flag, eating tokens; matches paper-writer's posture for some pre-publication blocks but not appropriate for a talk-presentation skill where shrink-to-fit-equivalent (audience reads with author present) absorbs minor noise.
+- **Per-project blocklist instead of allowlist** — rejected; more verbose to maintain (need to list every notebook ID per project vs allowing once).
+- **No allowlist at all** — rejected; some projects have legitimate audience-relevant tool/version references; the validator must let those through.
+- **LLM-as-judge for register classification** — rejected as over-engineered for a v0.5 first cut; regex + allowlist is the cheap correct heuristic.
+
+**Related:** [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) DQ2 + Tier A.1; D-053 (M4a Tier B / DQ4 soft-warning posture for length caps); D-068 (M6 Tier C.1 data_figure caption demote to soft-warning); Tier-0 audit script in this session (4-draft inventory + field-class split); M4b `review_cascade.py::_validate_p1_p10` (the integration point where P11 plugs in).
+
+---
+
+## D-073 — 2026-05-25 — v0.5 Tier 0 / DQ3: substory-shape enforcement via cascade Tier-2 finding (not hard error)
+
+**Decision:** `tools/check_substory_shape.py` (v0.5 Tier B) emits findings into the M4b review cascade as **`kind=substory_arc` Tier-2 entries** at severity **P1** — NOT as a `validate_slide_spec` hard error. Matches the M4b cascade's narrative-light posture; revise_loop can act on it without halting the pipeline.
+
+**Operational contract:**
+
+- Substory-shape findings appear in `audit/review_cascade.json::tiers[1].findings[]` with `kind=substory_arc`, severity `P1`, and a `slide_id` pointing at the substory's representative slide (Q-slide or C-slide depending on which structural element is missing).
+- Reuses the existing `substory_arc` class beril-adversarial already emits (v3 schema; first surfaced at M5b — see M6 retrospective fdm-v0.4 findings F011, F012).
+- Cascade Tier-2 (Haiku narrative-light) augments the existing 4 detection classes per M4b D-056; substory-shape is the 5th.
+- Soft, NOT hard: missing-Q, missing-C, or broken-handoff doesn't fail the pipeline — it surfaces in the cascade output for revise_loop OR operator inspection.
+
+**Rationale:**
+
+1. **Matches narrative-light tier posture (D-049, M4b).** The cascade's Tier 2 is explicitly for narrative-quality checks that don't gate the pipeline; substory-shape is a narrative-quality check by definition.
+2. **Leverages existing infrastructure.** The cascade JSON consumer (review_cascade.v1) already supports new finding classes per D-056 ship-then-iterate posture. No new schema; no new orchestrator stage.
+3. **Soft enforcement matches D-072.** Same posture as register-discipline: revise-loop OR operator can act on it; pipeline doesn't halt; promote to hard-error only if v0.5 A/B shows soft enforcement is insufficient.
+
+**Alternatives considered:**
+
+- **(a) Hard error in `validate_slide_spec`** — rejected; forces revise-loop iteration; halts pipeline; over-rigid for the first v0.5 ship.
+- **(b) Soft-warning in `audit/presentation_validation.json` (the P-validator surface)** — rejected; P-validators are mechanical/structural; substory-shape is narrative-quality; goes in the cascade Tier 2 surface where narrative-quality findings live.
+- **(d) Adversarial v3 finding class** — paper-writer-style "let beril-adversarial flag it" — rejected; the substory-shape check is deterministic + can run pre-adversarial; no need to spend adversarial LLM cost on it.
+
+**Related:** [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) DQ3 + Tier B; D-049 (M4b cascade narrative-light tier); D-056 (cascade ship-then-iterate; v2 expansion candidates included substory_arc); `tools/review_cascade.py::run_tier1` (the integration point); M4b retrospective (the cascade infrastructure substory_shape integrates into); beril-adversarial v3 schema (defines the `substory_arc` finding class this reuses).
+
+---
+
+## D-074 — 2026-05-25 — v0.5 Tier 0 / DQ4: `--prompts-version` defaults to v2 until v0.5 A/B passes; flips to v3 at Tier E ship
+
+**Decision:** New orchestrator flag `--prompts-version {v1,v2,v3}` defaults to **v2** at v0.5 initial ship (matching D-069 v0.4 opt-in posture). Adam-veto at Tier E decides whether to flip the default to v3 in a follow-up v0.5.1 release. Operators can mix-and-match `--prompts-version` with `--architecture-pipeline` (independent axes); 4-way matrix (v1×v0_3, v1×v0_4, v2×v0_3, v2×v0_4, v3×v0_3, v3×v0_4) supported but the cut-over A/B compares against the v0.3/v0.4 baselines on disk from M6.
+
+**Rationale:**
+
+1. **Matches D-069 v0.4 opt-in posture.** Adam-veto rationale for D-069 was "the architecture pivot's wins on speed/cost don't outweigh the quality regressions; ship as opt-in, default unchanged." Same logic applies pre-v0.5-cut-over: ship v3 prompts as opt-in; flip default only if Tier E veto passes.
+2. **Conservative for operational users.** Users between v0.4-experimental ship and v0.5 cut-over should see no behavior change unless they explicitly opt in to v3.
+3. **Independent axes.** `--prompts-version` and `--architecture-pipeline` are orthogonal: v3 prompts work under either v0_3 (sequential) or v0_4 (parallel-compose) dispatch. The 4-way matrix isn't fully exercised but Tier C/D will at least run v3×v0_3 vs the v0.3 baseline.
+
+**Alternatives considered:**
+
+- **(a) Default to v3 at v0.5 ship** — rejected; assumes Tier E veto outcome before it happens; same mistake as M6 v0.4 would have been if we'd shipped as default.
+- **(c) v3 only on architecture=v0_4 (couple to the experimental axis)** — rejected; couples two orthogonal axes for no benefit; if v3 prompts work cleanly on v0_3 sequential dispatch, they should be available there.
+
+**Related:** [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) DQ4 + Tier A.3 (flag wiring); D-069 (v0.4 opt-in posture v0.5 mirrors); D-066 (Adam-veto pattern continues at v0.5 cut-over Tier E); `tools/presentation_maker.sh` `--architecture-pipeline` flag (the precedent dispatch shape); v0.5 Tier E (the gate for default-flip).
