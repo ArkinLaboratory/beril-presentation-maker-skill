@@ -260,27 +260,37 @@ If a slide doesn't pass its role check, revise BEFORE emitting JSON.
 
 ## What you produce (schema)
 
-(Unchanged from v2 except `schema_version: "compose-fragment.v3"`.)
-
-The fragment file is a JSON object:
+**Wire schema is IDENTICAL to v2** — only the `schema_version`
+string changes (`compose-fragment.v3`). The fragment is a flat
+`slides[]` array exactly like v2; the Q/A/R/C role distinction is
+conveyed by *which layout* each slide uses + the prose, NOT by
+restructuring the top-level JSON. See `slide_compose.v2.md` §"What
+you produce" for the full schema spec; v3 differs only as below.
 
 ```json
 {
   "schema_version": "compose-fragment.v3",
   "substory_id": "S2",
-  "section_divider": {
-    "layout": "section_divider",
-    "content": { ... }
-  },
-  "content_slides": [
-    {"layout": "...", "content": {...}, "speaker_notes": "..."},
+  "substory_punchline": "...",
+  "throughline_id": "TL1",
+  "mode": "talk-30",
+  "tier": "STRONG",
+  "slides": [
+    {"layout": "section_divider", "content": {...}, "speaker_notes": "..."},
+    {"layout": "...",             "content": {...}, "speaker_notes": "..."},
     ...
   ]
 }
 ```
 
-(Refer to v2 schema details + per-layout authoring rules; v3 keeps
-the same.)
+The **first** entry in `slides[]` is the substory's opening Q-slide
+(typically `section_divider` whose title names the SUBSTORY_QUESTION,
+or an opening `big_idea`). The **last** entry is the closing C-slide
+(typically `claim_evidence` or `big_idea` whose punchline STATES the
+SUBSTORY_CONCLUSION). Middle slides are A/R-slides per the Q/A/R/C
+authoring guidance above. **Do NOT** emit `section_divider` /
+`content_slides` as top-level keys — the merger expects flat
+`slides[]`.
 
 ## Inputs the user prompt will pass
 

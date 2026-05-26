@@ -58,6 +58,7 @@ bash src/beril_presentation_maker/skill/tools/presentation_maker.sh \
     ibd_phage_targeting \
     --beril-root "$BERIL_ROOT" \
     --prompts-version v3 \
+    --auto-advance \
     2>&1 | tee /tmp/v0_5_tier_c_ibd.log
 ```
 
@@ -108,6 +109,7 @@ bash src/beril_presentation_maker/skill/tools/presentation_maker.sh \
     functional_dark_matter \
     --beril-root "$BERIL_ROOT" \
     --prompts-version v3 \
+    --auto-advance \
     2>&1 | tee /tmp/v0_5_tier_d_fdm.log
 ```
 
