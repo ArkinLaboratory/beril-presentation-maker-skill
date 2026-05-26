@@ -1,5 +1,108 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.4.0-experimental (2026-05-25) — architecture pivot + cut-over decision
+
+Ships the v0.4 architectural pivot (architect-then-parallel-compose)
+as **opt-in via `--architecture-pipeline v0_4`**, NOT as the new default.
+v0.3 (sequential per-substory) remains the default pipeline. Per the
+M6 A/B cut-over decision (D-069): v0.4 wins on speed + cost + (some)
+quality but doesn't clear the ≥4/6 mechanical bar on the target project
+and shows substantive content-shape regressions on the sanity-check
+project. Adam-veto (D-066) = don't-ship-as-default. Tag is
+`-experimental` to communicate the opt-in status explicitly.
+
+**What's in v0.4 (opt-in via `--architecture-pipeline v0_4`):**
+
+- **M1** — Phase-0 vendor ports from paper-writer (`extract_methods`,
+  `extract_claims`, `validate_claim_inventory`, `phase0_reuse`).
+- **M2** — `deck_outline` M2-lite (lightweight enriched clustering
+  per D-042/D-043/D-044/D-045 — supersedes the M0 deck-architect rigid
+  contract).
+- **M3** — per-substory parallel composition via `worker_pool.sh` +
+  `merge_compose_fragments.py` + `reconcile_deck.py`.
+- **M4a** — render-debt fix (renderer shrink-to-fit, content caps,
+  visual-QA opt-in).
+- **M4b** — tiered review cascade (`review_cascade.py`,
+  `review_tier2.py`, cascade Tier-3 wrapping `beril-adversarial review`;
+  auto-runs by default; fail-fast on Tier-1 P0).
+- **M5a** — `revise_invariance.py` (5 semantic invariants on the revise
+  verb per §13) + P3 retirement (rewrite-in-place wrapping
+  `check_quantitative_grounding`; D-058 obsoleted).
+- **M5b** — AI Studio image-gen multi-provider (`image_client.py`
+  Google AI Studio native `:generateContent` path; sidecar probe cache;
+  D-064 hybrid fallback). beril-adversarial v0.7.0.8 contract integration
+  (rc=4 quarantine; Tier B.2 + B.3).
+- **M6** — `tools/m6_score.py` cut-over scoring script. A/B test on
+  `ibd_phage_targeting` (target) + `functional_dark_matter` (sanity).
+- **D-068** — `data_figure` caption cap demoted from hard error →
+  soft-warning (renderer shrink-to-fit absorbs; matches M4a length-cap
+  posture).
+
+**What v0.4 doesn't change:**
+
+- v0.3 default behaviour. Run without `--architecture-pipeline v0_4`
+  and the pipeline is identical to v0.3.x.
+- The slide-spec schema (v1 unchanged). Same `slide_spec.json` shape;
+  same 16-layout vocabulary.
+- The validator surface (P1–P10 unchanged in identity; severities
+  updated per D-053/D-068).
+- The orchestrator's stage names + CLI flags. `--architecture-pipeline`,
+  `--image-provider`, `--no-images`, `--auto-advance`, etc. — all
+  backward-compatible.
+
+**M6 cut-over results (mechanical FAIL; Adam-veto = don't-ship; full
+report regenerable via `tools/m6_score.py`):**
+
+- **Target (`ibd_phage_targeting`):** v0.4 wins 2/6 (wall-clock -15.2%;
+  adversarial findings -47.1%). Ties on cost + validators + image budget.
+  Adam metric-5 read: both pipelines equally poor (2/5) on overall arc.
+- **Sanity (`functional_dark_matter`):** v0.4 wins 3/6 (wall-clock -36.7%;
+  cost -41.9%; validator failures -100%). v0.3 wins on adversarial
+  (+33% v0.4 findings; cross-slide consistency loss). Adam metric-5
+  read: v0.3=3/5, v0.4=2/5 (v0.4 regressed).
+- Mechanical decision rule (D-065): v0.4 needs ≥4/6 on target + ≥40%
+  wall-clock reduction on any project. v0.4 hit neither.
+- Adam-veto (D-066): don't-ship-as-default; v0.4 opt-in via flag.
+
+**Operational guidance:**
+
+- **Most users should run default (v0.3).** It's the bench-validated
+  pipeline. v0.4's speed/cost wins don't justify the quality regressions
+  on cluster-rich projects (like `functional_dark_matter`).
+- **Use `--architecture-pipeline v0_4` when:** the project has many
+  small, independent substories (parallel-compose pays off); speed
+  matters more than narrative-arc tightness; you're prepared to manually
+  audit the merged spec for cross-slide numeric consistency (v0.4
+  parallel-compose can produce the same wrong number on multiple slides
+  composed independently).
+- **Don't use v0.4 when:** the project has tightly-coupled substories
+  that need to flow into each other; the final deck is for a high-stakes
+  presentation where the M6-surfaced "substory_arc" and
+  "unbacked_quantitative" regressions are material.
+
+**Carry items addressed in v0.5** (per D-070; `V0_5_PUNCH_LIST.md`):
+content-shape weaknesses that affect BOTH pipelines on BOTH projects
+(obscure arc, weak transitions, walls of text, specialist-register
+leakage). v0.5 is a content-discipline milestone, NOT another
+architectural pivot.
+
+**Upgrade notes:**
+
+- No breaking changes vs v0.3.4.4. Existing draft directories load
+  without migration.
+- `tools/m6_score.py` is the new cut-over scoring CLI (regenerable
+  against any draft pair; useful for ongoing benchmarking).
+- AI Studio image-gen requires `GOOGLE_AI_STUDIO_API_KEY` in shell
+  env or `BERIL_ROOT/.env`. See SPEC §8.3 + §8.3.2.
+- `beril-adversarial` consumers should use v0.7.0.8+ for the
+  exit-code contract integration (rc=4 quarantine). v0.7.0.6 and
+  earlier work but the rc=4 hazard isn't quarantined.
+
+**Tag:** `v0.4.0-experimental`. Future v0.4.x patch releases continue;
+v0.5 will be the next default-pipeline candidate.
+
+---
+
 ## v0.3.4.4 (2026-05-04) — docs cleanup pre-hub-install
 
 Docs-only release prepping for KBERDL hub install. README rewritten

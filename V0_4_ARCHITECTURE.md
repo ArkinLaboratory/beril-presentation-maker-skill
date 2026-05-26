@@ -1381,12 +1381,161 @@ first per Adam's reorder 2026-05-24.
       approval gate may want a "this can take 3+ min" advisory if
       the behaviour persists in operational use).
 
-**M6 — A/B test + cut-over decision.** Score sheet on
-`ibd_phage_targeting`; sanity check on `functional_dark_matter`;
-explicit go/no-go decision recorded in DECISIONS.md. State-schema
-v0.3 → v0.4 migration script. Make `--architecture-pipeline v0_4`
-the default on M6 pass; deprecate v0.3.x prompts (move to
-`prompts/archive/v0_3/`).
+**M6 — A/B test + cut-over decision — SHIPPED 2026-05-25 as `v0.4.0-experimental`.**
+Adam-veto outcome per D-069: **don't ship v0.4 as default**;
+v0.4 stays opt-in via `--architecture-pipeline v0_4`; v0.3 remains
+default. State-schema migration deliverable dropped per D-067
+(D-038 obsoleted). Eight tiers (0 + A + A.1 + B + B.1 + B.2 +
+B.3 + C + C.1 + C.2 + D + E + F); per-tier ship table in
+`M6_PUNCH_LIST.md`; DQ resolutions land as D-065..D-070 in
+`DECISIONS.md`; M6 retrospective in auto-memory
+`project_presentation_maker_v0_4_m6.md`. Total live spend
+~$66 across Tier B + C + C.2 + smoke. Suite 1319 passing.
+
+- **Tier 0 — state-schema investigation** (commit `25c0702`):
+  D-067 dropped the v0.3→v0.4 state-schema migration. No
+  presentation-maker `state.json` exists today (orchestrator-
+  canonical per line 19 comment); existing per-stage audit JSONs +
+  `audit/runs/run-N/summary.json` (written by `finalize_run.py`
+  EXIT trap) already provide all M6 scoring data. Paper-writer's
+  state.py (687 lines, hash-diff source-change detection) is
+  reference value but adopting at scale is a v0.5+ milestone,
+  not M6. D-038 OBSOLETED.
+
+- **Tier A — scoring script** (commit `a362258`): new
+  `tools/m6_score.py` (~530 lines) consumes existing per-stage
+  audit JSONs (no state.json required); extractors for runs/
+  summary, adversarial findings (with cascade Tier-3 fallback),
+  validator failures, image budget; comparator with ±5% tie band;
+  decision evaluator applying D-065 advisory rule; report
+  renderer with D-066 Adam-veto checkboxes. CLI accepts
+  `--v0_3-target/--v0_4-target` (required) + optional sanity pair
+  + `--subjective-scores` + `--out` + `--tie-band-pct`. 30 unit
+  tests.
+
+- **Tier A.1 — wall-clock metric uses orchestrator timestamp
+  delta** (commit `140b7c2`): live-discovered at Tier B clean —
+  the original `total_elapsed_seconds` (sum of per-stage elapsed)
+  double-counts parallel work and erases v0.4's architectural
+  win. Fix: `RunSummary.wall_clock_seconds` = (latest_finished −
+  earliest_started) from the orchestrator-level timestamp delta.
+  Falls back to total_elapsed_seconds when timestamps are
+  missing. 4 new regression pins.
+
+- **Tier B — A/B run on `ibd_phage_targeting`** (live data
+  capture; v0.3 commit unchanged in repo; results in audit dirs):
+  v0.3 (`draft_4`) and v0.4 (`draft_5`) on talk-30 STRONG with
+  `--no-images --auto-advance`. v0.3: 85.2 min, $12.05, 17
+  adversarial findings, 1 validator failure (P3). v0.4: 72.3 min,
+  $11.69, 9 adversarial findings, 1 validator failure (P3).
+  Mechanical: v0.4 wins on wall-clock (-15%) + adversarial
+  (-47%); ties on cost + validators + image budget. Sub-total
+  v0.4 wins 2/5.
+
+- **Tier B.1 — pass `--beril-root` to standalone adversarial
+  Stage 12** (commit `a3e6ba7`): live-discovered at Tier B —
+  same root cause class as M4b Tier E round 2 / D-058 (cascade
+  Tier-3 fix). Without explicit `--beril-root`, beril-adversarial
+  resolves it from its own pipx install path and fails with
+  "does not contain .claude/skills/". Stage 12 invocation now
+  mirrors the cascade-side fix.
+
+- **Tier B.2 — quarantine `adversarial_review.json` on rc=4**
+  (commit `a73c8b4`): correctness-not-messaging per adversarial
+  team correction. v0.7.0.7+v0.7.0.8 exit-code contract: rc=4
+  means JSON NOT consumer-safe (schema-invalid but PARSEABLE).
+  Old `|| { return 1 }` catch-all + downstream `if [[ -f $JSON ]]`
+  gate would conflate "ran clean" with "ran and produced
+  unsafe-but-parseable JSON" — revise_loop iterates on broken
+  findings. Fix: capture exit code; explicit `case "$rc" in`
+  branching; on rc=4, rename `audit/adversarial_review.json` →
+  `.json.quarantined-rc4` so the file-existence gate sees absent.
+  `.md` always intact per CONTRACT.md. Paper-writer v1.0.1
+  precedent. 6-assertion regression pin.
+
+- **Tier B.3 — cascade Tier-3 rc=4 quarantine (parallel-fix to
+  B.2)** (commit `cac36ab`): `review_cascade.py::run_tier3` has
+  the same structural hazard as Stage 12 had pre-B.2; ship the
+  parallel fix. Branches on rc=0/2 (consumer-safe; rc=2 records
+  auto-repair audit signal in `TierResult.note`), rc=4 (quarantine
+  + error status), rc=3 (config error), other (unexpected
+  failure). 3 new regression pins.
+
+- **Tier C — A/B run on `functional_dark_matter`** (live):
+  v0.3 (`draft_2`) ran clean (87.6 min, $13.18, 12 adversarial
+  findings (initially malformed JSON — fdm v0.3 pre-v0.7.0.8;
+  re-smoked clean after upgrade), 1 validator failure). v0.4
+  initial run (`draft_3`) HARD-FAILED at merge/assemble on a
+  290-char data_figure caption (10 over the 280 hard-cap) —
+  drove Tier C.1.
+
+- **Tier C.1 — demote data_figure caption to soft-warning +
+  m6_score malformed-JSON returns None** (commit `64c944c` +
+  D-068): the original v0.3.5 hard-cap motivation
+  (no-shrink-to-fit fallback) is obsolete; `assemble_pptx.
+  _fill_data_figure` now sets MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+  on the caption textbox. Prompts already said "advisory
+  severity"; code was contradicting the prompt. Reclassified to
+  soft-warning matching M4a Tier B / D-053 posture for the other
+  4 length caps. Also live-discovered (fdm v0.3 malformed
+  adversarial JSON): `m6_score.count_adversarial_findings`
+  distinguishes "file absent" (cascade Tier-3 fallback) from
+  "file present but malformed" (return None — n/a in report).
+
+- **Tier C.2 — fdm v0.4 re-run with D-068 + v0.7.0.8 active**
+  (live; `draft_5`): clean rc=0, 55.4 min wall-clock, $7.66 cost,
+  16 adversarial findings (4 P0, 11 P1, 1 info), 0 validator
+  failures, `.pptx` delivered. Mechanical: v0.4 wins 3/5
+  (wall-clock -36.7%, cost -41.9%, validators -100% (1→0)); v0.3
+  wins on adversarial (+33% v0.4 = 12→16 findings). The
+  adversarial regression is substantive: 2 P0 unbacked_quantitative
+  findings on the SAME wrong denominator across slides 11+14
+  (cross-slide consistency loss from parallel-compose), 2 P1
+  substory_arc breakage, 1 P0 missing_slide. These are the
+  failure modes parallel-compose worries about; M6 surfaced
+  them empirically.
+
+- **Tier D — Adam reads decks + casts veto** (D-069 outcome):
+  Adam read all four decks 2026-05-25. Metric 5 scores: ibd
+  target both 2/5 (equally poor); fdm sanity v0.3=3, v0.4=2 (v0.4
+  regressed). Mechanical M6 FAIL (v0.4 wins 2/6 on target, needs
+  ≥4; max wall-clock reduction -36.7% on fdm, needs ≥40%).
+  Adam-veto = **don't ship**. Three drivers (full rationale in
+  D-069): v0.4 doesn't help on ibd narrative coherence; v0.4
+  actively regresses on fdm; the bigger issue is upstream of v0.4
+  vs v0.3 (content-shape weakness present in BOTH pipelines —
+  obscure arc, weak transitions, walls of text, specialist
+  reference leakage, no unifying point). v0.5 opened per D-070.
+
+- **Tier E + F — docs + closeout + tag**: this section;
+  `SPEC.md` unchanged (M6 outcome is V0_4_ARCHITECTURE +
+  RELEASE_NOTES territory); `LAYOUT.md` updated for
+  `tools/m6_score.py` + Tier B.1/B.2/B.3 patches; `DECISIONS.md`
+  D-068..D-070; `RELEASE_NOTES.md` v0.4.0-experimental entry;
+  `M6_PUNCH_LIST.md` status table closed; auto-memory
+  `project_presentation_maker_v0_4_m6.md` + MEMORY.md index
+  promote; `V0_5_PUNCH_LIST.md` opened per D-070; git tag
+  `v0.4.0-experimental`.
+
+- **Carried out of M6** (deferred to v0.4.1 tidy or v0.5):
+  - M4a Task #8 (portable visual-QA for end-user revise loop).
+  - M4b Tier-2 prompt v2 expansion.
+  - M4b persist Tier-2 cost into `audit/review_tier2.json`.
+  - M5a `_extract_numeric_claims` dead-code cleanup.
+  - M5b per-provider `_WORST_CASE_COST_USD` split.
+  - M5b CBORG tenant image-gen restoration (separate CBORG-admin
+    conversation).
+  - M5b bimodal AI Studio wall-clock investigation.
+  - M6 minor m6_score loose-conflation (cascade-quarantined-rc=4
+    vs cascade-tier3-clean-0).
+
+**v0.5 — Content-discipline milestone (NOT another architectural
+pivot).** Per D-070. Addresses the upstream content-shape weakness
+M6 surfaced. Initial scope: Q/A/R/C substory contract;
+register-discipline validator; cross-substory throughline-bridge
+pass; figure-utilization contract. Sequential vs parallel-compose
+dispatch (v0.3 / v0.4 opt-in flag) is settled; v0.5 doesn't touch
+it. See `V0_5_PUNCH_LIST.md` for scope + DQs.
 
 ---
 

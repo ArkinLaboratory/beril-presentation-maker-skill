@@ -1407,3 +1407,102 @@ The veto can override the count either direction: ship despite missing a metric 
 - **(c) Lightweight state.json without hash-diff** (~1 day, fits in M6) — rejected; the data it would capture is already in `runs/run-N/summary.json` + `stage-metadata.json`. Duplicating means two sources of truth + drift risk. The "lightweight state.json" would be solving a problem we don't have.
 
 **Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) DQ1 + Tier 0 (this investigation); D-038 (2026-05-12 M0 decision; **OBSOLETED** by this DECISION); D-040 (Phase enum from paper-writer; the corresponding port for presentation-maker is also moot per this DECISION); paper-writer `src/beril_paper_writer/state.py` (687 lines; reference implementation NOT being adopted here); `tools/finalize_run.py` (the actual mechanism: writes `audit/runs/run-N/summary.json` on EXIT trap; `run-summary.v1` schema); `tools/presentation_maker.sh:19` (line that names the orchestrator-canonical posture).
+
+---
+
+## D-068 — 2026-05-25 — M6 Tier C.1: demote `data_figure` caption cap from hard error to soft-warning
+
+**Decision:** `tools/slide_spec.py::_check_data_figure` emits `severity="soft-warning"` (not `severity="error"`) for `data_figure` captions exceeding `DATA_FIGURE_CAPTION_MAX_CHARS=280`. The 280-char threshold remains; only the validator severity changes. Matches the M4a Tier B / DQ4 / D-053 posture for the other four length caps (`BIG_NUMBER_SUBTITLE_MAX_CHARS`, `WORKFLOW_STEP_CAPTION_MAX_CHARS`, `QA_ANSWER_SUMMARY_MAX_CHARS`, `DIAGRAM_NODE_LABEL_MAX_CHARS`).
+
+**Rationale (live-triggered at M6 Tier C, 2026-05-25):**
+
+1. **Original v0.3.5 hard-error motivation is obsolete.** The hard cap was added 2026-05-04 after `gene_function_ecological_agora` draft_1 slides 21+23 produced ~410-char captions that overflowed past the `data_source` band and bled into the y=5.00 brand strip. At that time, `assemble_pptx._fill_data_figure` did NOT set shrink-to-fit on the caption textbox; the validator was the only safety net. That changed: `_fill_data_figure` now sets `MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE` on the caption textbox, absorbing long captions visually. The original "no fallback" premise no longer holds.
+
+2. **Prompt-vs-code mismatch.** `slide_compose.v1.md` + `.v2.md` both say *"the validator will flag captions over 280 chars at advisory severity"* — but the code emitted `error` severity. The prompts promised soft-warning behaviour the code didn't deliver.
+
+3. **Live trigger.** M6 Tier C: fdm v0.4 (`functional_dark_matter` talks/draft_3) slide 13 caption was 290 chars (10 over the cap). Pipeline hard-failed at merge/assemble; no `.pptx` delivered. v0.3 on the same project produced 273-char captions (within band but close). Both pipelines can stochastically land in the 280-300 range; ~3% of runs hard-failing for a render artifact that shrink-to-fit absorbs is too brittle a posture for a soft constraint.
+
+4. **Matches existing length-cap posture.** D-053 / M4a DQ4 established soft-warning as the right severity for length caps the renderer can absorb. This decision aligns `data_figure caption` with the same rule.
+
+**Alternatives considered:**
+- **Lower the threshold (e.g., 200 chars) + keep hard-error.** Rejected — makes the prompt unreachable; LLMs will hit the limit constantly + the revise-loop will spend tokens re-shortening for a render concern shrink-to-fit handles.
+- **Keep hard-error + remove shrink-to-fit on data_figure captions.** Rejected — visual regression for a marginal correctness gain.
+- **Two-tier (soft at 280, hard at 400).** Rejected — adds complexity without clear value; if shrink-to-fit works at 290, it works at 400.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) Tier C.1; D-053 (M4a Tier B / DQ4 — the soft-warning posture for the other length caps); `tools/slide_spec.py::_check_data_figure` + `DATA_FIGURE_CAPTION_MAX_CHARS` docstring; `tools/assemble_pptx.py::_fill_data_figure` (the load-bearing shrink-to-fit fallback); `tests/unit/test_slide_spec.py::test_data_figure_caption_demoted_to_soft_warning` (regression pin); `prompts/slide_compose.v1.md` + `.v2.md` (the prompts that already said "advisory").
+
+---
+
+## D-069 — 2026-05-25 — M6 Tier D outcome: don't ship v0.4 as default; v0.4 stays opt-in via `--architecture-pipeline v0_4`
+
+**Decision:** v0.4 (architect-then-parallel-compose) does NOT become the default pipeline. v0.3 (sequential per-substory) remains the default. v0.4 is available via the existing opt-in flag: `presentation_maker.sh --architecture-pipeline v0_4 ...`. The skill ships as `v0.4.0-experimental` (per D-066 Adam-veto third option: "ship-but-flag" semantics — except framed at the version-tag level rather than per-run stderr warning, since the opt-in flag itself is the user-visible gate).
+
+**Mechanical M6 result (per D-065 + D-066 rule; complete report at `/tmp/m6_final_report.md`, regenerable via `tools/m6_score.py`):**
+
+| Project | Role (D-041) | v0.4 wins | Wall-clock Δ | Cost Δ | Adv findings Δ |
+|---|---|---|---|---|---|
+| `ibd_phage_targeting` (target) | must dominate ≥4/6 | **2/6** (wall-clock + adversarial) | **-15.2%** | -3.0% (tie) | -47.1% |
+| `functional_dark_matter` (sanity) | second data point | **3/6** (wall-clock, cost, validators) | **-36.7%** | **-41.9%** | **+33.3% (v0.3 wins)** |
+
+- v0.4 wins 2/6 on the target — **needs ≥4/6** to pass the count rule. Mechanical FAIL.
+- Max wall-clock reduction is -36.7% on fdm — **needs ≥40%** to clear the primary gate. Mechanical FAIL.
+- Metric 5 (Adam-subjective arc coherence): target tied at 2/5 (both pipelines equally poor); sanity v0.3=3, v0.4=2 (v0.4 regressed).
+
+**Adam-veto rationale (the actual decision, per D-066):**
+
+The mechanical FAIL is consistent with the qualitative read. Three substantive findings drove the veto:
+
+1. **v0.4 doesn't help on ibd narrative coherence.** Both ibd drafts equally poor on overall arc + story. The architecture pivot doesn't pay off where the deck was already weak on narrative shape; speeds it up + reduces token cost without improving the user-facing artifact.
+
+2. **v0.4 actively regresses on fdm.** Adam read fdm v0.3 (draft_2) as significantly better than v0.4 (draft_5). Cross-slide consistency loss: adversarial flagged 2 P0 `unbacked_quantitative` findings on the SAME wrong denominator (`10/137` on slides 11 + 14; REPORT says `10/151`) — the parallel-compose architecture composed those slides independently and both fabricated the same error. v0.4 also introduced 2 `substory_arc` P1s (v0.3 had 0): per-substory workers compose without seeing the substory-level arc shape, so closes break. These are exactly the failure modes parallel-compose worries about; M6 surfaced them empirically.
+
+3. **The bigger issue is upstream of v0.4 vs v0.3.** Adam's read named the load-bearing weakness: *"Overall arc and stories are obscure. Substory division is OK but could be sharper, but in no case is the question → clear analysis → results → conclusions clear. We get walls of text poisoned by specialist reference to, for example, specific notebooks rather than a general analytical discussion. The stories don't build and/or aren't brought together to make an overall point."* This is **present in both pipelines on both projects** — it's a v0.3-inheritance content-shape problem, not a v0.4 architectural one. v0.5 will address it (see D-070).
+
+**Implications:**
+
+- v0.4 code paths remain live + supported. `--architecture-pipeline v0_4` users get the speed/cost wins; ibd users see fewer adversarial findings; fdm users should NOT use v0.4 (or should be ready to manually correct cross-slide numeric drift + substory arc closes).
+- v0.3 remains the default. The v0.3 default-prompt set stays in `prompts/` (NOT moved to `prompts/archive/v0_3/`); v0.3.x continues to evolve alongside v0.4.x until v0.5 supersedes both.
+- Skill ships as `v0.4.0-experimental` git tag — captures the architectural work + the cut-over framing (not-default, opt-in) explicitly. Avoids the misleading "v0.4.0" tag that would imply default-pipeline cut-over happened.
+
+**Alternatives considered:**
+
+- **Ship as default ("ship" veto option).** Rejected; the fdm regression is real + the underlying content-shape weakness affects both pipelines equally. Promoting v0.4 doesn't fix what's broken; it just locks in the regression on the fdm-shape projects.
+- **Ship-but-flag with stderr warning per run.** Rejected as the wrong framing; the version-tag (`v0.4.0-experimental`) + opt-in flag together communicate the same "not-default" status without adding per-run noise to operators who explicitly chose v0.4.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) Tier D; D-041 (target vs sanity project assignment); D-065 (≥4/6 rule); D-066 (Adam-veto explicit final); D-068 (M6 Tier C.1 caption demote — necessary for fdm v0.4 to render at all); D-070 (v0.5 scope opening — addresses the upstream content-shape weakness); `tools/m6_score.py` + `audit/runs/run-N/summary.json` (the data infrastructure that surfaced the result honestly).
+
+---
+
+## D-070 — 2026-05-25 — M6 closeout: open v0.5 as a content-discipline milestone (not architectural)
+
+**Decision:** v0.5 is scoped as a **content-discipline** milestone, NOT another architectural pivot. The framing is: "v0.3 is sequential per-substory; v0.4 is architect-then-parallel-compose; v0.5 doesn't touch the per-substory dispatch — it rewrites the per-substory + cross-substory CONTRACTS the dispatch operates over." v0.5 punch list at `V0_5_PUNCH_LIST.md` captures the scope.
+
+**Rationale (from M6 Tier D Adam read):**
+
+The M6 A/B surfaced that v0.4 vs v0.3 was the wrong question. Both pipelines feed identical prompts + per-slide layout vocabulary; neither produces the **Question → Analysis → Results → Conclusions** narrative shape Adam expects from a scientific presentation. Specifically:
+
+- **Substory shape is undefined.** `substory_design.v1.md` asks for a punchline + slide map; doesn't require the substory to answer one Q with one A and hand a question forward to the next substory.
+- **Specialist-register leakage.** Notebook IDs (`NB10 §3`), figure file names (`F03_recovery_by_method.png`), REPORT.md-style citations leak into audience-facing slide prose where general analytical statements belong. No validator catches register drift; the slide_compose prompts are evidence-grounded but not audience-aware.
+- **Cross-substory bridging is templated.** `section_divider` slides are boilerplate; the substory `punchline` field is the only between-substory text + adversarial repeatedly flagged it as filler ("S2 punchline is filler — names no specific finding, no specific numbers").
+- **Figure utilization is decorative, not evidentiary.** Figures are present but don't drive the slide's claim; the `data_figure` layout doesn't enforce "the figure IS the evidence for this slide's title."
+
+**Initial v0.5 scope (open for refinement during v0.5 punch-list DQ surfacing):**
+
+1. **Substory-shape contract** — Q/A/R/C per substory + cross-substory question handoffs. New `substory_design.v2.md` + `tools/check_substory_shape.py` post-check.
+2. **Register-discipline validator** — detect specialist references (notebook IDs, file paths, internal artifact names) in audience-facing slide prose. New `tools/check_register_discipline.py` + soft-warning by default.
+3. **Cross-substory throughline-bridge pass** — rewrite `section_divider` slides + substory openings to explicitly carry the question forward. New `prompts/throughline_bridge.v1.md` + `tools/bridge_substories.py`.
+4. **Figure-utilization contract** — enforce "figure is evidence for the slide's claim" on `data_figure` + `concept_illustration`. Likely a new `tools/check_figure_provenance.py` or extension to `validate_p1_p10`.
+
+**What v0.5 explicitly does NOT do:**
+
+- Touch the per-substory dispatch (parallel vs sequential is settled — v0.4 opt-in flag stays; both modes feed the same v0.5 contracts).
+- Re-litigate the v0.4 architecture (D-069 settled that v0.4 stays opt-in; nothing in v0.5 changes that posture).
+- Add a new image-gen provider, validator framework rewrite, state.json migration, or other infrastructure work. v0.5 is content-shape only.
+
+**Alternatives considered:**
+
+- **Skip v0.5; treat as v0.4.1 carry.** Rejected; the content-shape work is too large to be a "tidy" release. The three v0.5 sub-deliverables each warrant punch-list-tier scope.
+- **Make v0.5 an architectural rewrite (e.g., agentic deck-architect via Agent SDK).** Rejected; the M6 Tier D read says the problem is content-shape, not orchestration. Re-architecting the orchestration doesn't fix walls of text or arc obscurity.
+- **Defer v0.5 indefinitely; ship v0.4-experimental + walk away.** Rejected per Adam's call 2026-05-25 ("Let's review the full deck creation strategy"); the M6 finding is too valuable to leave un-acted-upon.
+
+**Related:** [M6_PUNCH_LIST.md](M6_PUNCH_LIST.md) Tier D (the Adam read that drove this); D-069 (v0.4 ships as experimental; v0.5 is the next default-target); D-066 (Adam-veto pattern continues at v0.5 cut-over); [V0_5_PUNCH_LIST.md](V0_5_PUNCH_LIST.md) (v0.5 scope + DQs); auto-memory `project_presentation_maker_v0_4_m6.md` (M6 retrospective including the read that drove v0.5 framing).

@@ -133,6 +133,28 @@ ArkinLaboratory/beril-presentation-maker-skill/
 │       │   │                            Invoked by revise_loop.py via subprocess
 │       │   │                            between LLM post-edit and spec merge;
 │       │   │                            writes audit/revise_invariance/<finding_id>.json.
+│       │   ├── m6_score.py               v0.4 M6 Tier A: A/B cut-over scoring
+│       │   │                            script. Consumes existing per-stage
+│       │   │                            audit JSONs (no state.json — per D-067);
+│       │   │                            aggregates 6 metrics over 2-project
+│       │   │                            A/B (wall-clock from orchestrator
+│       │   │                            timestamp delta per Tier A.1, NOT
+│       │   │                            sum-of-stage-elapsed; cost from
+│       │   │                            runs/run-N/summary.json; adversarial
+│       │   │                            from adversarial_review.json with
+│       │   │                            cascade Tier-3 fallback per Tier C.1,
+│       │   │                            distinguishes malformed-vs-absent;
+│       │   │                            validators from
+│       │   │                            presentation_validation.json; metric 5
+│       │   │                            Adam-subjective via --subjective-scores
+│       │   │                            JSON; image budget from
+│       │   │                            image_provenance.json). Applies D-065
+│       │   │                            advisory rule (≥4/6 on target + ≥40%
+│       │   │                            wall-clock); renders Markdown report
+│       │   │                            with D-066 Adam-veto checkboxes.
+│       │   │                            Regenerable on any 2-project A/B audit
+│       │   │                            dir pair (useful for v0.5 ongoing
+│       │   │                            benchmarking).
 │       │   └── build_master.py          .potx → kbase-presentation-master.pptx
 │       │                                (build-time, not runtime; M4a Tier E
 │       │                                round 2 added the watermark-strip pass)
@@ -218,7 +240,7 @@ ArkinLaboratory/beril-presentation-maker-skill/
   citation_pool, diagram_render, image_client, poster_fill,
   validate_presentation, assemble_pptx, stream_progress, build_master,
   reconcile_deck, visual_qa, review_cascade, review_tier2,
-  revise_invariance)
+  revise_invariance, m6_score)
 - 15 versioned `.v1.md` system prompts under `prompts/`
   (incl. M4a `visual_qa.v1.md` + M4b `review_tier2.v1.md`)
 - Reference rubric `references/presentation-checklist.md`
