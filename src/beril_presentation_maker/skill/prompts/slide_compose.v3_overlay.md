@@ -149,10 +149,13 @@ Use these to shape the substory's slide arc:
 exactly 1):**
 
 - Default layout: `claim_evidence`. v2's per-layout rule for
-  `claim_evidence` defines the `punchline` field; that punchline
-  should STATE the SUBSTORY_CONCLUSION — the operative result
-  that motivates the next substory's Question.
-- Alternative: closing `big_idea`.
+  `claim_evidence` requires the `title` field (annotated "the
+  punchline; declarative") plus `bullets`. The `title` should
+  STATE the SUBSTORY_CONCLUSION — the operative result that
+  motivates the next substory's Question. The `bullets` are 1-3
+  statements backing the claim.
+- Alternative: closing `big_idea` (v2 requires `title`; same
+  rule — the `title` STATES the SUBSTORY_CONCLUSION).
 
 The cascade Tier-1 `tools/check_substory_shape.py` emits P1
 soft-warnings if Q/R/C slides are absent. This overlay is
@@ -196,9 +199,9 @@ For each slide:
   principal-text field name the SUBSTORY_QUESTION?
 - Is it an R-slide? → Is the punchline a *claim*, not a topic?
 - Is it the C-slide (substory's last content slide)? → Does its
-  `punchline` (per v2's claim_evidence schema) STATE the
-  SUBSTORY_CONCLUSION? On the final substory, state the
-  throughline-level conclusion.
+  `title` (per v2's claim_evidence schema — annotated as "the
+  punchline; declarative") STATE the SUBSTORY_CONCLUSION? On the
+  final substory, state the throughline-level conclusion.
 
 If a slide doesn't pass its role check, revise BEFORE emitting
 JSON.
@@ -221,9 +224,10 @@ layout-specific names like `punchline`.)
   rather than the SUBSTORY_QUESTION. → Re-write the `punchline`
   to NAME the SUBSTORY_QUESTION.
 - **C-slide without conclusion.** Closing claim_evidence whose
-  `punchline` (per v2's claim_evidence schema) doesn't STATE
-  the SUBSTORY_CONCLUSION. → Re-write the `punchline` to be the
-  explicit handoff statement.
+  `title` (per v2's claim_evidence schema — the "title is the
+  punchline; declarative" rule) doesn't STATE the
+  SUBSTORY_CONCLUSION. → Re-write the `title` to be the explicit
+  handoff statement.
 
 ## v3 inviolable rules (additive to v2's inviolable-rules list)
 
@@ -233,10 +237,15 @@ layout-specific names like `punchline`.)
    references (NB-IDs, §Finding markers, file names, schema
    versions) — provenance lives in `data_source`.
 6. **v3:** Q-slide (substory's first slide) names the
-   SUBSTORY_QUESTION via its layout-specific principal-text
-   field; C-slide (substory's last content slide) states the
-   SUBSTORY_CONCLUSION via its layout-specific principal-text
-   field.
+   SUBSTORY_QUESTION via the layout's principal-text field —
+   for `section_divider` that's `punchline`; for opening
+   `big_idea` that's `title` (per v2's per-layout rules above).
+   C-slide (substory's last content slide) states the
+   SUBSTORY_CONCLUSION via the layout's principal-text field —
+   for `claim_evidence` that's `title` (annotated "the
+   punchline; declarative" in v2); for closing `big_idea` that's
+   `title`. **Do NOT** substitute generic names — use v2's
+   layout-specific required field-name verbatim.
 7. **v3:** The output `schema_version` is `compose-fragment.v3`
    (not `.v2`). Wire schema is otherwise IDENTICAL to v2 — flat
    `slides[]` array, same per-layout fields, same speaker_notes

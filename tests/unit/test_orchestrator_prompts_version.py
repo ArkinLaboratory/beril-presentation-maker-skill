@@ -438,3 +438,105 @@ def test_old_standalone_v3_file_retired():
         f"replaced it with slide_compose.v3_overlay.md. If you "
         f"intentionally re-introduced it, update this test + the "
         f"dispatcher to match.")
+
+
+# ---------------------------------------------------------------------------
+# v0.5.1 Tier A.1 — overlay anti-pattern field names (D-077)
+# ---------------------------------------------------------------------------
+#
+# The pre-fix overlay (and the dead standalone v3.md before it)
+# called claim_evidence's principal-text field `punchline` — wrong.
+# v2's per-layout schema requires `title` for claim_evidence
+# (annotated "the punchline; declarative"). Same bug appeared for
+# the C-slide self-check + the C-slide anti-pattern bullet + the
+# inviolable rules.
+#
+# Pin the corrected references so a future re-edit can't regress.
+
+OVERLAY_PATH = (REPO_ROOT / "src" / "beril_presentation_maker"
+                / "skill" / "prompts" / "slide_compose.v3_overlay.md")
+
+
+def test_c_slide_references_claim_evidence_title_not_punchline():
+    """Per D-077: claim_evidence's required-field is `title` (not
+    `punchline`). The overlay's C-slide guidance + self-check +
+    anti-pattern + inviolable-rules must reference `title` when
+    talking about claim_evidence — anywhere the overlay says
+    'claim_evidence schema ... punchline' is the bug we fixed."""
+    body = OVERLAY_PATH.read_text(encoding="utf-8")
+    # Find the C-slide section (between "**C-slide" and "## ").
+    c_slide_start = body.find("**C-slide")
+    assert c_slide_start > 0
+    c_slide_end = body.find("\n## ", c_slide_start)
+    c_slide_block = body[c_slide_start:c_slide_end]
+    # Must reference `title` (the correct v2 field name)
+    assert "`title`" in c_slide_block, (
+        "C-slide section should reference `title` (v2's "
+        "claim_evidence required-field); got block:\n"
+        f"{c_slide_block[:500]}")
+    # The dead-bug phrasing — "claim_evidence schema defines the
+    # `punchline` field" — must NOT appear.
+    assert "claim_evidence` defines the `punchline" not in c_slide_block
+    assert "claim_evidence schema ... punchline" not in c_slide_block
+
+    # And anywhere the anti-pattern / inviolable-rule names the
+    # field on claim_evidence, it should say `title`, not `punchline`.
+    # Find the v3-anti-patterns section.
+    ap_start = body.find("## v3 anti-patterns")
+    ap_end = body.find("\n## ", ap_start)
+    ap_block = body[ap_start:ap_end]
+    # C-slide-without-conclusion bullet exists + names `title`.
+    assert "C-slide without conclusion" in ap_block
+    assert "claim_evidence whose\n  `title`" in ap_block or \
+           "claim_evidence whose `title`" in ap_block, (
+        "C-slide-without-conclusion anti-pattern bullet should "
+        "reference `title` (the v2 claim_evidence field), not "
+        "`punchline`; got block:\n" + ap_block[:600])
+
+
+def test_q_slide_references_section_divider_punchline():
+    """Per v2's section_divider schema (slide_compose.v2.md L569):
+    the required field is `punchline`. The Q-slide anti-pattern
+    bullet must name `punchline` (not `title`) — this is the OTHER
+    half of D-077. (The pre-fix overlay actually got this right;
+    pin to prevent regression.)"""
+    body = OVERLAY_PATH.read_text(encoding="utf-8")
+    ap_start = body.find("## v3 anti-patterns")
+    ap_end = body.find("\n## ", ap_start)
+    ap_block = body[ap_start:ap_end]
+    assert "Q-slide without question" in ap_block
+    # The pin: section_divider's field is `punchline`.
+    assert "section_divider whose\n  `punchline`" in ap_block or \
+           "section_divider whose `punchline`" in ap_block, (
+        "Q-slide-without-question anti-pattern bullet should "
+        "reference `punchline` (the v2 section_divider field), "
+        "not `title`; got block:\n" + ap_block[:600])
+
+
+def test_inviolable_rules_name_both_field_names_explicitly():
+    """The inviolable-rules section must enumerate the
+    layout-specific field names for both Q-slide layouts
+    (section_divider→punchline, big_idea→title) and C-slide layouts
+    (claim_evidence→title, big_idea→title). The pre-fix overlay
+    used only the vague 'principal-text field' language; D-077
+    strengthens it to name the fields explicitly."""
+    body = OVERLAY_PATH.read_text(encoding="utf-8")
+    # Find the inviolable-rules section header.
+    inv_start = body.find("## v3 inviolable rules")
+    inv_end = len(body)  # rules is the last section
+    inv_block = body[inv_start:inv_end]
+    # The Q-slide rule must name `section_divider` → `punchline`
+    # AND `big_idea` → `title`.
+    assert "section_divider" in inv_block and "punchline" in inv_block, (
+        "Q-slide inviolable rule should name section_divider + "
+        "punchline; got:\n" + inv_block[:800])
+    # The C-slide rule must name `claim_evidence` → `title`.
+    assert "claim_evidence" in inv_block and "title" in inv_block, (
+        "C-slide inviolable rule should name claim_evidence + "
+        "title; got:\n" + inv_block[:800])
+    # And the rule must explicitly warn against generic-name
+    # substitution (the lesson from the morning abort).
+    assert "Do NOT" in inv_block or "do NOT" in inv_block, (
+        "Inviolable rule should explicitly warn against generic-"
+        "name substitution per D-077 lesson; got:\n" +
+        inv_block[:800])
