@@ -1383,6 +1383,13 @@ _compose_one_substory() {
   headline=$(_m3_section_line "$_M3_BRIEF_HEADLINE_SLOTS" "$sid")
   figs=$(_m3_section_line "$_M3_BRIEF_SCOPED_FIGURES" "$sid")
 
+  # v0.5/D-071: per-substory Question + Conclusion (v3 prompts only).
+  local sub_question="" sub_conclusion=""
+  if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+    sub_question=$(_m3_section_line "$_M3_BRIEF_QUESTIONS" "$sid")
+    sub_conclusion=$(_m3_section_line "$_M3_BRIEF_CONCLUSIONS" "$sid")
+  fi
+
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 SUBSTORY_PATH=$_M3_SUBSTORIES_PATH
@@ -1399,7 +1406,19 @@ SECTION_BUDGET=$budget
 HEADLINE_SLOT=$headline
 SCOPED_FIGURES=$figs
 DECK_REGISTER=$_M3_BRIEF_REGISTER
-DECK_ARC=$_M3_BRIEF_ARC
+DECK_ARC=$_M3_BRIEF_ARC"
+
+  # v0.5/D-071 + D-072: append v3-only inputs. v1/v2 prompts don't
+  # reference these fields, so injecting them would just bloat the
+  # user prompt without effect; gate on PROMPTS_VERSION=v3.
+  if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+    user_prompt="${user_prompt}
+SUBSTORY_QUESTION=$sub_question
+SUBSTORY_CONCLUSION=$sub_conclusion
+ALLOWLIST_TERMS=$_M3_ALLOWLIST_TERMS"
+  fi
+
+  user_prompt="${user_prompt}
 
 Run the slide_compose stage for substory $sid. SUBSTORY_PATH is the \
 enriched whole-deck outline; compose ONLY substory $sid's section. The \
@@ -1422,10 +1441,32 @@ cover this). Write the result to OUT_PATH."
 _slide_compose_v0_3() {
   local substories="$1"; shift
   local prior_outputs="" sid
+
+  # v0.5/D-071 + D-072: pre-extract Q/Conclusion + allowlist once for
+  # the whole loop (v3 prompts only); reused per-substory below.
+  local _v3_questions="" _v3_conclusions="" _v3_allowlist=""
+  if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+    _v3_questions="$(_m3_outline_field "$substories" questions)"
+    _v3_conclusions="$(_m3_outline_field "$substories" conclusions)"
+    local _allowlist_path="$PROJECT_DIR/references/register_allowlist.md"
+    if [[ -f "$_allowlist_path" ]]; then
+      _v3_allowlist="$(grep -vE '^\s*(#|$)' "$_allowlist_path" \
+        2>/dev/null | tr '\n' ',' | sed 's/,$//' || true)"
+    fi
+  fi
+
   for sid in "$@"; do
     echo "" >&2
     echo "  -> composing $sid" >&2
     local out="$SLIDES_DIR/${sid}_slides.json"
+
+    # v0.5/D-071: per-substory Question + Conclusion (v3 prompts only).
+    local sub_question="" sub_conclusion=""
+    if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+      sub_question=$(_m3_section_line "$_v3_questions" "$sid")
+      sub_conclusion=$(_m3_section_line "$_v3_conclusions" "$sid")
+    fi
+
     local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 SUBSTORY_PATH=$substories
@@ -1436,7 +1477,18 @@ CURATED_FIGURES_PATH=$CURATED_FIGURES
 CITATION_POOL_PATH=$CITATION_POOL_PATH
 MODE=$MODE
 TIER=$TIER
-PRIOR_SUBSTORY_OUTPUTS=$prior_outputs
+PRIOR_SUBSTORY_OUTPUTS=$prior_outputs"
+
+    # v0.5/D-071 + D-072: append v3-only inputs (gate on
+    # PROMPTS_VERSION=v3; v1/v2 prompts don't reference these).
+    if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+      user_prompt="${user_prompt}
+SUBSTORY_QUESTION=$sub_question
+SUBSTORY_CONCLUSION=$sub_conclusion
+ALLOWLIST_TERMS=$_v3_allowlist"
+    fi
+
+    user_prompt="${user_prompt}
 
 Run the slide_compose stage for substory $sid. The substory's punchline \
 and covered analyses are in $substories. Read REPORT.md sections cited \
@@ -1483,6 +1535,22 @@ _slide_compose_v0_4() {
   _M3_BRIEF_SCOPED_FIGURES="$(_m3_outline_field "$substories" scoped_figures)"
   _M3_BRIEF_REGISTER="$(_m3_outline_field "$substories" register)"
   _M3_BRIEF_ARC="$(_m3_outline_field "$substories" arc)"
+  # v0.5/D-071 + D-072: Q/A/R/C contract fields + register-discipline
+  # allowlist. Only populated when --prompts-version v3 to avoid
+  # parsing cost on v1/v2 paths where slide_compose ignores them.
+  _M3_BRIEF_QUESTIONS=""
+  _M3_BRIEF_CONCLUSIONS=""
+  _M3_ALLOWLIST_TERMS=""
+  if [[ "$PROMPTS_VERSION" == "v3" ]]; then
+    _M3_BRIEF_QUESTIONS="$(_m3_outline_field "$substories" questions)"
+    _M3_BRIEF_CONCLUSIONS="$(_m3_outline_field "$substories" conclusions)"
+    # Load per-project register allowlist (D-072) if present.
+    local _allowlist_path="$PROJECT_DIR/references/register_allowlist.md"
+    if [[ -f "$_allowlist_path" ]]; then
+      _M3_ALLOWLIST_TERMS="$(grep -vE '^\s*(#|$)' "$_allowlist_path" \
+        2>/dev/null | tr '\n' ',' | sed 's/,$//' || true)"
+    fi
+  fi
 
   local _t0
   _t0="$(date +%s)"

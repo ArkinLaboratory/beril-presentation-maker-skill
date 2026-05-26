@@ -156,3 +156,105 @@ def test_v3_prompt_files_present_in_pre_flight_check():
     assert "slide_compose.v3.md" in loop_line, (
         f"pre-flight prompt loop missing slide_compose.v3.md; "
         f"got: {loop_line}")
+
+
+# ---------------------------------------------------------------------------
+# v0.5 Tier A.2 — SUBSTORY_QUESTION/CONCLUSION user-prompt wiring (D-071/D-072)
+# ---------------------------------------------------------------------------
+#
+# The v3 slide_compose.v3.md prompt documents 3 user-prompt inputs that
+# v2 doesn't have: SUBSTORY_QUESTION, SUBSTORY_CONCLUSION, ALLOWLIST_TERMS.
+# Tier A.2 wired these through both slide-compose paths (v0_4 parallel +
+# v0_3 sequential). Gate: only injected when --prompts-version v3.
+
+def test_v0_4_user_prompt_injects_v3_fields_when_prompts_version_v3():
+    """The v0_4 _compose_one_substory builder must include the three
+    v3 user-prompt fields (SUBSTORY_QUESTION, SUBSTORY_CONCLUSION,
+    ALLOWLIST_TERMS) inside a PROMPTS_VERSION=v3 gate."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # Locate the v0_4 path's v3-gated injection block.
+    # Look for the conditional block that adds SUBSTORY_QUESTION etc.
+    assert 'SUBSTORY_QUESTION=$sub_question' in text, (
+        "v3-gated injection of SUBSTORY_QUESTION missing")
+    assert 'SUBSTORY_CONCLUSION=$sub_conclusion' in text, (
+        "v3-gated injection of SUBSTORY_CONCLUSION missing")
+    # ALLOWLIST_TERMS appears in BOTH v0_4 + v0_3 paths
+    assert 'ALLOWLIST_TERMS=' in text, (
+        "v3-gated injection of ALLOWLIST_TERMS missing")
+    # Gate must be PROMPTS_VERSION=v3 (else injection happens on v1/v2 too)
+    assert 'PROMPTS_VERSION" == "v3"' in text or \
+           'PROMPTS_VERSION = v3' in text, (
+        "v3 injection block missing PROMPTS_VERSION=v3 gate")
+
+
+def test_v0_4_prepopulates_question_conclusion_brief_when_v3():
+    """The v0_4 setup block (before per-substory compose) must
+    pre-populate _M3_BRIEF_QUESTIONS + _M3_BRIEF_CONCLUSIONS via
+    parse_deck_outline.py — and only when PROMPTS_VERSION=v3 (we
+    don't pay parse-cost on v1/v2 paths)."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    assert '_M3_BRIEF_QUESTIONS=' in text
+    assert '_M3_BRIEF_CONCLUSIONS=' in text
+    # And they're set inside a v3 gate (not unconditional)
+    # Find the line numbers of the assignments
+    lines = text.splitlines()
+    questions_line = next(
+        (i for i, line in enumerate(lines) if '_M3_BRIEF_QUESTIONS=' in line
+         and '_m3_outline_field' in line), None)
+    assert questions_line is not None, (
+        "could not find _M3_BRIEF_QUESTIONS assignment with _m3_outline_field")
+    # Look back ~10 lines for a PROMPTS_VERSION check
+    preceding = "\n".join(lines[max(0, questions_line - 10):questions_line])
+    assert 'PROMPTS_VERSION" == "v3"' in preceding, (
+        "_M3_BRIEF_QUESTIONS assignment not gated by PROMPTS_VERSION=v3")
+
+
+def test_v0_3_path_also_wires_v3_fields_when_prompts_version_v3():
+    """The v0_3 sequential path (_slide_compose_v0_3) must ALSO
+    wire SUBSTORY_QUESTION + SUBSTORY_CONCLUSION + ALLOWLIST_TERMS
+    when PROMPTS_VERSION=v3, since v0_3 + v3 is a valid combination
+    per D-074."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # Locate the v0_3 function
+    v0_3_start = text.find("_slide_compose_v0_3() {")
+    assert v0_3_start > 0
+    # Walk forward to find the function's end (next `^}` at column 0)
+    # — heuristic: function bodies in this script are short enough that
+    # the next `\n}\n` is the closer.
+    v0_3_end = text.find("\n}\n", v0_3_start) + 2
+    v0_3_body = text[v0_3_start:v0_3_end]
+    # The body must contain v3-gated injection
+    assert 'SUBSTORY_QUESTION=$sub_question' in v0_3_body, (
+        "v0_3 path missing SUBSTORY_QUESTION v3-gated injection")
+    assert 'SUBSTORY_CONCLUSION=$sub_conclusion' in v0_3_body, (
+        "v0_3 path missing SUBSTORY_CONCLUSION v3-gated injection")
+    assert 'PROMPTS_VERSION" == "v3"' in v0_3_body, (
+        "v0_3 path missing PROMPTS_VERSION=v3 gate")
+
+
+def test_parse_deck_outline_supports_v3_question_conclusion_fields():
+    """parse_deck_outline.py --field {questions,conclusions} must be
+    valid (the orchestrator's _m3_outline_field helper calls them).
+    Quick sanity check via --help."""
+    result = subprocess.run(
+        [sys.executable,
+         str(REPO_ROOT / "src/beril_presentation_maker/skill/tools/parse_deck_outline.py"),
+         "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    help_text = result.stdout + result.stderr
+    assert "questions" in help_text
+    assert "conclusions" in help_text
+
+
+def test_allowlist_loaded_from_project_dir_when_v3():
+    """Per D-072: when PROMPTS_VERSION=v3, the orchestrator loads
+    references/register_allowlist.md from PROJECT_DIR and injects as
+    ALLOWLIST_TERMS (comma-separated). The load uses grep to strip
+    comments + blanks."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # The allowlist path pattern must reference references/register_allowlist.md
+    assert "references/register_allowlist.md" in text
+    # Loaded via grep + tr to comma-separated string
+    assert "register_allowlist.md" in text and "tr '\\n' ','" in text

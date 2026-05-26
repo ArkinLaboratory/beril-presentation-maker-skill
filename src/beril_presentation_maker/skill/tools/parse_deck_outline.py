@@ -55,6 +55,12 @@ _SECTION_FIELDS = {
     "transitions_in": "Transition in",
     "transitions_out": "Transition out",
     "scoped_figures": "Scoped figures",
+    # v0.5 D-071: Q/A/R/C contract fields per substory. Question is
+    # required on every substory; Conclusion is required on every
+    # non-final substory (empty string returned for last substory's
+    # missing Conclusion — caller decides whether to treat as error).
+    "questions": "Question",
+    "conclusions": "Conclusion for next substory",
 }
 
 # Deck-level bold-label fields (single occurrence, in ## Deck-level spec).

@@ -182,6 +182,105 @@ def test_extract_scoped_figures():
     assert by["S3"] == "fig_11"
 
 
+# ---------------------------------------------------------------------------
+# v0.5 D-071 fields: Question + Conclusion for next substory
+# ---------------------------------------------------------------------------
+
+# A v3-shape substory list (D-071): each substory has Question +
+# Conclusion-for-next, except the last substory omits Conclusion.
+_V3_FIXTURE = """\
+# Substory clusters — `test_project` / talk mode `talk-30`
+
+**Throughline:** Test throughline.
+
+## Substory clusters
+
+### S1 — First cluster
+
+**Question:** What is the first question being answered?
+
+**Conclusion for next substory:** S1 establishes the foundation that S2 builds on.
+
+**Punchline:** P1.
+
+### S2 — Second cluster
+
+**Question:** How does the foundation translate into actionable targets?
+
+**Conclusion for next substory:** S2 yields six concrete targets ready for intervention.
+
+**Punchline:** P2.
+
+### S3 — Last cluster
+
+**Question:** What concrete intervention design follows from the targets?
+
+**Punchline:** P3.
+"""
+
+
+def test_extract_questions_per_substory():
+    by = dict(pdo.extract_section_field(_V3_FIXTURE, "Question"))
+    assert by["S1"] == "What is the first question being answered?"
+    assert by["S2"] == "How does the foundation translate into actionable targets?"
+    assert by["S3"] == "What concrete intervention design follows from the targets?"
+
+
+def test_extract_conclusions_per_substory_last_substory_empty():
+    """The last substory omits Conclusion (D-071: implicit in throughline).
+    The extractor returns empty string for the missing field."""
+    by = dict(pdo.extract_section_field(
+        _V3_FIXTURE, "Conclusion for next substory"))
+    assert by["S1"] == "S1 establishes the foundation that S2 builds on."
+    assert by["S2"] == "S2 yields six concrete targets ready for intervention."
+    # S3 is the last substory; Conclusion omitted by design
+    assert by["S3"] == ""
+
+
+def test_cli_questions_field(tmp_path, capsys):
+    """CLI emits "S{N}<TAB>value" per substory for --field questions."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(_V3_FIXTURE, encoding="utf-8")
+    rc = pdo.main(["--path", str(p), "--field", "questions"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line]
+    assert len(lines) == 3
+    assert lines[0].startswith("S1\t")
+    assert "first question" in lines[0]
+    assert lines[1].startswith("S2\t")
+    assert lines[2].startswith("S3\t")
+
+
+def test_cli_conclusions_field_last_substory_tab_empty(tmp_path, capsys):
+    """CLI emits "S3\t" (empty value after tab) for the last substory's
+    missing Conclusion — caller decides if that's an error or fine."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(_V3_FIXTURE, encoding="utf-8")
+    rc = pdo.main(["--path", str(p), "--field", "conclusions"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    # S3 line should be "S3\t" (tab present, value empty)
+    s3_line = next(line for line in lines if line.startswith("S3"))
+    assert s3_line == "S3\t"
+
+
+def test_v1_fixture_returns_empty_for_v3_only_fields():
+    """Backwards compat: running --field questions / conclusions
+    against a v0.4-shape outline (no v3 fields) returns empty values
+    for every substory rather than crashing."""
+    by_q = dict(pdo.extract_section_field(FIXTURE, "Question"))
+    by_c = dict(pdo.extract_section_field(
+        FIXTURE, "Conclusion for next substory"))
+    # All 3 substories present, all empty (v0.4 fixture lacks the
+    # v3 fields)
+    assert set(by_q.keys()) == {"S1", "S2", "S3"}
+    assert all(v == "" for v in by_q.values())
+    assert set(by_c.keys()) == {"S1", "S2", "S3"}
+    assert all(v == "" for v in by_c.values())
+
+
 def test_section_missing_field_yields_empty():
     """A section that omits a per-section field yields value '' — the
     other sections still parse."""
