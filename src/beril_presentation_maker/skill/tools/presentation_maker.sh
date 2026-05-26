@@ -79,6 +79,18 @@
 #                            cborg | google_ai_studio. Default: precedence —
 #                            GOOGLE_AI_STUDIO_API_KEY env present → AI Studio;
 #                            else CBORG_API_KEY → CBORG; else fail.
+#   --prompts-version <v>    v1 | v2 | v3. Default: v2. Selects prompt
+#                            files for substory_design + slide_compose:
+#                              v1 → substory_design.v1.md + slide_compose.v1.md
+#                                   (v0.3.x; pre-M3 sequential composer)
+#                              v2 → substory_design.v1.md + slide_compose.v2.md
+#                                   (v0.4 M3 parallel-compose + fused notes)
+#                              v3 → substory_design.v3.md + slide_compose.v3.md
+#                                   (v0.5 D-071/D-072 Q/A/R/C contract +
+#                                   register-discipline-aware composer)
+#                            Independent axis from --architecture-pipeline.
+#                            Default v2 per D-074 until v0.5 cut-over A/B
+#                            passes; flip to v3 at v0.5.1.
 #   --visual-qa              Run the visual-QA pass after assembly (v0.4 M4a
 #                            Tier C). Renders the deck to per-slide PNGs and
 #                            runs a vision claude -p over them to flag
@@ -128,6 +140,12 @@ IMAGE_STYLE=""                # optional style override forwarded to ai_image_pr
 # CLI --image-provider overrides; downstream image_client.py CLI uses
 # snake_case provider names (cborg | google_ai_studio).
 IMAGE_PROVIDER=""
+
+# v0.5 D-074: prompts-version selection. Default v2 until v0.5 cut-over
+# A/B passes (then flip to v3 at v0.5.1). v1 / v2 / v3 are valid;
+# dispatch picked by _substory_design_prompt_path + _slide_compose_prompt_path
+# helpers. Independent axis from --architecture-pipeline.
+PROMPTS_VERSION="v2"
 
 # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1 — Adam 2026-05-23).
 # Off by default; vision-LLM call + LibreOffice render adds cost per
@@ -180,6 +198,8 @@ while [[ $# -gt 0 ]]; do
     --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
     # M5b/D-062: image-gen provider selection (auto-resolved when empty)
     --image-provider)        IMAGE_PROVIDER="$2"; shift 2 ;;
+    # v0.5/D-074: prompts version selection (default v2; v3 opt-in)
+    --prompts-version)       PROMPTS_VERSION="$2"; shift 2 ;;
     # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
     --visual-qa)         VISUAL_QA=1; shift ;;
     # v0.4 M4b Tier A — review cascade is auto-run; opt out with this flag
@@ -274,12 +294,39 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
   fi
 done
+
+# v0.5/D-074: validate --prompts-version flag value.
+case "$PROMPTS_VERSION" in
+  v1|v2|v3) ;;
+  *)
+    echo "Error: --prompts-version must be v1|v2|v3, got: $PROMPTS_VERSION" >&2
+    exit 2
+    ;;
+esac
+
+# v0.5/D-074: prompt-file dispatch by version. The substory_design
+# stage uses v1 for both v1+v2 prompts-versions (v1/v2 substory_design
+# shape is identical; v3 introduces the Q/A/R/C contract per D-071).
+# slide_compose uses v1 for v1, v2 for v2, v3 for v3.
+_substory_design_prompt_path() {
+  case "$PROMPTS_VERSION" in
+    v1|v2) echo "$PROMPTS_DIR/substory_design.v1.md" ;;
+    v3)    echo "$PROMPTS_DIR/substory_design.v3.md" ;;
+  esac
+}
+_slide_compose_prompt_path() {
+  case "$PROMPTS_VERSION" in
+    v1) echo "$PROMPTS_DIR/slide_compose.v1.md" ;;
+    v2) echo "$PROMPTS_DIR/slide_compose.v2.md" ;;
+    v3) echo "$PROMPTS_DIR/slide_compose.v3.md" ;;
+  esac
+}
 
 # v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
 # (tools/worker_pool.sh — defines functions only, no side effects).
@@ -966,7 +1013,7 @@ critical-analysis inventory. Cluster analyses into substories. Compute \
 mode-capacity verdict. If overflow, surface the three options and halt. \
 Write the result to OUT_PATH."
 
-  invoke_claude_with_retry "$PROMPTS_DIR/substory_design.v1.md" "$user_prompt" "$out" "substory_design"
+  invoke_claude_with_retry "$(_substory_design_prompt_path)" "$user_prompt" "$out" "substory_design"
 }
 
 # v0.4 M3 (V0_4_ARCHITECTURE.md §16 M3 / §20.8; M3_PUNCH_LIST.md Tier A;
@@ -1365,7 +1412,7 @@ CITATION_POOL_PATH may not exist — emit slides without figures and \
 without citations[] entries in that case (the prompt's escape hatches \
 cover this). Write the result to OUT_PATH."
 
-  invoke_claude_with_retry "$PROMPTS_DIR/slide_compose.v2.md" \
+  invoke_claude_with_retry "$(_slide_compose_prompt_path)" \
     "$user_prompt" "$out" "slide_compose-$sid"
 }
 
@@ -1399,7 +1446,7 @@ CITATION_POOL_PATH may not exist — emit slides without figures and \
 without citations[] entries in that case (the prompt's escape hatches \
 cover this). Write the result to OUT_PATH."
 
-    invoke_claude_with_retry "$PROMPTS_DIR/slide_compose.v1.md" "$user_prompt" "$out" "slide_compose-$sid"
+    invoke_claude_with_retry "$(_slide_compose_prompt_path)" "$user_prompt" "$out" "slide_compose-$sid"
 
     # Append to prior_outputs for the next substory's PRIOR context
     if [[ -z "$prior_outputs" ]]; then
