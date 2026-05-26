@@ -77,18 +77,17 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
 @pytest.mark.parametrize("version,expected_filename", [
     ("v1", "substory_design.v1.md"),
     ("v2", "substory_design.v1.md"),  # v2 reuses v1 substory_design
-    # v3 substory_design currently still points at the standalone v3
-    # file until D-078 / Tier A.2 lands the overlay split; the
-    # dispatcher returns whatever SUBSTORY_DESIGN_V3_CONCAT_PATH was
-    # set to at build time.
-    ("v3", "substory_design.v3.md"),
+    # Per D-075/D-078, v3 substory_design is no longer a single file —
+    # the dispatcher returns the build-time concat path. The
+    # conventional filename `build_v3_concat_prompts` writes is
+    # `substory_design.v3.concat.md` under audit/_prompts/.
+    ("v3", "substory_design.v3.concat.md"),
 ])
 def test_substory_design_dispatcher(version, expected_filename, tmp_path):
     """Per D-074: v1/v2 → v1 substory_design (identical contract);
-    v3 → v3 substory_design (D-071 Q/A/R/C contract). Per D-075/D-078
-    the v3 path comes from a build-time shell var; the test simulates
-    that by setting the var to the expected path."""
-    # For v3, simulate what build_v3_concat_prompts would populate.
+    v3 → concat(v1 + v3_overlay) per D-078. Per D-075/D-078 the v3
+    path comes from a build-time shell var; the test simulates that
+    by setting SUBSTORY_DESIGN_V3_CONCAT_PATH to the expected path."""
     v3_path = f"{tmp_path}/{expected_filename}" if version == "v3" else ""
     rc, stdout, stderr = _run_dispatch(
         version, tmp_path, "_substory_design_prompt_path",
@@ -168,26 +167,31 @@ def test_help_includes_prompts_version_flag():
 # ---------------------------------------------------------------------------
 
 def test_v3_prompt_files_present_in_pre_flight_check():
-    """v0.5.1/D-075 update: v3 slide_compose is now the OVERLAY file
-    (`slide_compose.v3_overlay.md`), not the broken standalone v3.md.
-    The pre-flight check must require both substory_design.v3.md
-    (still standalone until D-078 / Tier A.2 lands) and
-    slide_compose.v3_overlay.md (the new v3 overlay)."""
+    """v0.5.1/D-075 + D-078: v3 prompts are now overlay files
+    (`substory_design.v3_overlay.md` + `slide_compose.v3_overlay.md`),
+    not the broken standalone v3.md files. The pre-flight check must
+    require both overlays."""
     text = ORCH_SH.read_text(encoding="utf-8")
     # Find the pre-flight for loop
     pattern = r'^for f in (.+?); do$'
     matches = re.findall(pattern, text, re.MULTILINE)
     # Find the one containing slide_compose
     loop_line = next((m for m in matches if "slide_compose" in m), "")
-    assert "substory_design.v3.md" in loop_line, (
-        f"pre-flight prompt loop missing substory_design.v3.md; "
+    assert "substory_design.v3_overlay.md" in loop_line, (
+        f"pre-flight prompt loop missing substory_design.v3_overlay.md; "
         f"got: {loop_line}")
     assert "slide_compose.v3_overlay.md" in loop_line, (
         f"pre-flight prompt loop missing slide_compose.v3_overlay.md; "
         f"got: {loop_line}")
-    # The old standalone v3.md must NOT be referenced — it was deleted
-    # at v0.5.1 Tier A (D-075 root-cause fix).
-    assert "slide_compose.v3.md" not in loop_line, (
+    # The old standalone v3.md files must NOT be referenced — they
+    # were deleted at v0.5.1 Tier A + A.2 (D-075 + D-078).
+    # Use regex word-boundary so `substory_design.v3_overlay.md`
+    # doesn't false-match `substory_design.v3.md`.
+    assert not re.search(r'\bsubstory_design\.v3\.md\b', loop_line), (
+        f"pre-flight still references retired substory_design.v3.md; "
+        f"replace with substory_design.v3_overlay.md per D-078. "
+        f"got: {loop_line}")
+    assert not re.search(r'\bslide_compose\.v3\.md\b', loop_line), (
         f"pre-flight still references retired slide_compose.v3.md; "
         f"replace with slide_compose.v3_overlay.md per D-075. "
         f"got: {loop_line}")
@@ -319,23 +323,28 @@ def _extract_function(text: str, fname: str) -> str:
 
 
 def test_build_v3_concat_creates_audit_prompts_file(tmp_path):
-    """build_v3_concat_prompts must write the concat file under
-    $AUDIT_DIR/_prompts/ with v2 body first + v3 overlay last."""
+    """build_v3_concat_prompts must write BOTH concat files under
+    $AUDIT_DIR/_prompts/ with the v1/v2 body first + v3 overlay last
+    in each case (D-075 for slide_compose; D-078 for substory_design)."""
     text = ORCH_SH.read_text(encoding="utf-8")
     fn_src = _extract_function(text, "build_v3_concat_prompts")
-    # Stage fake v2 + v3 overlay sources to verify cat order.
+    # Stage all four fake source files (slide_compose v2 + overlay;
+    # substory_design v1 + overlay) so the function can read them.
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     (prompts_dir / "slide_compose.v2.md").write_text(
-        "==V2-BODY-MARKER==\nv2 content\n", encoding="utf-8")
+        "==V2-SLIDE-MARKER==\nv2 slide_compose content\n", encoding="utf-8")
     (prompts_dir / "slide_compose.v3_overlay.md").write_text(
-        "==V3-OVERLAY-MARKER==\noverlay content\n", encoding="utf-8")
+        "==V3-SLIDE-OVERLAY-MARKER==\nslide overlay content\n",
+        encoding="utf-8")
+    (prompts_dir / "substory_design.v1.md").write_text(
+        "==V1-SUBSTORY-MARKER==\nv1 substory_design content\n",
+        encoding="utf-8")
+    (prompts_dir / "substory_design.v3_overlay.md").write_text(
+        "==V3-SUBSTORY-OVERLAY-MARKER==\nsubstory overlay content\n",
+        encoding="utf-8")
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
-    # substory_design v3 (D-078 stub) — function reads this; provide
-    # a placeholder so the substring-substitute doesn't trip ENOENT.
-    (prompts_dir / "substory_design.v3.md").write_text(
-        "stub\n", encoding="utf-8")
 
     wrapper = textwrap.dedent(f"""\
         set -euo pipefail
@@ -353,23 +362,36 @@ def test_build_v3_concat_creates_audit_prompts_file(tmp_path):
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
 
-    concat_path = audit_dir / "_prompts" / "slide_compose.v3.concat.md"
-    assert concat_path.is_file(), (
-        f"build_v3_concat_prompts didn't write concat file at "
-        f"{concat_path}; stderr: {result.stderr}")
-    body = concat_path.read_text(encoding="utf-8")
-    # v2 body must come FIRST (so the overlay at the tail wins on
-    # LLM attention; per D-075 rationale).
-    v2_pos = body.find("==V2-BODY-MARKER==")
-    overlay_pos = body.find("==V3-OVERLAY-MARKER==")
-    assert v2_pos >= 0, "concat missing v2 body marker"
-    assert overlay_pos >= 0, "concat missing v3 overlay marker"
-    assert v2_pos < overlay_pos, (
-        f"concat order wrong: v2 at pos {v2_pos}, overlay at pos "
-        f"{overlay_pos}; overlay must come LAST")
+    # --- slide_compose concat ---
+    slide_concat = audit_dir / "_prompts" / "slide_compose.v3.concat.md"
+    assert slide_concat.is_file(), (
+        f"build_v3_concat_prompts didn't write slide_compose concat at "
+        f"{slide_concat}; stderr: {result.stderr}")
+    slide_body = slide_concat.read_text(encoding="utf-8")
+    v2_pos = slide_body.find("==V2-SLIDE-MARKER==")
+    slide_overlay_pos = slide_body.find("==V3-SLIDE-OVERLAY-MARKER==")
+    assert v2_pos >= 0 and slide_overlay_pos >= 0
+    assert v2_pos < slide_overlay_pos, (
+        f"slide_compose concat order wrong: v2 at {v2_pos}, overlay at "
+        f"{slide_overlay_pos}; overlay must come LAST")
 
-    # And the shell vars must be populated for the dispatcher.
-    assert f"RET_SLIDE={concat_path}" in result.stdout
+    # --- substory_design concat ---
+    substory_concat = audit_dir / "_prompts" / "substory_design.v3.concat.md"
+    assert substory_concat.is_file(), (
+        f"build_v3_concat_prompts didn't write substory_design concat at "
+        f"{substory_concat}; stderr: {result.stderr}")
+    substory_body = substory_concat.read_text(encoding="utf-8")
+    v1_pos = substory_body.find("==V1-SUBSTORY-MARKER==")
+    substory_overlay_pos = substory_body.find(
+        "==V3-SUBSTORY-OVERLAY-MARKER==")
+    assert v1_pos >= 0 and substory_overlay_pos >= 0
+    assert v1_pos < substory_overlay_pos, (
+        f"substory_design concat order wrong: v1 at {v1_pos}, overlay "
+        f"at {substory_overlay_pos}; overlay must come LAST")
+
+    # Shell vars must be populated for the dispatcher.
+    assert f"RET_SLIDE={slide_concat}" in result.stdout
+    assert f"RET_SUBSTORY={substory_concat}" in result.stdout
 
 
 def test_build_v3_concat_no_op_for_v1_v2(tmp_path):
@@ -410,34 +432,51 @@ def test_build_v3_concat_no_op_for_v1_v2(tmp_path):
 
 
 def test_v3_overlay_file_present_on_disk():
-    """Belt + suspenders: the v3 overlay file actually exists at the
+    """Belt + suspenders: BOTH v3 overlay files actually exist at the
     expected path in the repo (so build_v3_concat_prompts won't fail
     with ENOENT at orchestrator start)."""
-    overlay = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
-               / "prompts" / "slide_compose.v3_overlay.md")
-    assert overlay.is_file(), f"v3 overlay missing at {overlay}"
-    # Body should reference v2 explicitly (overlay marker stating it
-    # depends on v2 above).
-    body = overlay.read_text(encoding="utf-8")
-    assert "v3 overlay" in body.lower(), (
-        "overlay file doesn't self-identify as v3 overlay")
-    assert "v2" in body, (
-        "overlay doesn't reference v2 — concat assumption suspect")
+    prompts = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
+               / "prompts")
+    slide_overlay = prompts / "slide_compose.v3_overlay.md"
+    substory_overlay = prompts / "substory_design.v3_overlay.md"
+    assert slide_overlay.is_file(), (
+        f"slide_compose v3 overlay missing at {slide_overlay}")
+    assert substory_overlay.is_file(), (
+        f"substory_design v3 overlay missing at {substory_overlay}")
+    # Each body should self-identify as a v3 overlay and reference
+    # its v1/v2 dependency.
+    slide_body = slide_overlay.read_text(encoding="utf-8")
+    assert "v3 overlay" in slide_body.lower()
+    assert "v2" in slide_body, (
+        "slide_compose overlay doesn't reference v2 — concat assumption "
+        "suspect")
+    substory_body = substory_overlay.read_text(encoding="utf-8")
+    assert "v3 overlay" in substory_body.lower()
+    assert "v1" in substory_body, (
+        "substory_design overlay doesn't reference v1 — concat "
+        "assumption suspect")
 
 
-def test_old_standalone_v3_file_retired():
-    """v0.5.1 Tier A retires `slide_compose.v3.md` (the broken
-    standalone file). The file MUST be gone — its content lives in
-    `slide_compose.v3_overlay.md` + `slide_compose.v2.md` via the
-    concat. Belt-and-suspenders against a future accidental
-    re-creation."""
-    old_v3 = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
-              / "prompts" / "slide_compose.v3.md")
-    assert not old_v3.exists(), (
-        f"standalone v3 file came back at {old_v3}; v0.5.1/D-075 "
-        f"replaced it with slide_compose.v3_overlay.md. If you "
-        f"intentionally re-introduced it, update this test + the "
-        f"dispatcher to match.")
+def test_old_standalone_v3_files_retired():
+    """v0.5.1 Tier A + A.2 retire `slide_compose.v3.md` AND
+    `substory_design.v3.md` (the broken standalone files). Their
+    content lives in the overlay+concat pattern now. Belt-and-
+    suspenders against a future accidental re-creation."""
+    prompts = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
+               / "prompts")
+    old_slide = prompts / "slide_compose.v3.md"
+    old_substory = prompts / "substory_design.v3.md"
+    assert not old_slide.exists(), (
+        f"standalone slide_compose.v3.md came back at {old_slide}; "
+        f"v0.5.1/D-075 replaced it with slide_compose.v3_overlay.md. "
+        f"If you intentionally re-introduced it, update this test + "
+        f"the dispatcher to match.")
+    assert not old_substory.exists(), (
+        f"standalone substory_design.v3.md came back at "
+        f"{old_substory}; v0.5.1/D-078 replaced it with "
+        f"substory_design.v3_overlay.md. If you intentionally "
+        f"re-introduced it, update this test + the dispatcher to "
+        f"match.")
 
 
 # ---------------------------------------------------------------------------

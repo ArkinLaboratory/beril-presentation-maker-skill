@@ -85,12 +85,13 @@
 #                                   (v0.3.x; pre-M3 sequential composer)
 #                              v2 → substory_design.v1.md + slide_compose.v2.md
 #                                   (v0.4 M3 parallel-compose + fused notes)
-#                              v3 → substory_design.v3.md +
+#                              v3 → substory_design.v1.md ++ substory_design.v3_overlay.md
 #                                   slide_compose.v2.md ++ slide_compose.v3_overlay.md
 #                                   (v0.5 D-071/D-072 Q/A/R/C contract +
 #                                   register-discipline-aware composer;
-#                                   v3 slide_compose is built at orchestrator
-#                                   start as a concat per D-075).
+#                                   v3 prompts are built at orchestrator start
+#                                   as cat-concatenated v1/v2 body + v3
+#                                   overlay per D-075 + D-078).
 #                            Independent axis from --architecture-pipeline.
 #                            Default v2 per D-074 until v0.5 cut-over A/B
 #                            passes; flip to v3 at v0.5.x.
@@ -297,7 +298,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -367,15 +368,18 @@ build_v3_concat_prompts() {
   SLIDE_COMPOSE_V3_CONCAT_PATH="$concat_dir/slide_compose.v3.concat.md"
   cat "$slide_v2" "$slide_overlay" > "$SLIDE_COMPOSE_V3_CONCAT_PATH"
 
-  # substory_design v3: same overlay pattern per D-078, but the
-  # overlay file lands in Tier A.2. Until then, fall back to the
-  # current standalone substory_design.v3.md (D-078 will replace
-  # this stanza). Marked TODO so Tier A.2 knows to edit here.
-  # TODO(v0.5.1 Tier A.2 / D-078): concat substory_design.v1.md +
-  # substory_design.v3_overlay.md once the overlay lands.
-  SUBSTORY_DESIGN_V3_CONCAT_PATH="$PROMPTS_DIR/substory_design.v3.md"
+  # v0.5.1 Tier A.2 / D-078: substory_design v3 follows the same
+  # overlay pattern. v1 body + v3 overlay (~208 lines) concatenated;
+  # overlay last so its v3 Output-format-supersede statement wins on
+  # the conflicting template section.
+  local substory_v1="$PROMPTS_DIR/substory_design.v1.md"
+  local substory_overlay="$PROMPTS_DIR/substory_design.v3_overlay.md"
+  SUBSTORY_DESIGN_V3_CONCAT_PATH="$concat_dir/substory_design.v3.concat.md"
+  cat "$substory_v1" "$substory_overlay" > "$SUBSTORY_DESIGN_V3_CONCAT_PATH"
 
-  echo "[orchestrator] v3 concat prompt: $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2
+  echo "[orchestrator] v3 concat prompts:" >&2
+  echo "  slide_compose: $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2
+  echo "  substory_design: $SUBSTORY_DESIGN_V3_CONCAT_PATH" >&2
 }
 
 # v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
