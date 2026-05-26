@@ -937,11 +937,75 @@ def test_tier1_visual_qa_stub_report_ignored_per_dq2(rc, tmp_path):
 def test_tier1_missing_audit_artifacts_returns_empty(rc, tmp_path):
     """Each reader is no-op-safe when its audit JSON is absent —
     the cascade should not require operator to have run the optional
-    checks (visual-QA in particular, per DQ2)."""
+    checks (visual-QA in particular, per DQ2; substory-shape per
+    D-073)."""
     assert rc._read_quantitative_grounding(tmp_path) == []
     assert rc._read_no_artifact_refs(tmp_path) == []
     assert rc._read_deck_reconciliation(tmp_path) == []
     assert rc._read_visual_qa(tmp_path) == []
+    assert rc._read_substory_shape(tmp_path) == []
+
+
+def test_tier1_reads_substory_shape_artifact_per_d073(rc, tmp_path):
+    """v0.5 Tier B / D-073: cascade reads audit/substory_shape.json
+    if present, NEVER invokes check_substory_shape.py (read-if-present
+    pattern mirrors visual_qa from DQ2). All findings emit at P1
+    severity per D-073 (never P0 — substory-shape is advisory)."""
+    _write_audit_json(tmp_path, "substory_shape.json", {
+        "schema_version": "substory-shape.v1",
+        "substories": [],
+        "findings": [
+            {"substory_id": "S1", "kind": "missing_question",
+             "severity": "P1", "message": "Substory S1 missing **Question:**"},
+            {"substory_id": "S2", "kind": "missing_c_slide",
+             "severity": "P1", "slide_id": 12,
+             "message": "Substory S2 has no C-slide"},
+        ],
+    })
+    findings = rc._read_substory_shape(tmp_path)
+    assert len(findings) == 2
+    # All lifted with kind=substory_arc:<original-kind>
+    kinds = {f.kind for f in findings}
+    assert "substory_arc:missing_question" in kinds
+    assert "substory_arc:missing_c_slide" in kinds
+    # All P1 per D-073
+    assert all(f.severity == "P1" for f in findings)
+    # No P0 ever lifted from substory_shape per D-073
+    assert not any(f.severity == "P0" for f in findings)
+    # Cascade-finding evidence preserves the original kind for
+    # programmatic consumers
+    s1 = next(f for f in findings if f.evidence.get("substory_id") == "S1")
+    assert s1.evidence["subshape_kind"] == "missing_question"
+
+
+def test_tier1_substory_shape_never_emits_p0_even_if_payload_claims_p0(
+        rc, tmp_path):
+    """Defensive pin per D-073: even if a future SubstoryFinding payload
+    sets severity=P0 (e.g., a hand-edited audit file), the cascade
+    reader demotes it to P1 — D-073 explicitly places substory-shape
+    at advisory P1, never P0."""
+    _write_audit_json(tmp_path, "substory_shape.json", {
+        "schema_version": "substory-shape.v1",
+        "findings": [
+            {"substory_id": "S1", "kind": "missing_question",
+             "severity": "P0", "message": "x"},
+        ],
+    })
+    findings = rc._read_substory_shape(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"  # demoted from P0
+    assert not any(f.severity == "P0" for f in findings)
+
+
+def test_tier1_substory_shape_empty_findings_returns_empty(rc, tmp_path):
+    """Clean substory shape (zero findings) emits zero cascade findings
+    — no spurious 'shape clean' marker."""
+    _write_audit_json(tmp_path, "substory_shape.json", {
+        "schema_version": "substory-shape.v1",
+        "substories": [],
+        "findings": [],
+    })
+    assert rc._read_substory_shape(tmp_path) == []
 
 
 def test_tier1_p0_validator_fail_triggers_status_fail(rc, tmp_path, monkeypatch):
@@ -1040,9 +1104,10 @@ def test_tier1_skips_validate_on_structurally_invalid_spec(rc, tmp_path):
     assert not (tmp_path / "audit" / "presentation_validation.json").is_file()
 
 
-def test_tier1_aggregates_all_five_sources_in_one_pass(rc, tmp_path):
-    """End-to-end Tier 1: spec + all four audit artifacts present.
-    Findings list aggregates across all sources (validator + 4 audits).
+def test_tier1_aggregates_all_six_sources_in_one_pass(rc, tmp_path):
+    """End-to-end Tier 1: spec + all five audit artifacts present.
+    Findings list aggregates across all sources (validator + 5 audits;
+    substory_shape is the 6th source added in v0.5 Tier B per D-073).
     No P0 since none of the artifacts inject one."""
     spec_dir = tmp_path / "working"
     spec_dir.mkdir()
@@ -1065,14 +1130,21 @@ def test_tier1_aggregates_all_five_sources_in_one_pass(rc, tmp_path):
                       "severity": "warning", "confidence": "high",
                       "detail": "d", "evidence_locator": "x"}],
     })
+    _write_audit_json(tmp_path, "substory_shape.json", {
+        "schema_version": "substory-shape.v1",
+        "findings": [{"substory_id": "S1", "kind": "missing_question",
+                      "severity": "P1", "message": "x"}],
+    })
     result = rc.run_tier1(tmp_path)
     # 1 quant-grounding + 1 artifact-ref + 1 reconciliation + 1 visual-qa
-    # = 4 findings (validate_presentation on empty slides emits none)
+    # + 1 substory-shape = 5 findings (validate_presentation on empty
+    # slides emits none)
     kinds = [f.kind for f in result.findings]
     assert "quantitative_grounding" in kinds
     assert "no_artifact_refs" in kinds
     assert "duplicate_figure" in kinds
     assert any(k.startswith("visual_qa:") for k in kinds)
+    assert any(k.startswith("substory_arc:") for k in kinds)
     # All P1/P2; no P0 → status advisory, cascade continues
     assert result.status == "advisory"
     assert result.has_p0 is False

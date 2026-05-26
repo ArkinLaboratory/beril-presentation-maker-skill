@@ -447,17 +447,65 @@ def _read_visual_qa(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/substory_shape.json (v0.5 Tier B / D-073 output) if
+    present. Per D-073: substory-shape findings emit at P1 severity
+    (advisory; never gates the cascade); soft enforcement (revise loop
+    OR operator can act on them; pipeline doesn't halt).
+
+    Each SubstoryFinding maps to a cascade finding with
+    `kind=substory_arc:<finding-kind>` (e.g.,
+    `substory_arc:missing_question`, `substory_arc:missing_c_slide`)
+    so the cascade Tier-1 surface preserves the structural sub-class
+    while clustering all v0.5 substory-shape findings under one umbrella
+    matching the existing beril-adversarial v3 `substory_arc` class.
+
+    Read-if-present per the visual_qa pattern: the cascade does NOT
+    invoke check_substory_shape.py (the orchestrator's
+    stage_merge_and_assemble does that as a side-effect, OR the
+    operator runs it standalone).
+    """
+    payload = _load_json_safe(draft_dir / "audit" / "substory_shape.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        # Per D-073: all substory-shape findings emit at P1.
+        sev = f.get("severity", "P1")
+        if sev not in ("P0", "P1", "P2"):
+            sev = "P1"
+        # Never let substory_shape become P0 — D-073 explicitly
+        # places it at advisory P1.
+        if sev == "P0":
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind=f"substory_arc:{f.get('kind', '?')}",
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={"substory_id": f.get("substory_id"),
+                      "subshape_kind": f.get("kind")},
+        ))
+    return findings
+
+
 def run_tier1(draft_dir: Path) -> TierResult:
     """Tier 1 — deterministic + visual-QA aggregation (M4b Tier B).
 
-    Aggregates five sources in fail-fast cost order (cheapest first):
-      1. validate_presentation P1–P10 — run directly (no orchestrator
-         stage today); writes audit/presentation_validation.json as
-         a side-effect.
+    Aggregates six sources in fail-fast cost order (cheapest first):
+      1. validate_presentation P1–P10 (+ v0.5 P11 register-discipline
+         per D-072) — run directly (no orchestrator stage today);
+         writes audit/presentation_validation.json as a side-effect.
       2. audit/quantitative_grounding.json (orchestrator wrote it)
       3. audit/no_artifact_refs.json
       4. audit/deck_reconciliation.json
       5. audit/visual_qa.json (DQ2: read-if-present; never invoke)
+      6. audit/substory_shape.json (v0.5 Tier B / D-073: read-if-present;
+         never invoke. P1 advisory; never gates).
 
     DQ4 short-circuit semantics: a P3/P4/P5 fail (per _P0_VALIDATORS)
     marks the tier 'fail' and triggers cascade short-circuit; otherwise
@@ -497,6 +545,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_visual_qa(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"visual_qa read raised: {exc}")
+
+    # 6. Substory-shape (v0.5 Tier B / D-073; read-if-present).
+    try:
+        findings.extend(_read_substory_shape(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"substory_shape read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)
