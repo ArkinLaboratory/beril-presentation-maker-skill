@@ -447,6 +447,55 @@ def _read_visual_qa(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_figure_provenance(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/figure_provenance.json (v0.6 Tier A.1 / D-080
+    output) if present. Per D-080: figure-provenance findings emit
+    at P1 severity (soft-warning; never gates the cascade).
+
+    Each FigureFinding maps to a cascade finding with
+    `kind=figure_provenance:<finding-kind>` (e.g.,
+    `figure_provenance:missing_data_figure_for_curated_analysis`,
+    `figure_provenance:data_figure_path_not_in_curated_inventory`)
+    so the cascade Tier-1 surface preserves the structural sub-class
+    while clustering all v0.6 figure-provenance findings under one
+    umbrella matching the existing v0.5 substory_arc class shape.
+
+    Read-if-present per the visual_qa pattern: the cascade does NOT
+    invoke check_figure_provenance.py.
+    """
+    payload = _load_json_safe(draft_dir / "audit" / "figure_provenance.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        # Per D-080: all figure-provenance findings emit at P1
+        # soft-warning. Map source severity field defensively.
+        sev = f.get("severity", "soft-warning")
+        # Map source soft-warning → cascade P1 (cascade uses P-tags).
+        if sev in ("soft-warning", "P1"):
+            sev = "P1"
+        elif sev in ("P2",):
+            sev = "P2"
+        else:
+            # Never let figure-provenance be P0 — D-080 explicitly
+            # places it at advisory P1.
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind=f"figure_provenance:{f.get('kind', '?')}",
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={"substory_id": f.get("substory_id"),
+                      "figprov_kind": f.get("kind"),
+                      **(f.get("evidence") or {})},
+        ))
+    return findings
+
+
 def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
     """Read audit/substory_shape.json (v0.5 Tier B / D-073 output) if
     present. Per D-073: substory-shape findings emit at P1 severity
@@ -496,7 +545,7 @@ def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
 def run_tier1(draft_dir: Path) -> TierResult:
     """Tier 1 — deterministic + visual-QA aggregation (M4b Tier B).
 
-    Aggregates six sources in fail-fast cost order (cheapest first):
+    Aggregates seven sources in fail-fast cost order (cheapest first):
       1. validate_presentation P1–P10 (+ v0.5 P11 register-discipline
          per D-072) — run directly (no orchestrator stage today);
          writes audit/presentation_validation.json as a side-effect.
@@ -506,6 +555,8 @@ def run_tier1(draft_dir: Path) -> TierResult:
       5. audit/visual_qa.json (DQ2: read-if-present; never invoke)
       6. audit/substory_shape.json (v0.5 Tier B / D-073: read-if-present;
          never invoke. P1 advisory; never gates).
+      7. audit/figure_provenance.json (v0.6 Tier A.1 / D-080:
+         read-if-present; never invoke. P1 advisory; never gates).
 
     DQ4 short-circuit semantics: a P3/P4/P5 fail (per _P0_VALIDATORS)
     marks the tier 'fail' and triggers cascade short-circuit; otherwise
@@ -551,6 +602,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_substory_shape(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"substory_shape read raised: {exc}")
+
+    # 7. Figure-provenance (v0.6 Tier A.1 / D-080; read-if-present).
+    try:
+        findings.extend(_read_figure_provenance(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"figure_provenance read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)
