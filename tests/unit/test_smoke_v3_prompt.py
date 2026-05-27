@@ -14,6 +14,7 @@ mechanism around the live call.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -347,3 +348,97 @@ def test_fixture_dir_exists():
     assert (smoke.FIXTURE_DIR / "REPORT.md").is_file()
     assert (smoke.FIXTURE_DIR / "narrative" / "02_substories.md").is_file()
     assert (smoke.FIXTURE_DIR / "working" / "00_plan.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# v0.6 Tier C — --version v3.1 stacked concat (D-080)
+# ---------------------------------------------------------------------------
+#
+# v3.1 stacks the figure-utilization overlay on the v3 chain. The
+# smoke must compose against the right stack so the live LLM gets
+# the v3.1 instructions; a v3-only smoke wouldn't validate v3.1.
+
+def test_build_concat_variadic_two_sources(tmp_path):
+    """build_concat with 2 sources = v3 chain. Bytes appended in
+    order."""
+    a = tmp_path / "a.md"
+    a.write_text("==A==\n", encoding="utf-8")
+    b = tmp_path / "b.md"
+    b.write_text("==B==\n", encoding="utf-8")
+    out = tmp_path / "out.md"
+    smoke.build_concat(a, b, out=out)
+    body = out.read_text(encoding="utf-8")
+    a_pos = body.find("==A==")
+    b_pos = body.find("==B==")
+    assert a_pos >= 0 and b_pos >= 0
+    assert a_pos < b_pos
+
+
+def test_build_concat_variadic_three_sources(tmp_path):
+    """build_concat with 3 sources = v3.1 chain. Bytes in order."""
+    a = tmp_path / "a.md"
+    a.write_text("==A==\n", encoding="utf-8")
+    b = tmp_path / "b.md"
+    b.write_text("==B==\n", encoding="utf-8")
+    c = tmp_path / "c.md"
+    c.write_text("==C==\n", encoding="utf-8")
+    out = tmp_path / "out.md"
+    smoke.build_concat(a, b, c, out=out)
+    body = out.read_text(encoding="utf-8")
+    a_pos = body.find("==A==")
+    b_pos = body.find("==B==")
+    c_pos = body.find("==C==")
+    assert a_pos >= 0 and b_pos >= 0 and c_pos >= 0
+    assert a_pos < b_pos < c_pos
+
+
+def test_run_smoke_rejects_invalid_version(tmp_path):
+    """run_smoke must validate the version arg and raise ValueError
+    on a string that's not 'v3' or 'v3.1'."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="v3.*v3.1"):
+        smoke.run_smoke(fragment_only=True, keep_tmpdir=False,
+                        version="v4")
+
+
+def test_cli_version_flag_documented():
+    """`--help` lists the --version flag + both choices so operators
+    discover the v3.1 path."""
+    import subprocess as _sp
+    result = _sp.run(
+        [sys.executable, str(smoke.SKILL_REPO_ROOT / "src"
+                              / "beril_presentation_maker" / "skill"
+                              / "tools" / "smoke_v3_prompt.py"),
+         "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    help_text = result.stdout + result.stderr
+    assert "--version" in help_text
+    assert "v3.1" in help_text
+    # Default explicitly named so operators know what they get
+    assert "default" in help_text.lower()
+
+
+def test_cli_default_version_is_v3_1():
+    """Per D-080 + Tier C resolution: default --version is v3.1
+    (validates the full v0.6 stack; a v3.1 smoke implicitly covers
+    v3). Pin so a future default change is intentional."""
+    import argparse
+    # Extract the ap definition; introspect the default. Easiest:
+    # call main with --check-recent (no LLM) and assert no
+    # exception; default applies but check_recent_pass doesn't use
+    # version, so we need a different probe.
+    #
+    # Direct probe: ask argparse what the default is.
+    ap = argparse.ArgumentParser()
+    # Mirror the actual flag definition; the value of ap.set_defaults
+    # is what we want. We instead extract from source — same
+    # source-pin pattern as the orchestrator tests.
+    src = (smoke.SKILL_REPO_ROOT / "src" / "beril_presentation_maker"
+           / "skill" / "tools" / "smoke_v3_prompt.py").read_text(
+               encoding="utf-8")
+    # The default v3.1 must appear in the --version flag definition.
+    assert 'choices=["v3", "v3.1"], default="v3.1"' in src, (
+        "expected `choices=[\"v3\", \"v3.1\"], default=\"v3.1\"` in "
+        "smoke source; if this changed intentionally, update the "
+        "test + V0_6 docs.")

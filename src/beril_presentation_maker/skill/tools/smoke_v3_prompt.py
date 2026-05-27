@@ -134,10 +134,14 @@ def compute_prompt_sha() -> str:
 # Concat prompt builder (mirrors orchestrator's build_v3_concat_prompts)
 # ---------------------------------------------------------------------------
 
-def build_concat(v1_v2_body: Path, overlay: Path, out: Path) -> None:
-    """Write `cat v1_v2_body overlay` to `out`. Mirrors the
-    orchestrator's `build_v3_concat_prompts` for the smoke."""
-    out.write_bytes(v1_v2_body.read_bytes() + overlay.read_bytes())
+def build_concat(*sources: Path, out: Path) -> None:
+    """Write `cat <sources...>` to `out`. Mirrors the orchestrator's
+    `build_v3_concat_prompts` for the smoke. Variadic so v3 = (v2,
+    overlay_v3) and v3.1 = (v2, overlay_v3, overlay_v3.1)."""
+    body = b""
+    for src in sources:
+        body += src.read_bytes()
+    out.write_bytes(body)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +328,7 @@ def invoke_claude(system_prompt_path: Path, user_prompt: str,
 
 def run_smoke(fragment_only: bool, keep_tmpdir: bool,
               timeout_s: int = 600,
+              version: str = "v3.1",
               ) -> tuple[bool, list[FragmentIssue], dict]:
     """Run the smoke. Returns (passed, issues, evidence-dict).
 
@@ -333,26 +338,43 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
 
     keep_tmpdir=True leaves the per-run temp dir around for
     inspection on failure.
+
+    version: "v3" or "v3.1". Selects the stacked concat the smoke
+    composes against. Default "v3.1" — v3.1 stacks on v3, so a
+    v3.1 smoke implicitly validates the v3 chain too. Use "v3"
+    explicitly when you want to validate ONLY the v3 contract
+    (e.g., regression-checking after a v3-only prompt edit).
     """
+    if version not in ("v3", "v3.1"):
+        raise ValueError(
+            f"version must be 'v3' or 'v3.1'; got: {version!r}")
     if not FIXTURE_DIR.is_dir():
         raise FileNotFoundError(
             f"smoke fixture missing at {FIXTURE_DIR}")
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="smoke_v3_"))
+    tmpdir = Path(tempfile.mkdtemp(prefix=f"smoke_{version}_"))
     evidence: dict = {
         "tmpdir": str(tmpdir),
         "prompts_sha": compute_prompt_sha(),
         "fragment_only": fragment_only,
+        "version": version,
     }
     try:
-        # Concat the v3 prompts inside the tmpdir (mirrors what
+        # Concat the prompts inside the tmpdir (mirrors what
         # `build_v3_concat_prompts` does at orchestrator start).
+        # v3:   cat v2.md + v3_overlay.md
+        # v3.1: cat v2.md + v3_overlay.md + v3.1_overlay.md
         concat_dir = tmpdir / "_prompts"
         concat_dir.mkdir()
-        slide_concat = concat_dir / "slide_compose.v3.concat.md"
+        slide_concat = concat_dir / f"slide_compose.{version}.concat.md"
         substory_concat = concat_dir / "substory_design.v3.concat.md"
-        build_concat(SLIDE_V2, SLIDE_OVERLAY, slide_concat)
-        build_concat(SUBSTORY_V1, SUBSTORY_OVERLAY, substory_concat)
+        slide_sources = [SLIDE_V2, SLIDE_OVERLAY]
+        if version == "v3.1":
+            slide_sources.append(SLIDE_OVERLAY_V3_1)
+        build_concat(*slide_sources, out=slide_concat)
+        # substory_design is unchanged in v3.1 — both versions use
+        # the same v1 + v3 overlay stack.
+        build_concat(SUBSTORY_V1, SUBSTORY_OVERLAY, out=substory_concat)
 
         # Stage the fixture into tmpdir. The smoke composes against
         # a copy so the fixture stays read-only.
@@ -546,6 +568,13 @@ def main(argv: list[str] | None = None) -> int:
         "--check-recent", action="store_true",
         help="Gate-check only; do NOT invoke the LLM. Returns rc=0 "
              "if a fresh pass record exists, rc=1 otherwise.")
+    ap.add_argument(
+        "--version", choices=["v3", "v3.1"], default="v3.1",
+        help="Which stacked concat to compose against. v3 = cat "
+             "v2.md + v3_overlay.md. v3.1 = cat v2.md + "
+             "v3_overlay.md + v3.1_overlay.md (default; validates "
+             "the full v0.6 chain — a v3.1 smoke implicitly "
+             "covers v3 too).")
     args = ap.parse_args(argv)
 
     if args.check_recent:
@@ -559,15 +588,18 @@ def main(argv: list[str] | None = None) -> int:
         print(reason, file=sys.stderr)
         return 0 if ok else 1
 
-    print(f"[smoke_v3] starting; fragment_only={args.fragment_only}",
+    print(f"[smoke_{args.version}] starting; "
+          f"fragment_only={args.fragment_only}; version={args.version}",
           file=sys.stderr)
     try:
         passed, issues, evidence = run_smoke(
             fragment_only=args.fragment_only,
             keep_tmpdir=args.keep_tmpdir,
-            timeout_s=args.timeout_s)
-    except FileNotFoundError as e:
-        print(f"[smoke_v3] setup error: {e}", file=sys.stderr)
+            timeout_s=args.timeout_s,
+            version=args.version)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"[smoke_{args.version}] setup error: {e}",
+              file=sys.stderr)
         return 2
 
     if passed:
@@ -576,14 +608,17 @@ def main(argv: list[str] | None = None) -> int:
         # otherwise read it instead of the new pass).
         if FAIL_RECORD.exists():
             FAIL_RECORD.unlink()
-        print(f"[smoke_v3] PASS — wrote {PASS_RECORD}", file=sys.stderr)
+        print(f"[smoke_{args.version}] PASS — wrote {PASS_RECORD}",
+              file=sys.stderr)
         return 0
     else:
         write_record(FAIL_RECORD, False, issues, evidence)
-        print(f"[smoke_v3] FAIL — {len(issues)} issue(s):", file=sys.stderr)
+        print(f"[smoke_{args.version}] FAIL — {len(issues)} issue(s):",
+              file=sys.stderr)
         for issue in issues:
             print(f"  {issue.format()}", file=sys.stderr)
-        print(f"[smoke_v3] wrote {FAIL_RECORD}", file=sys.stderr)
+        print(f"[smoke_{args.version}] wrote {FAIL_RECORD}",
+              file=sys.stderr)
         return 1
 
 
