@@ -95,6 +95,15 @@ SLIDE_V2 = PROMPTS_DIR / "slide_compose.v2.md"
 SLIDE_OVERLAY = PROMPTS_DIR / "slide_compose.v3_overlay.md"
 SUBSTORY_V1 = PROMPTS_DIR / "substory_design.v1.md"
 SUBSTORY_OVERLAY = PROMPTS_DIR / "substory_design.v3_overlay.md"
+# v0.6/D-080: v3.1 overlay stacks on the v3 chain. We include it in
+# the prompt-sha computation so a v3.1 invocation requires a fresh
+# smoke that validated the stacked concat — a v3-only pass record
+# would otherwise satisfy the gate erroneously. Tier C will extend
+# the smoke runner to actually compose against the v3.1 stack;
+# until then, including this file in the sha invalidates any v3
+# pass record and forces a re-smoke that exercises both versions'
+# overlays.
+SLIDE_OVERLAY_V3_1 = PROMPTS_DIR / "slide_compose.v3.1_overlay.md"
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +120,8 @@ def compute_prompt_sha() -> str:
     (alphabetical for stability).
     """
     h = hashlib.sha256()
-    for path in (SUBSTORY_V1, SUBSTORY_OVERLAY, SLIDE_V2, SLIDE_OVERLAY):
+    for path in (SUBSTORY_V1, SUBSTORY_OVERLAY,
+                 SLIDE_V2, SLIDE_OVERLAY, SLIDE_OVERLAY_V3_1):
         if not path.is_file():
             raise FileNotFoundError(
                 f"prompt source missing: {path}; cannot compute sha")

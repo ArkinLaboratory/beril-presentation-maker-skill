@@ -30,6 +30,7 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
                   helper: str,
                   slide_compose_v3_concat_path: str = "",
                   substory_design_v3_concat_path: str = "",
+                  slide_compose_v3_1_concat_path: str = "",
                   ) -> tuple[int, str, str]:
     """Invoke a dispatcher helper (`_substory_design_prompt_path` or
     `_slide_compose_prompt_path`) with the given PROMPTS_VERSION + a
@@ -60,6 +61,7 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
         PROMPTS_VERSION={prompts_version!r}
         SLIDE_COMPOSE_V3_CONCAT_PATH={slide_compose_v3_concat_path!r}
         SUBSTORY_DESIGN_V3_CONCAT_PATH={substory_design_v3_concat_path!r}
+        SLIDE_COMPOSE_V3_1_CONCAT_PATH={slide_compose_v3_1_concat_path!r}
         {helpers_src}
         {helper}
         """)
@@ -82,13 +84,19 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
     # conventional filename `build_v3_concat_prompts` writes is
     # `substory_design.v3.concat.md` under audit/_prompts/.
     ("v3", "substory_design.v3.concat.md"),
+    # v0.6/D-080: v3.1 reuses the v3 substory_design concat
+    # (substory_design isn't changed in v3.1).
+    ("v3.1", "substory_design.v3.concat.md"),
 ])
 def test_substory_design_dispatcher(version, expected_filename, tmp_path):
     """Per D-074: v1/v2 → v1 substory_design (identical contract);
-    v3 → concat(v1 + v3_overlay) per D-078. Per D-075/D-078 the v3
-    path comes from a build-time shell var; the test simulates that
-    by setting SUBSTORY_DESIGN_V3_CONCAT_PATH to the expected path."""
-    v3_path = f"{tmp_path}/{expected_filename}" if version == "v3" else ""
+    v3 → concat(v1 + v3_overlay) per D-078; v3.1 also points at the
+    v3 concat (substory_design unchanged in v3.1 per D-080). Per
+    D-075/D-078 the v3 path comes from a build-time shell var; the
+    test simulates that by setting SUBSTORY_DESIGN_V3_CONCAT_PATH to
+    the expected path."""
+    v3_path = (f"{tmp_path}/{expected_filename}"
+               if version in ("v3", "v3.1") else "")
     rc, stdout, stderr = _run_dispatch(
         version, tmp_path, "_substory_design_prompt_path",
         substory_design_v3_concat_path=v3_path)
@@ -104,17 +112,27 @@ def test_substory_design_dispatcher(version, expected_filename, tmp_path):
     # "filename" here is the conventional name `build_v3_concat_prompts`
     # writes (`slide_compose.v3.concat.md` under audit/_prompts/).
     ("v3", "slide_compose.v3.concat.md"),
+    # v0.6/D-080: v3.1 stacks the figure-utilization overlay on the
+    # v3 chain. Distinct concat path so a v3 pass record doesn't
+    # accidentally satisfy a v3.1 gate-check.
+    ("v3.1", "slide_compose.v3.1.concat.md"),
 ])
 def test_slide_compose_dispatcher(version, expected_filename, tmp_path):
-    """Per D-074: each version maps to a distinct slide_compose prompt.
-    v0.5.1/D-075 changes the v3 contract: the dispatcher echoes the
-    SLIDE_COMPOSE_V3_CONCAT_PATH shell var (populated at orchestrator
-    start by build_v3_concat_prompts). The test simulates this by
-    passing the synthetic concat path through the same shell var."""
-    v3_path = f"{tmp_path}/{expected_filename}" if version == "v3" else ""
+    """Per D-074: each version maps to a distinct slide_compose
+    prompt. v0.5.1/D-075 + v0.6/D-080: the dispatcher echoes the
+    version-matched shell var
+    (SLIDE_COMPOSE_V3_CONCAT_PATH or SLIDE_COMPOSE_V3_1_CONCAT_PATH)
+    populated at orchestrator start by build_v3_concat_prompts.
+    The test simulates this by passing the synthetic concat paths
+    through the corresponding shell vars."""
+    v3_path = (f"{tmp_path}/{expected_filename}"
+               if version == "v3" else "")
+    v3_1_path = (f"{tmp_path}/{expected_filename}"
+                 if version == "v3.1" else "")
     rc, stdout, stderr = _run_dispatch(
         version, tmp_path, "_slide_compose_prompt_path",
-        slide_compose_v3_concat_path=v3_path)
+        slide_compose_v3_concat_path=v3_path,
+        slide_compose_v3_1_concat_path=v3_1_path)
     assert rc == 0, f"helper failed: {stderr}"
     assert stdout == f"{tmp_path}/{expected_filename}"
 
@@ -653,3 +671,202 @@ def test_inviolable_rules_name_both_field_names_explicitly():
         "Inviolable rule should explicitly warn against generic-"
         "name substitution per D-077 lesson; got:\n" +
         inv_block[:800])
+
+
+# ---------------------------------------------------------------------------
+# v0.6 Tier A — v3.1 overlay + stacked concat (D-080)
+# ---------------------------------------------------------------------------
+#
+# v3.1 stacks the figure-utilization overlay onto the v3 chain:
+#   cat slide_compose.v2.md + .v3_overlay.md + .v3.1_overlay.md
+# Distinct concat path so a v3 smoke-pass record doesn't accidentally
+# satisfy a v3.1 gate-check (the prompt-body sha differs).
+#
+# substory_design v3.1 reuses the v3 substory_design concat (D-080
+# doesn't change substory_design — only slide_compose carries the
+# figure-utilization overlay).
+
+V3_1_OVERLAY_PATH = (REPO_ROOT / "src" / "beril_presentation_maker"
+                     / "skill" / "prompts" / "slide_compose.v3.1_overlay.md")
+
+
+def test_v3_1_overlay_file_present_on_disk():
+    """Belt + suspenders: the v3.1 overlay file ships with the repo
+    (so build_v3_concat_prompts can stack it on v3 at orchestrator
+    start)."""
+    assert V3_1_OVERLAY_PATH.is_file(), (
+        f"v3.1 overlay missing at {V3_1_OVERLAY_PATH}")
+    body = V3_1_OVERLAY_PATH.read_text(encoding="utf-8")
+    # Self-identifies as v3.1
+    assert "v3.1" in body.lower()
+    # References stacking on v3 (the concat-order contract)
+    assert "v3_overlay" in body, (
+        "overlay should reference v3_overlay (the v3 chain it stacks on)")
+    # References v2 (the body it ultimately concats with)
+    assert "v2" in body
+
+
+def test_prompts_version_validation_accepts_v3_1():
+    """`--prompts-version v3.1` must pass the validation case;
+    `v3.2`/`v4`/etc. still reject."""
+    beril_root = (Path("/Users/aparkin/Documents/Claude/Projects/"
+                       "research-coscientist-dev/spike/beril-extended"))
+    if not (beril_root / "projects" / "ibd_phage_targeting").is_dir():
+        pytest.skip("fixture project missing")
+    # v3.1 valid → must NOT hit the validation rc=2 branch. We can't
+    # easily run a real v3.1 invocation (smoke gate will reject without
+    # a v3.1 pass record), so test the validation block by passing an
+    # INVALID version and confirming the error message lists v3.1.
+    result = subprocess.run(
+        ["bash", str(ORCH_SH), "ibd_phage_targeting",
+         "--beril-root", str(beril_root),
+         "--prompts-version", "v9"],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 2
+    assert "v1|v2|v3|v3.1" in result.stderr, (
+        f"validation error message should list v3.1 as accepted; "
+        f"got:\n{result.stderr[-500:]}")
+
+
+def test_build_v3_concat_creates_v3_1_concat_when_v3_1(tmp_path):
+    """When PROMPTS_VERSION=v3.1, build_v3_concat_prompts must stack
+    the v3.1 overlay onto the v3 chain and write a SEPARATE concat
+    file (slide_compose.v3.1.concat.md). The v3 concat is also
+    written (it's the substrate); both shell vars get populated."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    fn_src = _extract_function(text, "build_v3_concat_prompts")
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    # Stage all source files build_v3_concat_prompts reads.
+    (prompts_dir / "slide_compose.v2.md").write_text(
+        "==V2-SLIDE-MARKER==\nv2 content\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3_overlay.md").write_text(
+        "==V3-SLIDE-OVERLAY-MARKER==\nv3 overlay\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.1_overlay.md").write_text(
+        "==V3-1-SLIDE-OVERLAY-MARKER==\nv3.1 figure overlay\n",
+        encoding="utf-8")
+    (prompts_dir / "substory_design.v1.md").write_text(
+        "==V1-SUBSTORY-MARKER==\nv1 substory\n", encoding="utf-8")
+    (prompts_dir / "substory_design.v3_overlay.md").write_text(
+        "==V3-SUBSTORY-OVERLAY-MARKER==\nv3 substory overlay\n",
+        encoding="utf-8")
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+
+    wrapper = textwrap.dedent(f"""\
+        set -euo pipefail
+        PROMPTS_VERSION=v3.1
+        PROMPTS_DIR={prompts_dir!s}
+        AUDIT_DIR={audit_dir!s}
+        SLIDE_COMPOSE_V3_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
+        {fn_src}
+        build_v3_concat_prompts
+        echo "RET_V3=$SLIDE_COMPOSE_V3_CONCAT_PATH"
+        echo "RET_V3_1=$SLIDE_COMPOSE_V3_1_CONCAT_PATH"
+        echo "RET_SUBSTORY=$SUBSTORY_DESIGN_V3_CONCAT_PATH"
+        """)
+    result = subprocess.run(["bash", "-c", wrapper],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+    # v3 concat exists (substrate)
+    v3_concat = audit_dir / "_prompts" / "slide_compose.v3.concat.md"
+    assert v3_concat.is_file()
+    # v3.1 concat exists (stacked)
+    v3_1_concat = audit_dir / "_prompts" / "slide_compose.v3.1.concat.md"
+    assert v3_1_concat.is_file()
+    # v3.1 concat contains markers in order: v2 + v3-overlay + v3.1-overlay
+    body = v3_1_concat.read_text(encoding="utf-8")
+    v2_pos = body.find("==V2-SLIDE-MARKER==")
+    v3_pos = body.find("==V3-SLIDE-OVERLAY-MARKER==")
+    v3_1_pos = body.find("==V3-1-SLIDE-OVERLAY-MARKER==")
+    assert v2_pos >= 0 and v3_pos >= 0 and v3_1_pos >= 0
+    assert v2_pos < v3_pos < v3_1_pos, (
+        f"concat order wrong: v2 at {v2_pos}, v3-overlay at {v3_pos}, "
+        f"v3.1-overlay at {v3_1_pos}; expected ascending")
+    # Shell vars populated
+    assert f"RET_V3_1={v3_1_concat}" in result.stdout
+    assert f"RET_V3={v3_concat}" in result.stdout
+
+
+def test_build_v3_concat_v3_path_does_NOT_create_v3_1_concat(tmp_path):
+    """Running with PROMPTS_VERSION=v3 must produce ONLY the v3 concat,
+    not the v3.1 one. The v3.1 concat path stays empty."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    fn_src = _extract_function(text, "build_v3_concat_prompts")
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "slide_compose.v2.md").write_text("v2\n",
+                                                     encoding="utf-8")
+    (prompts_dir / "slide_compose.v3_overlay.md").write_text(
+        "v3 overlay\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.1_overlay.md").write_text(
+        "v3.1 overlay\n", encoding="utf-8")
+    (prompts_dir / "substory_design.v1.md").write_text("v1\n",
+                                                       encoding="utf-8")
+    (prompts_dir / "substory_design.v3_overlay.md").write_text(
+        "v3 sub overlay\n", encoding="utf-8")
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+
+    wrapper = textwrap.dedent(f"""\
+        set -euo pipefail
+        PROMPTS_VERSION=v3
+        PROMPTS_DIR={prompts_dir!s}
+        AUDIT_DIR={audit_dir!s}
+        SLIDE_COMPOSE_V3_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
+        {fn_src}
+        build_v3_concat_prompts
+        echo "RET_V3_1=$SLIDE_COMPOSE_V3_1_CONCAT_PATH"
+        """)
+    result = subprocess.run(["bash", "-c", wrapper],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    # v3.1 concat must NOT exist (only built when PROMPTS_VERSION=v3.1)
+    v3_1_concat = audit_dir / "_prompts" / "slide_compose.v3.1.concat.md"
+    assert not v3_1_concat.exists()
+    # Shell var stays empty
+    for line in result.stdout.splitlines():
+        if line.startswith("RET_V3_1="):
+            assert line == "RET_V3_1=", (
+                f"v3 path leaked v3.1 concat var: {line!r}")
+
+
+def test_v3_gates_also_fire_for_v3_1():
+    """The 6 orchestrator gates that fire SUBSTORY_QUESTION/CONCLUSION/
+    ALLOWLIST_TERMS injection on `PROMPTS_VERSION == v3` must ALSO
+    fire on v3.1 (v3.1 stacks on v3; the v3 user-prompt contract
+    still applies). v0.6/D-080 changes those gates to OR-expressions."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # Count v3-OR-v3.1 gates; should be ≥ 6 (matches the v0.5 +
+    # v0.5.1 sites we deliberately extended).
+    count = text.count(
+        '"$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1"')
+    assert count >= 6, (
+        f"expected ≥6 OR-gates for v3+v3.1; got {count}. Either a "
+        f"gate was missed (regression risk) or the gates were "
+        f"restructured (update this test).")
+    # Sanity: no v3-only gate remains (regression risk that v3.1
+    # invocations don't get the v3 contract injection).
+    v3_only = text.count('"$PROMPTS_VERSION" == "v3" ]]')
+    assert v3_only == 0, (
+        f"found {v3_only} v3-only PROMPTS_VERSION gate(s); v0.6/D-080 "
+        f"requires they OR with v3.1.")
+
+
+def test_v3_1_pre_flight_requires_v3_1_overlay():
+    """The pre-flight prompt-existence loop must include
+    `slide_compose.v3.1_overlay.md` so missing-overlay fails early
+    instead of at orchestrator start with a cryptic ENOENT."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    pattern = r'^for f in (.+?); do$'
+    matches = re.findall(pattern, text, re.MULTILINE)
+    loop_line = next((m for m in matches if "slide_compose" in m), "")
+    assert "slide_compose.v3.1_overlay.md" in loop_line, (
+        f"pre-flight loop missing slide_compose.v3.1_overlay.md; "
+        f"got: {loop_line}")
