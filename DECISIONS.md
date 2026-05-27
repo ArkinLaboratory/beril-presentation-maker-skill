@@ -1986,3 +1986,255 @@ carry); D-071/D-072 (the contracts that fired the wins);
 prompt-architecture bug v0.5.1 fixed);
 `project_presentation_maker_v0_5_1.md` (this Tier-E
 retrospective; to be written).
+
+---
+
+## D-080 — 2026-05-27 — v0.6 Tier 0 / DQ1: figure-utilization contract uses both prompt-side nudge AND post-validator (belt-and-suspenders)
+
+**Context:** v0.5.1 Tier-E read (D-079) named figure under-use as a
+load-bearing v0.6 carry — Adam-rubric: *"every arc should back a
+claim or finding by relevant figure if possible."* ibd v0.5.1 used
+3 of 7 curated figures (43%); 3 of 34 slides are `data_figure`.
+
+**Decision:** Implement figure-utilization in v0.6 via **both layers**:
+
+1. **Prompt-side nudge** in `prompts/slide_compose.v3.1_overlay.md`
+   — composer guidance: "every R-slide that COULD use a curated
+   figure (per CURATED_FIGURES_PATH inventory + substory's analyses)
+   MUST use one as the slide's principal evidence. Prefer
+   `data_figure` layout over `claim_evidence` when a curated figure
+   exists for the analysis."
+2. **Post-validator** in `tools/check_figure_provenance.py` — emits
+   cascade Tier-1 P12 soft-warning when:
+   - A substory has 0 `data_figure` slides AND its critical-analyses
+     list references a curated figure (per the `curated_figures.md`
+     inventory).
+   - A `data_figure` slide's `figure:` field points at a non-curated
+     file path (drift / fabrication).
+
+**Rationale:** The D-072 precedent (register-discipline) used the
+same prompt-side + post-validator pair pattern and the metric
+moved decisively (audience-prose violations -29% to -84% in v0.5.1).
+Single-layer approaches have known failure modes: prompt-only
+relies on LLM compliance (suggestion ≠ emission, per the M5b
+"mocked tests aren't contract tests" lesson); validator-only is
+decoupled from composer behavior and just surfaces post-hoc.
+
+**Alternatives considered:**
+
+- **(a) Prompt-only** — rejected; the v0.5 D-072 register-discipline
+  experience showed prompt-side guidance moves behavior partway but
+  needs validator backup to catch drift.
+- **(b) Validator-only** — rejected; doesn't address upstream
+  composer behavior; operators would see soft-warnings without
+  having a fix path (just rerun? no — the v3 prompts don't know
+  what to do differently).
+
+**Related:** [V0_6_PUNCH_LIST.md](V0_6_PUNCH_LIST.md) DQ1 + Tier A
++ A.1; D-072 (the register-discipline precedent this mirrors);
+D-070 + D-079 (the v0.5/v0.5.1 origins of the figure-utilization
+carry); Adam-rubric pin: *"every arc should back a claim or
+finding by relevant figure if possible."*
+
+---
+
+## D-081 — 2026-05-27 — v0.6 Tier 0 / DQ2: figure-utilization metric counts `data_figure` slides with `figure:` pointing at a curated figure (strict)
+
+**Context:** Per D-080, the v0.6 figure-utilization rate is a
+load-bearing metric. The Adam-rubric language is *"every arc
+should back a claim or finding by relevant figure"* — the figure
+is the slide's focal element, not a decorative addition.
+
+**Decision:** "Figure used" counts iff:
+- The slide's `layout: data_figure`, AND
+- The slide's `content.figure` field is non-empty, AND
+- The path in `content.figure` matches a file listed in
+  `working/curated_figures.md` (curated inventory).
+
+The figure-utilization rate per deck is:
+```
+n_substories_with_curated_figure_used /
+n_substories_with_curated_figures_available
+```
+
+**Rationale:** This is the strictest counting consistent with the
+Adam-rubric. Lenient counting (any reference anywhere) is
+gameable (reference in `data_source` doesn't put the figure on the
+slide). The middle ground (`data_figure` OR `concept_illustration`)
+opens semantic ambiguity (an AI illustration of the same topic is
+NOT the same as the curated data figure; conflating them would let
+the composer skip the actual figure in favor of an AI rendition).
+
+**Alternatives considered:**
+
+- **(a) Any reference to figure-path anywhere** — rejected;
+  gameable + misses Adam-rubric intent.
+- **(c) `data_figure` OR `concept_illustration` referencing the
+  curated figure** — rejected; semantic ambiguity (AI illustration
+  ≠ data figure); composer would learn to substitute AI
+  illustrations for real figures.
+
+**Target threshold for v0.6 cut-over:** ≥70% utilization rate on
+talk-30 STRONG. v0.5.1 ibd baseline was 43% (3/7); the v3.1
+overlay + P12 validator should move it to ≥70%.
+
+**Related:** [V0_6_PUNCH_LIST.md](V0_6_PUNCH_LIST.md) DQ2 + Tier
+A.1; D-080 (the figure-utilization contract this metric measures);
+`working/curated_figures.md` (the curated-figure inventory the
+metric reads).
+
+---
+
+## D-082 — 2026-05-27 — v0.6 Tier 0 / DQ3 (REVISED): renderer bug — `_fill_big_idea` and `_fill_claim_evidence` ignore `image_path`; fix in v0.6 Tier B.1
+
+**Context:** Per v0.5.1 Adam Tier-E read (D-079) "no AI images
+visible in either deck." My initial diagnostic said the image-gen
+policy was firing as designed with "0 images approved" — that was
+wrong. v0.6 Tier 0 re-investigation (TCC access restored) found:
+
+- `working/05_image_decisions.json` on both decks: 31 decisions on
+  ibd, 2 emit=true (intro-pos0 big_idea, intro-pos1 claim_evidence).
+- `working/05_images/`: both PNGs present and well-formed
+  (intro-pos0.png ~319KB, intro-pos1.png ~309KB on ibd).
+- `working/05_images/manifest.json`: both entries `approved: true`,
+  valid paths.
+- `working/slide_spec.json`: both intro slides have `image_path`
+  field populated by the merger's `apply_image_manifest`.
+- `audit_pptx.py`:
+  - `_fill_big_idea` (line 892) only reads
+    `content.get("supporting_graphic")` — NOT `image_path`. Falls
+    through to Mode 1 (centered title only).
+  - `_fill_claim_evidence` (line 1002) only reads
+    `content.get("figure")` — NOT `image_path`. Falls through to
+    no-figure body.
+  - `_fill_concept_illustration` DOES read `image_path` (the
+    layout that v3.1's image-gen decision layer DOESN'T target).
+
+So the M5b image-gen pipeline silently drops images for big_idea +
+claim_evidence approvals. The decision layer's LLM-judge approves
+these layouts (and ONLY these layouts, plus
+`concept_illustration`); the merger binds the manifest; the
+renderer ignores it.
+
+**Decision:** Fix in v0.6 Tier B.1: add `image_path` fallback to
+both `_fill_big_idea` (Mode 2 path; image rendered below title in
+banner-mode geometry) and `_fill_claim_evidence` (with-figure path;
+image rendered in FIGURE_REGIONS["claim_evidence"]).
+
+```python
+# _fill_big_idea Mode 2:
+graphic_path = (content.get("supporting_graphic")
+                or content.get("image_path"))
+if graphic_path:
+    path = _resolve_asset_path(graphic_path, draft_dir,
+                               warnings, "big_idea.supporting_graphic")
+    if path:
+        _add_picture(slide, path, *FIGURE_REGIONS["big_idea"])
+
+# _fill_claim_evidence with-figure branch:
+figure_path = (content.get("figure")
+               or content.get("image_path"))
+if figure_path:
+    # existing branch logic; just use figure_path as the source.
+```
+
+After fix: re-render the existing v0.5.1 ibd + fdm slide_spec.json
+files via `assemble_pptx.py` (no live LLM cost; the spec is on
+disk). Verify the intro slides now show their AI images.
+
+**Rationale:** Smallest fix that unblocks the M5b image-gen
+pipeline. The merger's `apply_image_manifest` correctly populates
+`image_path` per the M5b D-064 contract (concept_illustration
+schema requires both `image_path` and `provenance`). The renderer's
+big_idea/claim_evidence fillers should fall back to `image_path` when
+their primary image field (`supporting_graphic`/`figure`) is empty —
+this preserves the semantic distinction (`figure` = data figure;
+`image_path` = AI illustration; `supporting_graphic` = legacy alias
+for either) while making the image actually render.
+
+**Alternatives considered:**
+
+- **(b) Fix at the merger** (also write `figure`/`supporting_graphic`
+  alongside `image_path`) — rejected; semantically wrong. A
+  `claim_evidence` slide's `figure` field represents the slide's
+  primary data figure (e.g., a curated REPORT figure). Overloading
+  it with an AI illustration would mean the figure-utilization
+  metric (D-081) over-counts AI illustrations as "figures used,"
+  defeating the v0.6 carry. Keep `image_path` semantically distinct
+  from `figure`.
+- **(c) Defer to v0.7** — rejected; v0.6 ships still-no-visible-
+  images on intros even though the pipeline works to disk. The
+  whole M5b investment (~$0.40 per run on image-gen) renders
+  invisible without this fix.
+
+**Related:** [V0_6_PUNCH_LIST.md](V0_6_PUNCH_LIST.md) DQ3 + Tier B.1;
+D-064 (M5b concept_illustration schema requiring
+image_path+provenance); v0.5.1 D-079 (the Tier-E read surfacing
+the "no images visible" complaint that triggered this
+investigation); `merge_compose_fragments.py:291`
+(`content["image_path"] = entry["image_path"]` — the merger
+binding that the renderer must learn to honor).
+
+---
+
+## D-083 — 2026-05-27 — v0.6 Tier 0 / DQ4: orchestrator tee/BlockingIOError — redirect validator stderr to file
+
+**Context:** v0.5.1 Tier D live run hit a real orchestrator bug
+late-stage. The validator (`slide_spec.py validate "$spec"`)
+correctly exits rc=0 with 11 soft-warnings. The orchestrator's
+output is piped through `tee /tmp/v0_5_1_tier_d_fdm.log`. The
+validator's stderr (soft-warning enumeration) fills the pipe
+buffer; the Python process raises BlockingIOError mid-print; rc
+becomes non-zero; the orchestrator's `||` clause fires the
+"validation FAILED" path; downstream merge/assemble bails before
+rendering the .pptx.
+
+Direct standalone re-run of the validator returns rc=0; the
+slide_spec.json on disk validates cleanly. The bug is the
+**stderr + tee + pipefail** interaction, not the validator itself.
+
+**Decision:** In `stage_merge_and_assemble`, redirect the
+validator's stderr to a file inside `audit/`:
+
+```bash
+"$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" \
+  2> "$AUDIT_DIR/validate.stderr" || {
+    echo "  validation FAILED — see $spec" >&2
+    echo "  stderr: $AUDIT_DIR/validate.stderr" >&2
+    cat "$AUDIT_DIR/validate.stderr" >&2 || true
+    echo "  repair report: $repair_report" >&2
+    return 1
+}
+```
+
+The stderr-to-file removes the validator from the tee pipeline
+entirely. After validation, the orchestrator cats the stderr file
+to its OWN stderr (which IS piped through tee), but the writes
+happen all-at-once from a small buffered file — no streaming
+write back-pressure.
+
+**Rationale:** Smallest possible fix; preserves orchestrator's
+external behavior (stderr still surfaces; tee on parent invocation
+still captures); avoids any new system dependencies (stdbuf,
+script(1)). Targets the ONE oversized stderr writer in the
+pipeline. The validator's stderr is large because each
+soft-warning is a multi-line paragraph (M4a Tier B caption-cap
+verbosity).
+
+**Alternatives considered:**
+
+- **(b) `stdbuf -oL -eL`** — requires coreutils stdbuf (Homebrew
+  on macOS, gnu-coreutils on Linux). Adds env dependency the
+  rest of the orchestrator doesn't have.
+- **(c) `script(1)` wrapper** — too heavy; affects EVERY writer
+  in the orchestrator, not just the one with the buffer issue.
+
+**Tier B placement:** B.0 (smallest fix, lands first; unblocks
+reliable end-to-end runs for the v3.1 live A/B work).
+
+**Related:** [V0_6_PUNCH_LIST.md](V0_6_PUNCH_LIST.md) DQ4 + Tier B;
+D-079 (the v0.5.1 D run that surfaced the bug);
+[[project-presentation-maker-v0-5-1]] §"Forensic evidence" — the
+fdm draft_6 dir shows the symptom (`audit/snapshots/slide_spec.raw.json`
++ `working/slide_spec.json` both present and valid; missing
+post-validation artifacts because the orchestrator bailed early).

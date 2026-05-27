@@ -168,12 +168,12 @@ writer in the pipeline.
 
 | Tier | Scope | Status |
 |---|---|---|
-| 0 — DQ1-DQ4 sign-off + DQ3 image-gen-decision diagnostic | research + DECISIONS | ⬜ not started |
+| 0 — DQ1-DQ4 sign-off + DQ3 image-gen-decision diagnostic | research + DECISIONS | ✅ ready to commit 2026-05-27 (DQ3 diagnostic revealed a RENDERER BUG, not a policy issue: `working/05_image_decisions.json` on ibd v0.5.1 shows 31 decisions / 2 emit=true / 29 correctly skipped per policy; `working/05_images/intro-pos*.png` both present + manifest binds them onto `slide_spec.json[image_path]`; but `assemble_pptx.py::_fill_big_idea` and `_fill_claim_evidence` ONLY read `supporting_graphic`/`figure` respectively, NOT `image_path` — so the 2 generated images get silently dropped. D-082 captures the bug + fix. All four DQs resolved with recommended options: D-080 (both prompt+validator), D-081 (strict counting on data_figure+curated-figure path), D-082 (renderer fix in Tier B.1, NOT a policy redesign), D-083 (redirect validator stderr to file)) |
 | A — `slide_compose.v3.1_overlay.md` + `--prompts-version v3.1` flag + dispatcher extension | prompts + orchestrator | ⬜ not started |
-| A.1 — `tools/check_figure_provenance.py` per DQ1 + DQ2 | new tool + tests | ⬜ not started |
-| B — orchestrator tee fix per DQ4 + assemble_pptx error handling | orchestrator | ⬜ not started |
-| B.1 — image-gen-decision policy/bug resolution per DQ3 | depends on DQ3 outcome | ⬜ not started |
-| C — extend smoke harness for v3.1 (`tools/smoke_v3_prompt.py` adds v3.1 concat-build) | smoke tool | ⬜ not started |
+| A.1 — `tools/check_figure_provenance.py` per D-080 + D-081 | new tool + tests | ⬜ not started |
+| B — orchestrator tee fix per D-083 (`2> $AUDIT_DIR/validate.stderr`) | orchestrator | ⬜ not started |
+| B.1 — RENDERER FIX per D-082: `_fill_big_idea` + `_fill_claim_evidence` honor `image_path` | renderer + tests | ⬜ not started |
+| C — extend smoke harness for v3.1 (`tools/smoke_v3_prompt.py` adds v3.1 concat-build + prompt sha bump) | smoke tool | ⬜ not started |
 | D — live A/B re-run on ibd_phage_targeting (v3.1 vs v3 vs v0.3 baseline) | live (~$13) | ⬜ not started |
 | E — live A/B re-run on functional_dark_matter (sanity) | live (~$13) | ⬜ not started |
 | F — Adam reads decks + scores metric 5 + casts veto | review + DECISION | ⬜ not started |
