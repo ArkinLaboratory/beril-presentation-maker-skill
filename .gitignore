@@ -48,3 +48,9 @@ reference/master-template-source/*.pptx
 # Commit-message scratchpads — staging input for `git commit -F`.
 # Kept local; the message itself lives in `git log` once committed.
 .commit-message*.txt
+
+# v0.5.1 D-076: skill-repo-root audit/ holds local v3-smoke-pass
+# records. Never commit (local state; the prompt-body sha +
+# timestamp are operator-machine-specific, not shared across
+# the team).
+/audit/
