@@ -911,11 +911,21 @@ def _fill_big_idea(slide, content, draft_dir, warnings):
       with title-at-top + empty body. The dual-mode pattern matches
       `_fill_claim_evidence` (with-figure / without-figure split).
     """
-    if content.get("supporting_graphic"):
+    # v0.6 / D-082: accept either `supporting_graphic` (v1 legacy) or
+    # `image_path` (v0.3.3+ image-gen pipeline binding). The merger's
+    # `apply_image_manifest` writes `image_path` per the M5b D-064
+    # concept_illustration schema; the renderer must honor either
+    # field so AI illustrations approved by the decision layer for
+    # big_idea slides actually render.
+    graphic_src = content.get("supporting_graphic") or content.get("image_path")
+    graphic_field = ("big_idea.supporting_graphic"
+                     if content.get("supporting_graphic")
+                     else "big_idea.image_path")
+    if graphic_src:
         # Mode 2: banner + image (original layout)
         _set_title(slide, content["title"])
-        path = _resolve_asset_path(content["supporting_graphic"], draft_dir,
-                                   warnings, "big_idea.supporting_graphic")
+        path = _resolve_asset_path(graphic_src, draft_dir,
+                                   warnings, graphic_field)
         if path:
             _add_picture(slide, path, *FIGURE_REGIONS["big_idea"])
         return
@@ -1002,7 +1012,21 @@ def _fill_big_number(slide, content, draft_dir, warnings):
 def _fill_claim_evidence(slide, content, draft_dir, warnings):
     _set_title(slide, content["title"])
     bullets = content["bullets"]
-    if content.get("figure"):
+    # v0.6 / D-082: accept either `figure` (curated data figure) or
+    # `image_path` (v0.3.3+ image-gen pipeline binding). The merger's
+    # `apply_image_manifest` writes `image_path` per the M5b D-064
+    # concept_illustration schema; without this fallback, AI
+    # illustrations approved by the decision layer for claim_evidence
+    # slides got silently dropped because the renderer only checked
+    # `figure`. Semantically `figure` and `image_path` are distinct
+    # (data figure vs AI illustration; figure-utilization metric per
+    # D-081 only counts `figure`); this fallback just makes both
+    # source fields paintable to the same image region.
+    figure_src = content.get("figure") or content.get("image_path")
+    figure_field = ("claim_evidence.figure"
+                    if content.get("figure")
+                    else "claim_evidence.image_path")
+    if figure_src:
         # Bullets in narrower body (left half), figure on right.
         #
         # 2026-04-28 (v0.2.1 fix, draft_9 slide 8):
@@ -1029,8 +1053,8 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
         # 80% default + 20% line-spacing reduction is sufficient on
         # this content; the no-figure branch uses the same defaults.
         _enable_normautofit(slide, 1)
-        path = _resolve_asset_path(content["figure"], draft_dir, warnings,
-                                    "claim_evidence.figure")
+        path = _resolve_asset_path(figure_src, draft_dir, warnings,
+                                    figure_field)
         if path:
             _add_picture(slide, path, *FIGURE_REGIONS["claim_evidence"])
             # Caption band below figure (only if figure rendered).
@@ -1052,16 +1076,23 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
             # the data_figure caption pattern (which uses shrink_to_fit;
             # _fit_textbox is the v0.4 replacement that LibreOffice
             # actually honors). Ladder tuned for the 4.50 x 0.35in band.
-            cap_tb = _add_textbox(slide, content["figure_caption"],
-                                  5.30, 4.50, 4.50, 0.35,
-                                  font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
-                                  word_wrap=True)
-            _fit_textbox(cap_tb,
-                         ladder=((100, 100000), (150, 90000), (200, 80000), (260, 70000)),
-                         full_below=100,
-                         warnings=warnings,
-                         where=f"claim_evidence figure_caption "
-                               f"(slide {getattr(slide, 'slide_id', '?')})")
+            # v0.6 / D-082: figure_caption is required when content
+            # has `figure` (curated data figure) but absent when the
+            # binding came via `image_path` (AI illustration; the
+            # M5b pipeline doesn't produce captions for AI images).
+            # Render the caption only if present.
+            caption = content.get("figure_caption")
+            if caption:
+                cap_tb = _add_textbox(slide, caption,
+                                      5.30, 4.50, 4.50, 0.35,
+                                      font_size_pt=11, color_rgb=GRAPHITE_GRAY_RGB,
+                                      word_wrap=True)
+                _fit_textbox(cap_tb,
+                             ladder=((100, 100000), (150, 90000), (200, 80000), (260, 70000)),
+                             full_below=100,
+                             warnings=warnings,
+                             where=f"claim_evidence figure_caption "
+                                   f"(slide {getattr(slide, 'slide_id', '?')})")
     else:
         # No figure — bullets fill the body placeholder. Trim it clear
         # of the footer band + add autofit (the master body runs to

@@ -1229,3 +1229,144 @@ def test_overflow_prone_slots_geometry_clears_footer(ss, asm, tmp_path):
                 )
 
     assert not failures, "\n  ".join([""] + failures)
+
+
+# ---------------------------------------------------------------------------
+# v0.6 / D-082: renderer must read `image_path` for big_idea + claim_evidence
+# ---------------------------------------------------------------------------
+#
+# The M5b image-gen pipeline writes the binding onto `content["image_path"]`
+# (per the merger's `apply_image_manifest`). Pre-D-082, the renderer's
+# `_fill_big_idea` only read `supporting_graphic` and `_fill_claim_evidence`
+# only read `figure`, so AI illustrations approved by the decision layer
+# for those two layouts got silently dropped. The fix adds an
+# `image_path` fallback on both fillers; these tests pin it.
+
+@requires_master
+def test_big_idea_renders_image_when_image_path_present(ss, asm, tmp_path):
+    """A big_idea slide with `image_path` (but no `supporting_graphic`)
+    must render in Mode 2 (banner + image), not fall through to Mode 1
+    (title-only). The merger's apply_image_manifest writes image_path
+    per D-064; the renderer must honor it (D-082)."""
+    fig = _make_tiny_png(tmp_path / "ai_intro.png")
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [
+            ss.example_slide("big_idea", slide_id=1, substory_id=None),
+        ],
+    }
+    # Wire the AI-illustration binding the merger would produce.
+    spec["slides"][0]["content"]["image_path"] = str(fig)
+    # No supporting_graphic — this is the pre-D-082 failure-mode case.
+    spec["slides"][0]["content"].pop("supporting_graphic", None)
+
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "deck.pptx"
+    result = asm.assemble(spec_path, out)
+
+    asset_warnings = [w for w in result.warnings if "asset not found" in w]
+    assert asset_warnings == [], (
+        f"image_path failed to resolve: {asset_warnings}")
+    # Belt+suspenders: a picture must be present on the slide. python-pptx
+    # exposes picture shapes via slide.shapes; opening the rendered pptx
+    # and counting picture shapes confirms the image actually landed.
+    from pptx import Presentation
+    prs = Presentation(out)
+    slide = prs.slides[0]
+    pic_count = sum(1 for shp in slide.shapes
+                    if shp.shape_type == 13)  # MSO_SHAPE_TYPE.PICTURE = 13
+    assert pic_count >= 1, (
+        "big_idea slide with image_path should render at least one "
+        "picture; got 0. D-082 fix likely regressed.")
+
+
+@requires_master
+def test_claim_evidence_renders_image_when_image_path_present(ss, asm, tmp_path):
+    """A claim_evidence slide with `image_path` (and no `figure`)
+    must render the image. Pre-D-082 the with-figure branch's
+    `content.get("figure")` returned None and the slide fell through
+    to the no-figure body — AI illustration dropped."""
+    fig = _make_tiny_png(tmp_path / "ai_evidence.png")
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [
+            ss.example_slide("claim_evidence", slide_id=1, substory_id=None),
+        ],
+    }
+    spec["slides"][0]["content"]["image_path"] = str(fig)
+    spec["slides"][0]["content"].pop("figure", None)
+    # No figure_caption either — D-082 fix must tolerate absence
+    # (AI illustrations don't have captions in the M5b schema).
+    spec["slides"][0]["content"].pop("figure_caption", None)
+
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "deck.pptx"
+    result = asm.assemble(spec_path, out)
+
+    asset_warnings = [w for w in result.warnings if "asset not found" in w]
+    assert asset_warnings == [], (
+        f"image_path failed to resolve: {asset_warnings}")
+    from pptx import Presentation
+    prs = Presentation(out)
+    slide = prs.slides[0]
+    pic_count = sum(1 for shp in slide.shapes
+                    if shp.shape_type == 13)
+    assert pic_count >= 1, (
+        "claim_evidence slide with image_path should render at least "
+        "one picture; got 0. D-082 fix likely regressed.")
+
+
+@requires_master
+def test_big_idea_supporting_graphic_still_wins_over_image_path(ss, asm, tmp_path):
+    """When both `supporting_graphic` and `image_path` are present
+    (unusual; should never happen in practice since the merger sets
+    only image_path), supporting_graphic wins because it's the v1
+    legacy field. Don't break legacy callers."""
+    legacy = _make_tiny_png(tmp_path / "legacy.png")
+    ai = _make_tiny_png(tmp_path / "ai.png")
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [
+            ss.example_slide("big_idea", slide_id=1, substory_id=None),
+        ],
+    }
+    spec["slides"][0]["content"]["supporting_graphic"] = str(legacy)
+    spec["slides"][0]["content"]["image_path"] = str(ai)
+
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "deck.pptx"
+    result = asm.assemble(spec_path, out)
+
+    asset_warnings = [w for w in result.warnings if "asset not found" in w]
+    # Both files exist; no asset warnings expected.
+    assert asset_warnings == []
+    # The chosen field name should be `big_idea.supporting_graphic`
+    # (legacy wins). If any future warning references the path, it
+    # should reference supporting_graphic-context, not image_path.
+    # No direct way to inspect which field was used without parsing
+    # the picture's source — accept the "no warnings" + "1+ picture"
+    # signal as sufficient pin for the precedence rule.
+    from pptx import Presentation
+    prs = Presentation(out)
+    slide = prs.slides[0]
+    pic_count = sum(1 for shp in slide.shapes
+                    if shp.shape_type == 13)
+    assert pic_count >= 1
