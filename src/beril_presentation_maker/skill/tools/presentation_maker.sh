@@ -2271,11 +2271,23 @@ stage_merge_and_assemble() {
     --report "$repair_report"
 
   echo "  validating slide_spec.json..." >&2
-  "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
+  # v0.6 / D-083: redirect validator stderr to a file to avoid the
+  # tee/pipefail/BlockingIOError that surfaced live in v0.5.1 Tier D
+  # (validator soft-warnings overflow pipe buffer → Python crashes
+  # mid-print → spurious non-zero rc → orchestrator bails). The file
+  # gets cat'd to orchestrator stderr after, in one all-at-once write
+  # that doesn't suffer pipe back-pressure.
+  local _validate_stderr="$AUDIT_DIR/validate.stderr"
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" \
+        2> "$_validate_stderr"; then
     echo "  validation FAILED — see $spec" >&2
+    [[ -s "$_validate_stderr" ]] && cat "$_validate_stderr" >&2
+    echo "  stderr saved to: $_validate_stderr" >&2
     echo "  repair report: $repair_report" >&2
     return 1
-  }
+  fi
+  # Validation succeeded; cat the soft-warnings to orchestrator stderr.
+  [[ -s "$_validate_stderr" ]] && cat "$_validate_stderr" >&2
 
   if [[ $SKIP_ASSEMBLY -eq 1 ]]; then
     echo "  [--skip-assembly] stopping before assemble_pptx.py" >&2
@@ -2554,10 +2566,17 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
       echo "  revise loop applied $n_changed change(s); re-assembling deck..." >&2
       local spec="$SLIDE_SPEC"
       local pptx="$DECK_PPTX"
-      "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" || {
+      # v0.6 / D-083: same stderr-to-file redirect as Tier B
+      # stage_merge_and_assemble validation site.
+      local _revise_validate_stderr="$AUDIT_DIR/validate.post_revise.stderr"
+      if ! "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$spec" \
+            2> "$_revise_validate_stderr"; then
         echo "  post-revise validation FAILED — spec at $spec" >&2
+        [[ -s "$_revise_validate_stderr" ]] && cat "$_revise_validate_stderr" >&2
+        echo "  stderr saved to: $_revise_validate_stderr" >&2
         return 1
-      }
+      fi
+      [[ -s "$_revise_validate_stderr" ]] && cat "$_revise_validate_stderr" >&2
       "$PYTHON_BIN" "$TOOLS_DIR/assemble_pptx.py" \
         "$spec" \
         --out "$pptx" \
