@@ -1861,3 +1861,128 @@ to-overlay-on-v1. The asymmetry would be a footgun for v0.6.
 A.2; D-075 (the parent decision this mirrors); D-071 (the Q/A/R/C
 contract substory_design.v3 implements).
 
+
+---
+
+## D-079 — 2026-05-27 — v0.5.1 Tier E veto: DON'T SHIP; treat as research finding for v0.6
+
+**Context:** v0.5.1 Tier C/D live A/B re-ran ibd_phage_targeting +
+functional_dark_matter on 2026-05-26 evening using the
+D-075/D-077/D-078 prompt-architecture fixes + the D-076 smoke gate.
+Both runs completed with valid schema (0 errors vs the morning's
+21-per-run validation failures). Quantitative wins on the two
+v0.5 lever metrics:
+
+- **Audience-prose specialist-reference violations** (the M6
+  Tier-D "walls of text poisoned by specialist reference"
+  complaint):
+  - ibd: 24 (v0.3) / 36 (v0.4exp) → **17 (v0.5.1)**
+    [-29% / -53%]
+  - fdm: 19 (v0.3) / 9 (v0.4exp) → **3 (v0.5.1)** [-84% / -67%]
+- **Q/A/R/C contract violations** (D-071; missing_question +
+  missing_conclusion + missing_c_slide; the "no question →
+  clear analysis → results → conclusions" arc Adam named):
+  - ibd: 7 (v0.3) / 12 (v0.4exp) → **0 (v0.5.1)**
+  - fdm: 7 (v0.3) / 5 (v0.4exp) → **0 (v0.5.1)**
+
+**Adam Tier-E read 2026-05-27 morning identified four remaining
+quality problems** that the metric wins don't capture:
+
+1. **Retraction leakage.** ibd v0.5.1 still references NB04
+   ("Retract leaky NB04 analysis (14/18 sig...") as if it were
+   a story beat. The composer pulled the analysis from the plan
+   inventory; the substory_design step didn't filter it; v0.5
+   register-discipline caught "NB04" as a notebook_id audience
+   violation but DOES NOT catch the upstream content problem
+   ("don't talk about retracted/discarded results at all").
+2. **Figure under-use.** ibd v0.5.1 used 3 of 7 curated figures
+   (43%); 3 of 34 slides are `data_figure`. Already in D-070
+   v0.6 carry. Adam-rubric for v0.6: *"every arc should back a
+   claim or finding by relevant figure if possible."*
+3. **No AI-generated images.** Both decks: 0 images approved
+   despite 31 image-gen decisions on ibd. Root-cause not
+   diagnosed (sandbox blocked inspection of the working/
+   image_decisions.json from this session). Could be the
+   decision layer's conservative concept_illustration-only
+   policy; could be a real bug.
+4. **Compression: budgets perhaps over-compressing the story.**
+   Both decks at talk-30 STRONG (mode budget 18-32); ibd
+   landed at 34 slides, fdm at 29. The v3 overlay's Q/A/R/C
+   contract may be forcing slot-compression *within* each
+   substory (e.g., one R-slide where two would breathe
+   better). New finding from this read.
+
+**Decision:** **DON'T SHIP** v0.5.1 as a release. No tag. v0.5.1
+work becomes evidence informing the v0.6 design. The architectural
+fix (D-075/D-078 concat overlay; D-076 smoke gate) remains on main
+and is structurally sound — but the content-quality gaps named in
+the Tier-E read mean v0.5.1 wouldn't satisfy the "ship-as-default"
+test even at experimental tier.
+
+**Rationale:**
+
+- **v0.4 shipped at experimental** (2026-05-25, D-066) because
+  the A/B was mechanical FAIL on the target. v0.5.1 has the
+  opposite shape: the mechanical-style metrics PASS (-29% to -84%
+  on the content-discipline lever; 100% on Q/A/R/C arc), but
+  the Tier-E read surfaces failures the metrics don't cover. The
+  M6 lesson Adam carried forward — "Adam-veto is final
+  regardless of mechanical result" (D-066) — applies here.
+- v0.5.1-experimental was offered but rejected: the four
+  problems (especially NB04-retraction-leakage and the
+  compression finding) are about CONTENT, not architecture, and
+  shipping at experimental would invite operators to use v3
+  prompts in production where they'd encounter those content
+  problems. Cleaner to fix in v0.6 + ship as default then.
+- The "fix compression + ship v0.5.2" option was also offered
+  but rejected: compression is one of FOUR problems; piecemeal
+  fixing one then re-reading is more cycles than batching them
+  in v0.6.
+
+**Alternatives considered:**
+
+- **(a) Ship v0.5.1-experimental** — rejected; content-quality
+  gaps make the experimental opt-in misleading.
+- **(c) Ship v0.5.1 as default** — rejected; same content
+  reason + the figure under-use is a real regression risk
+  (operators may have been getting acceptable figure usage
+  under v0.3 sequential composer; v3 may make it worse).
+- **(d) Quick v0.5.2 to address compression** — rejected;
+  partial fix; v0.6 batches all four findings.
+
+**What does ship on main as v0.5.1 work:**
+
+- The D-075/D-078 concat-overlay architecture (slide_compose.v3
+  + substory_design.v3 both as v_n_body + v3_overlay
+  concatenation; orchestrator builds at startup).
+- The D-076 live-LLM smoke + gate (`tools/smoke_v3_prompt.py`).
+- The D-077 v3 overlay field-name fixes (claim_evidence →
+  `title`; section_divider → `punchline`; explicit per-layout
+  enumeration in inviolable-rules).
+- 36 new tests (1404 → 1440); both Tier C/D draft_6 dirs
+  on disk for v0.6 inspection.
+
+**What goes to v0.6 (carry items):**
+
+- **NB04-retraction-leakage** root cause + fix
+  (substory_design / plan filter on discarded-results).
+- **Figure-utilization contract** (D-070 carry; Adam-rubric
+  pin: "every arc backed by relevant figure if possible").
+- **No-images diagnostic** (root-cause why 0/31 image-gen
+  decisions approved on ibd; rerun image-gen probe to surface
+  whether it's policy or bug).
+- **Compression** (v3 overlay's Q/A/R/C contract over-rigid;
+  consider widening R-slide allowance OR loosening mode-budget
+  caps when STRONG-tier substory has multiple R-slot candidates).
+- **Orchestrator tee/BlockingIOError bug** (surfaced live on
+  fdm v0.5.1; benign because validation passed; separable from
+  prompt-architecture work).
+
+**Related:** [V0_5_1_PUNCH_LIST.md](V0_5_1_PUNCH_LIST.md) Tier E
++ Tier F/G (cancelled per this veto); D-066 (Adam-veto pattern
+inherited); D-070 (v0.5 scope opening; v0.6 figure-utilization
+carry); D-071/D-072 (the contracts that fired the wins);
+`project_presentation_maker_v0_5_morning_abort.md` (the
+prompt-architecture bug v0.5.1 fixed);
+`project_presentation_maker_v0_5_1.md` (this Tier-E
+retrospective; to be written).

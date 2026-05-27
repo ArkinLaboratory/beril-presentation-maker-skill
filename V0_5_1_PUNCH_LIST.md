@@ -152,11 +152,11 @@ apply the same fix. If not, this DQ resolves to "no change."
 | A.1 — fix v3 overlay anti-pattern field names per D-077 | prompts | ✅ ready to commit 2026-05-26 (audited overlay against v2's authoritative per-layout schema; found 3 distinct sites where claim_evidence's required field was wrongly named `punchline` instead of `title` — same root-cause bug as the dead standalone v3.md, just in slightly different prose. Fixed: (1) C-slide guidance block now names `title` + cites v2's "title is the punchline; declarative" annotation; (2) post-composition Pass 2 self-check now references `title` for claim_evidence; (3) C-slide anti-pattern bullet now references `title`. Also strengthened the inviolable-rules Q+C clause to enumerate both layout→field pairs explicitly (`section_divider`→`punchline`, `big_idea`→`title` for Q; `claim_evidence`→`title`, `big_idea`→`title` for C) + warns "Do NOT substitute generic names." Per v2 ground truth: `section_divider` requires `punchline`+`substory_number`; `claim_evidence` requires `title`+`bullets`; `big_idea` requires `title`. Added 3 anti-recurrence unit tests pinning each fix (C-slide cites `title`, Q-slide cites `punchline`, inviolable-rules enumerate both pairs + warn against generic-name substitution). Suite 1411 passed (was 1408)) |
 | A.2 — restructure substory_design.v3.md per D-078 (same concat fix) | prompts + orchestrator dispatcher | ✅ ready to commit 2026-05-26 (mirrors Tier A on substory_design: deleted broken standalone `prompts/substory_design.v3.md`; created `prompts/substory_design.v3_overlay.md` (~208 lines) containing ONLY v3-additive sections — header banner + Q/A/R/C contract specifics (D-071) + v3 Output-format-supersedes-v1 template + v3 self-review pass + v3 anti-patterns + v3 inviolable rules. Critical design point: v3's output template CHANGES v1's (adds Question + Conclusion fields per substory). Overlay header explicitly says "Output-format change. The v1 'Output format' section above must be SUPERSEDED by the v3 template below — when the v1 template and the v3 template conflict, use the v3 template." LLM sees both templates back-to-back; overlay-LAST attention plus the explicit supersede statement makes v3 win. Orchestrator changes: pre-flight loop swap (substory_design.v3.md → substory_design.v3_overlay.md); `build_v3_concat_prompts` TODO stanza replaced with the real concat (`cat substory_design.v1.md substory_design.v3_overlay.md` → `audit/_prompts/substory_design.v3.concat.md`); --help docstring updated to name both concats. Tests: 1 dispatcher test updated (v3 → substory_design.v3.concat.md); pre-flight test updated to require substory_design.v3_overlay.md + reject the standalone v3.md (regex word-boundary so `v3_overlay.md` doesn't false-match `v3.md`); build_v3_concat test extended to assert BOTH concat files written with correct order; overlay-present + old-retired tests extended for both files. Suite 1411 passed) |
 | B — `tools/smoke_v3_prompt.py` + gating per D-076 | new tool + orchestrator | ✅ ready to commit 2026-05-26 (new `tools/smoke_v3_prompt.py` ~580 lines: live-LLM single-substory smoke. Composes both substory_design AND slide_compose stages (per Tier B DQ resolution; ~$0.60 total) against the v3 concat prompts; validates the produced fragment against a port of v2's per-layout required-fields map (LAYOUT_REQUIRED_FIELDS — 12 layouts; D-077 ground truth pin); writes audit/v3_smoke_pass.json on success or audit/v3_smoke_fail.json on failure (sidecar JSON with timestamp + prompts_sha + evidence). `compute_prompt_sha()` SHA-256s the 4 prompt source files (substory_v1, substory_overlay, slide_v2, slide_overlay) in stable order. `check_recent_pass()` gate-check: rejects if record absent, passed=false, prompts_sha-mismatched, OR record >7 days old. `--check-recent` CLI subcommand for the orchestrator gate (no LLM invocation; rc=0 if fresh+matching pass exists, rc=1 otherwise). `--fragment-only` (skip substory_design stage; ~$0.30 instead of ~$0.60). `--keep-tmpdir` for inspection on failure. Tiny synthetic fixture at `tests/fixtures/smoke_v3/` (5 files: REPORT.md + throughline + 02_substories.md + 00_plan.md + citation_pool.json) — predictable, no project dependency. Orchestrator gate: `--prompts-version v3` calls `smoke_v3_prompt.py --check-recent`; rejects with rc=2 + clear next-step instructions if no fresh pass. `--force-v3-smoke-stale` flag bypasses (logged loudly per D-076). `| sed` pipe gets `|| true` to tolerate the `python3 ... | sed` pipefail under `set -e`. 26 new smoke unit tests (validate_fragment happy + 8 bug-class cases + 4 record-I/O + 4 gate-check semantics + 2 CLI smoke); 3 new orchestrator gate tests (rejection rc=2 + gate-source-pin + help-mentions-force-flag). Suite 1440 passed (was 1411; +29 new)) |
-| C — live A/B re-run on ibd_phage_targeting | live (~$13) | ⬜ not started |
-| D — live A/B re-run on functional_dark_matter (sanity) | live (~$13) | ⬜ not started |
-| E — Adam reads decks + scores metric 5 + veto | review + DECISION | ⬜ not started |
-| F — docs (DECISIONS + V0_4_ARCH + RELEASE_NOTES + LAYOUT) | docs | ⬜ not started |
-| G — closeout + auto-memory + tag (v0.5.0 / v0.5.0-experimental) | paperwork + tag | ⬜ not started |
+| C — live A/B re-run on ibd_phage_targeting | live (~$13) | ✅ committed 2026-05-26 (live re-run after the D-075/D-076/D-077/D-078 architectural fix landed. `--prompts-version v3 --auto-advance --auto-approve-images` against ibd_phage_targeting. PIPELINE COMPLETE end-to-end. 34 slides; 0 schema errors; 11 soft-warnings (all advisory — node-label/caption length). draft.pptx rendered (1.71 MB). Full audit: adversarial review (14 findings: P0=4 P1=7 P2=2), revise loop ran (made no changes — 3 P0 findings were revise_invariance_violated, 1 P0 skipped). Confirms architectural fix held end-to-end on the target project.) |
+| D — live A/B re-run on functional_dark_matter (sanity) | live (~$13) | ✅ committed 2026-05-26 (parallel-run with Tier C. 29 slides; 0 schema errors; 11 soft-warnings. Hit an orchestrator tee/BlockingIOError bug late-stage that caused a FALSE "validation FAILED" message — validation actually passed (rc=0 on standalone re-run); bug is the validator's stderr piping through tee filling the pipe buffer, Python crashes mid-print. SEPARABLE from v0.5.1 work; v0.6+ carry. Workaround: manually invoked assemble_pptx.py against the on-disk slide_spec.json → draft.pptx rendered (1.45 MB). Both decks now available for Tier-E read.) |
+| E — Adam reads decks + scores metric 5 + veto | review + DECISION | ✅ committed 2026-05-27 (Adam Tier-E read 2026-05-27 morning. **Quantitative wins on the two v0.5 lever metrics:** audience-prose violations: ibd 24/36→17 (-29%/-53%); fdm 19/9→3 (-84%/-67%). Q/A/R/C violations: ibd 7/12→0; fdm 7/5→0 (100% present on all substories). **Adam read identified 4 quality problems the metrics don't catch:** (1) retraction leakage (NB04 mentioned as story beat — register-discipline catches the token but not the upstream content issue); (2) figure under-use (3/7 curated figures used on ibd; 3/34 slides are data_figure) — already a v0.6 carry per D-070, Adam-rubric pin: *"every arc should back a claim or finding by relevant figure if possible"*; (3) 0 AI images approved (31 image-gen decisions on ibd; root cause undiagnosed — harness sandbox blocked inspection); (4) compression — both decks slightly over mode budget; v3 Q/A/R/C contract may over-compress within substories. **Veto: DON'T SHIP (D-079).** No `v0.5.1.0` tag. v3 prompts available via `--prompts-version v3 --force-v3-smoke-stale` but not blessed for production. v0.5.1 work becomes input to v0.6 design.) |
+| F — docs (DECISIONS + V0_4_ARCH + RELEASE_NOTES + LAYOUT) | docs | ⚪ cancelled per Tier-E veto (no release shipping; DECISIONS D-079 captures the veto; auto-memory project_presentation_maker_v0_5_1.md captures the retrospective + v0.6 inputs; SPEC/V0_4_ARCH/RELEASE_NOTES/LAYOUT updates skip because nothing released externally). |
+| G — closeout + auto-memory + tag (v0.5.0 / v0.5.0-experimental) | paperwork + tag | ⚪ no tag per Tier-E veto. auto-memory `project_presentation_maker_v0_5_1.md` written + promoted in MEMORY.md; V0_5_1_PUNCH_LIST.md status table closed; v0.6 punch list lives in [[project-presentation-maker-v0-5-1]] §"v0.6 inputs". |
 
 ## Test strategy (anti-recurrence)
 
@@ -243,3 +243,65 @@ Tier E → Tier F + G (paperwork)
 - `prompts/slide_compose.v3.md` (380 lines, broken): becomes
   `slide_compose.v3_overlay.md` (~150 lines, register-discipline +
   Q/A/R/C only).
+
+## v0.6 inputs (carries from Adam Tier-E veto 2026-05-27, D-079)
+
+The four content-quality gaps surfaced in the Tier-E read that
+v0.5.1's two metrics didn't cover. These feed the v0.6 punch list
+(not yet drafted):
+
+1. **Retraction-aware composer / `discarded_results.md` filter.**
+   v0.5.1 ibd referenced "NB04 (leaky)" as a story beat.
+   Register-discipline caught the notebook_id token; didn't catch
+   the upstream content issue (don't talk about discarded results
+   at all). Needs: a sibling artifact `discarded_results.md`
+   listing retracted analyses; substory_design step filters them
+   before clustering; plan stage surfaces them for operator
+   review.
+2. **Figure-utilization contract** (D-070 carry; **Adam-rubric pin
+   from D-079:** *"every arc should back a claim or finding by
+   relevant figure if possible"*). v0.5.1 ibd used 3 of 7 curated
+   figures (43%); 3 of 34 slides are `data_figure`. Needs:
+   `tools/check_figure_provenance.py` + substory-level "≥1
+   data_figure if curated figure exists" soft-warning + composer
+   prompt nudge.
+3. **No-image diagnostic.** Both v0.5.1 decks shipped 0 approved
+   images despite 31 image-gen decisions on ibd. Root cause NOT
+   diagnosed in this session (harness sandbox blocked inspection
+   of `working/05_image_decisions.json`). Needs: Adam-side
+   local-shell inspection to determine if it's conservative
+   policy firing as designed OR a bug; if a bug, fix; if policy,
+   surface as an orchestrator flag.
+4. **Compression / mode-budget heuristics.** Both v0.5.1 decks
+   slightly over mode budget (ibd 34 of 18-32; fdm 29). v3
+   Q/A/R/C contract may force slot compression within substories
+   (one R-slide where two would breathe better). Needs: investigate
+   whether to relax v3 R-slide minimums OR widen mode-budget caps
+   for STRONG-tier substories with multiple R-slot candidates.
+
+Separable bugs that surfaced live during v0.5.1 work (not carried
+to v0.6 as design questions; just track for fix):
+
+5. **Orchestrator tee/BlockingIOError bug.** Surfaced on Tier D
+   live run — the validator's stderr piped through `tee` filled
+   the pipe buffer; Python crashed mid-print with BlockingIOError;
+   the orchestrator interpreted the non-zero rc as "validation
+   FAILED" and bailed before assemble. The slide_spec.json was
+   actually fine; standalone re-validation rc=0. Workaround:
+   manually invoke `assemble_pptx.py` against the on-disk spec.
+   Real fix: redirect stderr to a file or use `stdbuf`/`script`
+   to avoid the pipe-buffer blocking condition.
+
+## Closeout state (post-D-079 veto)
+
+- **No `v0.5.1.0` git tag** (per veto).
+- **All 5 architectural commits remain on main** (cbf2b66..fab5df0).
+- **v3 prompts available via** `--prompts-version v3 --force-v3-smoke-stale`
+  (the architectural plumbing is permanent; the v3 prompts are
+  not the default and not blessed for production).
+- **Test suite 1440 passed** (was 1404 pre-v0.5.1).
+- **Forensic evidence on disk:** both Tier C/D `draft_6/` dirs +
+  both `draft_6.morning-abort/` archives at `$BERIL_ROOT/projects/
+  ibd_phage_targeting/talks/` and `.../functional_dark_matter/talks/`.
+- **Auto-memory:** `project_presentation_maker_v0_5_1.md` written
+  and promoted in `MEMORY.md` index.
