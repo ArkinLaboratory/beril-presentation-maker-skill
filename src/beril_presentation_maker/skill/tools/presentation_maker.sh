@@ -136,6 +136,28 @@
 #                            stage_adversarial_review still runs unless
 #                            --no-adversarial is also set.
 #   --help                   Show this message
+#
+# Subcommands:
+#   resume-cascade <draft-dir>
+#                            v0.7/D-090: re-run the review cascade
+#                            + standalone adversarial review against
+#                            an EXISTING draft directory, without
+#                            re-running upstream stages (plan / outline
+#                            / compose / merge / assemble). Use when
+#                            the cascade was interrupted (Ctrl-C /
+#                            shell close / signal) after merge/assemble
+#                            but before audit/review_cascade.json +
+#                            adversarial_review.* + presentation_
+#                            validation.json were written (the v0.6
+#                            fdm class). The cascade is idempotent;
+#                            safe to re-invoke. Writes pre+post
+#                            checkpoint markers (audit/cascade-
+#                            started.json + cascade-completed.json)
+#                            so future interruptions are diagnosable
+#                            from on-disk state alone.
+#                            Example:
+#                              $0 resume-cascade \\
+#                                $BERIL_ROOT/projects/.../talks/draft_6
 
 set -euo pipefail
 
@@ -204,6 +226,180 @@ usage() {
   awk '/^set -euo pipefail/{exit} NR>=4{print}' "$0"
   exit "$exit_code"
 }
+
+# --- resume-cascade subcommand (v0.7 / D-090) ---------------------------
+#
+# `presentation_maker.sh resume-cascade <draft-dir>` re-runs the review
+# cascade (M4b) + standalone adversarial review (if cascade didn't run
+# Tier 3) against an EXISTING draft directory, without re-running the
+# expensive upstream stages (plan / outline / compose / merge /
+# assemble). The intended use is post-mortem recovery from a v0.6 fdm-
+# class interruption: the slide_spec.json + .pptx exist on disk but
+# audit/review_cascade.json + adversarial_review.* + presentation_
+# validation.json are missing because the orchestrator was killed
+# (Ctrl-C / shell close / signal) after merge/assemble.
+#
+# Operates as a pre-arg-parse intercept that does its work inline and
+# exits — no project-id resolution, no smoke gate, no validation, no
+# function-definition load from the main flow. Safe to re-invoke; the
+# cascade is idempotent (overwrites its outputs).
+if [[ "${1:-}" == "resume-cascade" ]]; then
+  if [[ -z "${2:-}" ]]; then
+    echo "Error: resume-cascade requires a <draft-dir> argument" >&2
+    echo "Usage: $0 resume-cascade <draft-dir>" >&2
+    exit 2
+  fi
+  _RESUME_DRAFT_DIR="$2"
+  if [[ ! -d "$_RESUME_DRAFT_DIR" ]]; then
+    echo "Error: draft directory not found: $_RESUME_DRAFT_DIR" >&2
+    exit 1
+  fi
+  _RESUME_OUTDIR="$(cd "$_RESUME_DRAFT_DIR" && pwd -P)"
+  if [[ ! -f "$_RESUME_OUTDIR/working/slide_spec.json" ]]; then
+    echo "Error: $_RESUME_OUTDIR doesn't look like a presentation-maker" >&2
+    echo "       draft (missing working/slide_spec.json — was the" >&2
+    echo "       pipeline interrupted BEFORE merge/assemble? if so," >&2
+    echo "       resume-cascade can't recover; re-run the full" >&2
+    echo "       orchestrator)" >&2
+    exit 1
+  fi
+
+  # File-discovery (mirrors the main flow's SCRIPT_DIR / SKILL_DIR /
+  # TOOLS_DIR / PYTHON_BIN block but hoisted to run without
+  # project-id validation).
+  _RESUME_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  _RESUME_SKILL_DIR="$(cd "$_RESUME_SCRIPT_DIR/.." && pwd -P)"
+  _RESUME_TOOLS_DIR="$_RESUME_SKILL_DIR/tools"
+  _RESUME_AUDIT_DIR="$_RESUME_OUTDIR/audit"
+  _RESUME_ADVERSARIAL_JSON="$_RESUME_AUDIT_DIR/adversarial_review.json"
+  _RESUME_PYTHON_BIN=""
+  _RESUME_CLI_PATH="$(command -v beril-presentation-maker 2>/dev/null \
+                       || true)"
+  if [[ -n "$_RESUME_CLI_PATH" ]]; then
+    _RESUME_PYTHON_BIN="$(head -n 1 "$_RESUME_CLI_PATH" \
+                            | sed 's|^#!||' || true)"
+  fi
+  if [[ -z "$_RESUME_PYTHON_BIN" || ! -x "$_RESUME_PYTHON_BIN" ]]; then
+    _RESUME_PYTHON_BIN="$(command -v python3 || true)"
+  fi
+  if [[ -z "$_RESUME_PYTHON_BIN" ]]; then
+    echo "Error: no Python interpreter found for resume-cascade" >&2
+    exit 1
+  fi
+
+  mkdir -p "$_RESUME_AUDIT_DIR"
+
+  # Derive PROJECT_ID + BERIL_ROOT from the draft path. Pattern:
+  # <BERIL_ROOT>/projects/<PROJECT_ID>/talks/draft_N
+  # BERIL_ROOT is needed by beril-adversarial for the standalone
+  # invocation; if the path doesn't match the canonical layout the
+  # cascade still works (cascade only reads OUTDIR-relative paths)
+  # but adversarial will fail to resolve BERIL_ROOT and emit a
+  # warning instead of crashing.
+  _RESUME_PROJECT_ID="$(basename \
+                         "$(dirname "$(dirname "$_RESUME_OUTDIR")")")"
+  _RESUME_BERIL_ROOT="$(dirname \
+    "$(dirname "$(dirname "$(dirname "$_RESUME_OUTDIR")")")")"
+
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[resume-cascade] D-090 / v0.7 Tier A.2" >&2
+  echo "  project:   $_RESUME_PROJECT_ID" >&2
+  echo "  draft-dir: $_RESUME_OUTDIR" >&2
+  echo "──────────────────────────────────────────────────" >&2
+
+  # Pre-cascade checkpoint marker (D-090).
+  _RESUME_STARTED_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  _RESUME_SKILL_SHA="$(cd "$_RESUME_SKILL_DIR" && \
+    git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+  cat > "$_RESUME_AUDIT_DIR/cascade-started.json" <<EOF
+{
+  "schema_version": "cascade-checkpoint.v1",
+  "phase": "started",
+  "started_at_utc": "$_RESUME_STARTED_TS",
+  "skill_git_sha": "$_RESUME_SKILL_SHA",
+  "draft_dir": "$_RESUME_OUTDIR",
+  "stages": ["review_cascade.py", "stage_adversarial_review"],
+  "invoked_via": "resume-cascade"
+}
+EOF
+
+  # --- Run the cascade ---
+  echo "" >&2
+  echo "[resume-cascade] running review_cascade.py" >&2
+  "$_RESUME_PYTHON_BIN" "$_RESUME_TOOLS_DIR/review_cascade.py" \
+    "$_RESUME_OUTDIR" 2>&1 | sed 's/^/  /' >&2 || true
+
+  # --- Standalone adversarial review if cascade didn't run Tier 3 ---
+  # M4b Tier D de-dup: when cascade.tier3.status ∈ {pass, advisory, fail}
+  # the cascade already wrote adversarial_review.{json,md}; skip the
+  # standalone invocation. Otherwise (skipped / error / not-implemented),
+  # run beril-adversarial directly to produce the artifact.
+  _RESUME_CASCADE_JSON="$_RESUME_AUDIT_DIR/review_cascade.json"
+  _RESUME_TIER3_STATUS=""
+  if [[ -f "$_RESUME_CASCADE_JSON" ]]; then
+    _RESUME_TIER3_STATUS="$("$_RESUME_PYTHON_BIN" -c "
+import json, sys
+try:
+    d = json.load(open('$_RESUME_CASCADE_JSON'))
+    tiers = d.get('tiers') or []
+    print(tiers[2].get('status', '') if len(tiers) >= 3 else '')
+except Exception:
+    print('')
+" 2>/dev/null)"
+  fi
+  case "$_RESUME_TIER3_STATUS" in
+    pass|advisory|fail)
+      echo "" >&2
+      echo "[resume-cascade] cascade Tier 3 ran (status=$_RESUME_TIER3_STATUS);" >&2
+      echo "                 skipping standalone adversarial_review" >&2
+      ;;
+    *)
+      echo "" >&2
+      echo "[resume-cascade] running standalone adversarial_review" >&2
+      if command -v beril-adversarial >/dev/null 2>&1; then
+        if beril-adversarial --help 2>&1 \
+            | grep -qE "^[[:space:]]*review[[:space:]]"; then
+          # beril-adversarial needs BERIL_ROOT to locate .claude/skills/;
+          # pass via env (its CLI's --beril-root flag is equivalent).
+          BERIL_ROOT="$_RESUME_BERIL_ROOT" \
+            beril-adversarial review --type presentation \
+            "$_RESUME_OUTDIR" 2>&1 | sed 's/^/  /' >&2 || true
+        else
+          echo "  beril-adversarial 'review' subcommand not present;" >&2
+          echo "  install >=v0.6.0 to recover adversarial_review.*" >&2
+        fi
+      else
+        echo "  beril-adversarial not on PATH; cannot recover" >&2
+        echo "  adversarial_review.{json,md} — install:" >&2
+        echo "    pipx install --pip-args=\"--no-cache-dir\" \\" >&2
+        echo "      git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git" >&2
+      fi
+      ;;
+  esac
+
+  # Post-cascade checkpoint marker (D-090).
+  _RESUME_COMPLETED_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat > "$_RESUME_AUDIT_DIR/cascade-completed.json" <<EOF
+{
+  "schema_version": "cascade-checkpoint.v1",
+  "phase": "completed",
+  "started_at_utc": "$_RESUME_STARTED_TS",
+  "completed_at_utc": "$_RESUME_COMPLETED_TS",
+  "skill_git_sha": "$_RESUME_SKILL_SHA",
+  "draft_dir": "$_RESUME_OUTDIR",
+  "stages": ["review_cascade.py", "stage_adversarial_review"],
+  "invoked_via": "resume-cascade"
+}
+EOF
+
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[resume-cascade] complete" >&2
+  echo "  cascade artifacts written to: $_RESUME_AUDIT_DIR" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  exit 0
+fi
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -2473,12 +2669,54 @@ stage_review_cascade() {
   # cascade is therefore advisory: writes audit/review_cascade.{md,json}
   # with all three tiers marked 'not-implemented', total cost $0.
   # Always rc=0 (advisory; matches reconcile_deck.py + visual_qa.py).
+  #
+  # v0.7/D-090 (C1 from v0.6 fdm interruption diagnostic): write
+  # `audit/cascade-started.json` BEFORE the cascade runs and
+  # `audit/cascade-completed.json` AFTER it finishes. The "started
+  # without completed" delta is the interruption signature operators
+  # can use to distinguish "cascade never ran" from "cascade
+  # interrupted mid-flight" post-mortem. Both files capture
+  # timestamp + the git sha of the skill repo for traceability.
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 11.5/13] review_cascade (M4b Tier A scaffolding)" >&2
   echo "──────────────────────────────────────────────────" >&2
+
+  # Pre-cascade checkpoint marker (D-090).
+  local _started_marker="$AUDIT_DIR/cascade-started.json"
+  local _started_ts; _started_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local _skill_sha; _skill_sha="$(cd "$SKILL_DIR" && \
+    git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+  mkdir -p "$AUDIT_DIR"
+  cat > "$_started_marker" <<EOF
+{
+  "schema_version": "cascade-checkpoint.v1",
+  "phase": "started",
+  "started_at_utc": "$_started_ts",
+  "skill_git_sha": "$_skill_sha",
+  "draft_dir": "$OUTDIR",
+  "stages": ["review_cascade.py"]
+}
+EOF
+
+  # Run the cascade. Advisory rc=0; never gates the orchestrator.
   "$PYTHON_BIN" "$TOOLS_DIR/review_cascade.py" \
     "$OUTDIR" 2>&1 | sed 's/^/  /' >&2 || true
+
+  # Post-cascade checkpoint marker (D-090).
+  local _completed_marker="$AUDIT_DIR/cascade-completed.json"
+  local _completed_ts; _completed_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat > "$_completed_marker" <<EOF
+{
+  "schema_version": "cascade-checkpoint.v1",
+  "phase": "completed",
+  "started_at_utc": "$_started_ts",
+  "completed_at_utc": "$_completed_ts",
+  "skill_git_sha": "$_skill_sha",
+  "draft_dir": "$OUTDIR",
+  "stages": ["review_cascade.py"]
+}
+EOF
 }
 
 # ==============================================================================
