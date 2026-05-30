@@ -32,13 +32,27 @@ import image_gen_decision as igd  # noqa: E402
 def _stub(layout: str, **content_overrides) -> dict:
     """Build a minimal slide stub with the given layout. The 'content'
     dict is layout-specific in real fragments; tests only need fields
-    the decision layer reads (image_path on concept_illustration)."""
+    the decision layer reads (image_path on concept_illustration,
+    bullets on claim_evidence).
+
+    v0.7/D-088 Tier D.0: claim_evidence stubs default to 3 bullets so
+    they reach the judge_fn by default (the eligibility gate per
+    D-088 requires ≥3 bullets). Tests that want to exercise the
+    sub-3-bullet path pass bullets=[...] explicitly.
+    """
     content = {"title": "Test slide title."}
     if layout == "concept_illustration":
         # Default to slide_compose's TBD-placeholder convention.
         content.setdefault("image_path", "{TBD}")
         content.setdefault("image_prompt", "test prompt")
         content.setdefault("style", "scientific_illustration")
+    elif layout == "claim_evidence":
+        # Default to 3 bullets so D-088 eligibility passes by default.
+        content.setdefault("bullets", [
+            "First mechanism bullet.",
+            "Second mechanism bullet.",
+            "Third mechanism bullet.",
+        ])
     content.update(content_overrides)
     return {"layout": layout, "content": content}
 
@@ -681,3 +695,187 @@ class TestCLIWithLLMJudgeFlags:
         assert envelope["llm_judgment_used"] is False
         captured = capsys.readouterr()
         assert "claude CLI not on PATH" in captured.err
+
+
+# ===========================================================================
+# v0.7 Tier D.0 — claim_evidence eligibility gate + judge technical-specificity (D-088)
+# ===========================================================================
+
+class TestClaimEvidenceBulletGate:
+    """v0.7/D-088: claim_evidence is image-eligible ONLY when it has >=3
+    bullets. Slides below the floor short-circuit to emit=False BEFORE
+    the judge call (saves judge cost + prevents the judge from
+    approving generic art for short claims)."""
+
+    def test_claim_evidence_with_zero_bullets_rejected_before_judge(self):
+        """No bullets -> ineligible, judge not consulted."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "should not be reached")
+        slide = _stub("claim_evidence", bullets=[])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert d.emit is False
+        assert called["n"] == 0, "judge must not be consulted for <3-bullet claim_evidence"
+        assert "0 bullet" in d.reason
+        assert "D-088" in d.reason
+
+    def test_claim_evidence_with_two_bullets_rejected_before_judge(self):
+        """2 bullets -> ineligible (below the 3-bullet floor)."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "should not be reached")
+        slide = _stub("claim_evidence",
+                      bullets=["first claim.", "second claim."])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert d.emit is False
+        assert called["n"] == 0
+        assert "2 bullet" in d.reason
+
+    def test_claim_evidence_with_three_bullets_reaches_judge(self):
+        """3 bullets -> eligibility gate passes, judge consulted."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "three mechanisms map to a 3-panel diagram")
+        slide = _stub("claim_evidence",
+                      bullets=["mech A.", "mech B.", "mech C."])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert called["n"] == 1, "judge MUST be consulted for >=3-bullet claim_evidence"
+        assert d.emit is True
+        assert "LLM-judged" in d.reason
+
+    def test_claim_evidence_with_four_bullets_reaches_judge(self):
+        """4 bullets -> also passes the floor."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "four phases")
+        slide = _stub("claim_evidence",
+                      bullets=["a.", "b.", "c.", "d."])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert called["n"] == 1
+        assert d.emit is True
+
+    def test_claim_evidence_dict_bullets_counted_correctly(self):
+        """claim_evidence supports both str and dict bullet shapes;
+        the count helper handles both."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "ok")
+        slide = _stub("claim_evidence", bullets=[
+            {"claim": "first.", "evidence_pointer": "ref"},
+            {"claim": "second.", "evidence_pointer": "ref"},
+            {"claim": "third.", "evidence_pointer": "ref"},
+        ])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert called["n"] == 1
+        assert d.emit is True
+
+    def test_claim_evidence_empty_string_bullets_dont_count(self):
+        """Empty-string bullets don't count (3 entries but all empty
+        -> 0 distinct bullets -> below floor)."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "ok")
+        slide = _stub("claim_evidence", bullets=["", "  ", ""])
+        d = igd.decide(slide, tier="STRONG", mode="talk-30",
+                       judge_fn=stub_judge)
+        assert d.emit is False
+        assert called["n"] == 0
+        assert "0 bullet" in d.reason
+
+    def test_count_distinct_bullets_handles_missing_content(self):
+        """Defensive: missing content key -> 0 bullets, no crash."""
+        assert igd._count_distinct_bullets({"layout": "claim_evidence"}) == 0
+
+    def test_count_distinct_bullets_handles_non_dict_content(self):
+        """Defensive: content as string (malformed) -> 0 bullets, no crash."""
+        assert igd._count_distinct_bullets(
+            {"layout": "claim_evidence", "content": "broken"}) == 0
+
+    def test_count_distinct_bullets_handles_non_list_bullets(self):
+        """Defensive: bullets as string (malformed) -> 0 bullets."""
+        assert igd._count_distinct_bullets(
+            {"layout": "claim_evidence",
+             "content": {"bullets": "single string"}}) == 0
+
+    def test_floor_constant_pins_value(self):
+        """Pin the constant so a future change is intentional."""
+        assert igd._MIN_CLAIM_EVIDENCE_BULLETS_FOR_IMAGE == 3
+
+    def test_other_deferred_layouts_unaffected_by_claim_evidence_gate(self):
+        """The bullet-count gate fires ONLY on claim_evidence. Other
+        deferred layouts (workflow_diagram, two_column_compare,
+        big_idea, big_number, implications) still go straight to the
+        judge regardless of bullet count."""
+        called = {"n": 0}
+        def stub_judge(s, t, m):
+            called["n"] += 1
+            return (True, "judged")
+        d = igd.decide(
+            {"layout": "workflow_diagram", "content": {"title": "x"}},
+            tier="STRONG", mode="talk-30", judge_fn=stub_judge,
+        )
+        assert called["n"] == 1, (
+            "workflow_diagram must still reach the judge regardless "
+            "of bullets (the claim_evidence gate is layout-specific)"
+        )
+        assert d.emit is True
+
+
+class TestJudgeTechnicalSpecificityCriterion:
+    """v0.7/D-088: the judge prompt includes a technical-specificity
+    criterion (gatekeeps the v0.6 Tier-F D-084 finding 4 "generic /
+    too conceptual" failure mode)."""
+
+    def test_judge_prompt_includes_technical_specificity_section(self):
+        """The judge prompt MUST contain explicit technical-specificity
+        language so the LLM knows to apply the v0.7 criterion."""
+        prompt = igd._build_judge_prompt(
+            _stub("claim_evidence"), tier="STRONG", mode="talk-30",
+        )
+        assert "TECHNICAL-SPECIFICITY CRITERION" in prompt
+        assert "D-088" in prompt
+        assert "generic" in prompt.lower()
+        assert "abstract" in prompt.lower() or "metaphor" in prompt.lower()
+
+    def test_judge_prompt_names_v06_tier_f_motivation(self):
+        """The criterion cites the D-084 finding it addresses so the
+        load-bearing reason is explicit in the prompt itself."""
+        prompt = igd._build_judge_prompt(
+            _stub("big_idea"), tier="STRONG", mode="talk-30",
+        )
+        assert "D-084" in prompt or "Tier-F" in prompt or "v0.6" in prompt
+
+    def test_judge_prompt_directs_per_panel_naming_for_claim_evidence(self):
+        """For multi-bullet claim_evidence, the prompt explicitly asks
+        the judge to name what each panel would contain (the "three
+        mechanisms / four phases" pattern from D-088)."""
+        prompt = igd._build_judge_prompt(
+            _stub("claim_evidence",
+                  bullets=["mech A", "mech B", "mech C"]),
+            tier="STRONG", mode="talk-30",
+        )
+        assert ("three mechanisms" in prompt.lower()
+                or "four phases" in prompt.lower()
+                or "n categories" in prompt.lower())
+
+    def test_judge_prompt_response_format_unchanged(self):
+        """The YES/NO one-line response contract is preserved
+        (parser depends on this; D-088 only EXTENDS criteria, not
+        the response format)."""
+        prompt = igd._build_judge_prompt(
+            _stub("big_idea"), tier="STRONG", mode="talk-30",
+        )
+        assert "YES" in prompt and "NO" in prompt
+        assert "first word" in prompt.lower()
+        assert "uppercase" in prompt.lower()

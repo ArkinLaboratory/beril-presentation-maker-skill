@@ -162,6 +162,49 @@ class Decision:
 JudgeFn = Callable[[dict, str, str], tuple[bool, str]]
 
 
+# v0.7/D-088 Tier D.0: minimum bullet count for claim_evidence to be
+# image-eligible. Adam Tier-0 DQ4: "claim_evidence with ≥3 distinct
+# bullets" — the structure that maps naturally to multi-panel diagram
+# illustration (e.g. "three mechanisms", "four phases"). Below this,
+# the slide is a short claim that doesn't benefit from panel-diagram
+# AI illustration; skip the judge call (saves ~$0.005 per skipped
+# slide and prevents the judge from approving generic art for a 2-bullet
+# claim that the audience can read at a glance).
+_MIN_CLAIM_EVIDENCE_BULLETS_FOR_IMAGE: int = 3
+
+
+def _count_distinct_bullets(slide_stub: dict) -> int:
+    """Count usable bullets on a claim_evidence slide.
+
+    A bullet "counts" if it's a non-empty string (or a dict with a
+    non-empty `claim` / `text` field — claim_evidence supports both
+    shapes per slide_spec). Empty strings and structurally-invalid
+    entries don't count.
+
+    v0.7 ships count-only; the semantic "distinctness" check (are
+    these three bullets describing different concepts vs near-
+    duplicates?) is delegated to the LLM judge's technical-specificity
+    criterion per D-088. Pure mechanical count here keeps the pre-
+    filter cheap + predictable. v0.8+ may upgrade to a heuristic
+    distinctness check if v0.7 live-A/B surfaces false positives.
+    """
+    content = slide_stub.get("content", {})
+    if not isinstance(content, dict):
+        return 0
+    bullets = content.get("bullets", [])
+    if not isinstance(bullets, list):
+        return 0
+    count = 0
+    for b in bullets:
+        if isinstance(b, str) and b.strip():
+            count += 1
+        elif isinstance(b, dict):
+            text = b.get("claim") or b.get("text") or ""
+            if isinstance(text, str) and text.strip():
+                count += 1
+    return count
+
+
 def decide(
     slide_stub: dict,
     *,
@@ -236,6 +279,31 @@ def decide(
     # (emit=False with a reason indicating the judgment was skipped). Tests
     # pass stub callbacks; the bash orchestrator passes llm_judge.
     if layout in _DEFERRED_LLM_DECISION:
+        # v0.7/D-088 Tier D.0: pre-filter claim_evidence on bullet count.
+        # Per Adam Tier-0 DQ4: claim_evidence is eligible ONLY when it has
+        # ≥3 distinct bullets (a "three mechanisms" / "four phases" /
+        # "five categories" structure that maps naturally to a multi-
+        # panel diagram). Slides with <3 bullets are short claims that
+        # don't benefit from a panel-diagram-shaped AI illustration; skip
+        # the judge call to save its cost.
+        # "Distinct" is enforced by the judge's new technical-specificity
+        # criterion in _build_judge_prompt — a slide with 3 near-
+        # identical bullets fails the judge's distinctness bar. The
+        # mechanical pre-filter is just the count; the LLM handles the
+        # semantic distinctness call.
+        if layout == "claim_evidence":
+            bullet_count = _count_distinct_bullets(slide_stub)
+            if bullet_count < _MIN_CLAIM_EVIDENCE_BULLETS_FOR_IMAGE:
+                return Decision(
+                    slide_id=slide_id, layout=layout, emit=False,
+                    reason=(
+                        f"claim_evidence has {bullet_count} bullet(s); "
+                        f"per D-088 needs ≥{_MIN_CLAIM_EVIDENCE_BULLETS_FOR_IMAGE} "
+                        f"distinct bullets to be image-eligible (short "
+                        f"claims don't fit panel-diagram illustration)"
+                    ),
+                    substory_id=substory_id, position=position,
+                )
         if judge_fn is None:
             return Decision(
                 slide_id=slide_id, layout=layout, emit=False,
@@ -491,7 +559,21 @@ def _summarize_slide_for_judgment(slide_stub: dict) -> str:
 
 
 def _build_judge_prompt(slide_stub: dict, tier: str, mode: str) -> str:
-    """Construct the per-slide judgment prompt sent to claude -p."""
+    """Construct the per-slide judgment prompt sent to claude -p.
+
+    v0.7/D-088 Tier D.0 extension: adds a "technical-specificity"
+    criterion (the load-bearing change from v0.6 Tier-F D-084 finding
+    4 "AI images generic / too conceptual"). The judge MUST now think
+    of the eventual generated image's content and reject when that
+    content would necessarily be generic / abstract / metaphorical
+    rather than technically specific to the slide's substance.
+
+    For claim_evidence specifically (the new D-088 eligibility class),
+    the judge needs to envision a multi-panel diagram with labeled
+    technical elements (mechanism names, method outputs, statistics);
+    reject if no such concrete content is graspable from the slide's
+    bullets.
+    """
     layout = slide_stub.get("layout", "?")
     summary = _summarize_slide_for_judgment(slide_stub)
     return (
@@ -520,10 +602,26 @@ def _build_judge_prompt(slide_stub: dict, tier: str, mode: str) -> str:
         "    illustration cannot meaningfully represent it.\n"
         "  - When uncertain, prefer NO (illustrations cost ~$0.014 each "
         "    and over-illustration distracts).\n\n"
+        "TECHNICAL-SPECIFICITY CRITERION (v0.7 / D-088 — load-bearing):\n"
+        "  Approve ONLY if you can describe what concrete, technically-\n"
+        "  specific elements the illustration would contain — labeled\n"
+        "  diagram panels matching named mechanisms, schematic\n"
+        "  representations of the slide's specific methods, identifiable\n"
+        "  domain-specific iconography. Reject if the only image you\n"
+        "  can envision is generic / abstract / metaphorical without\n"
+        "  identifiable technical anchors (e.g. 'abstract microbiome\n"
+        "  art', 'generic mechanism arrows', 'stylized DNA helix').\n"
+        "  For claim_evidence slides with a 'three mechanisms' / 'four\n"
+        "  phases' / 'N categories' structure: approve only if you can\n"
+        "  name what each panel would visually contain in concrete\n"
+        "  technical terms tied to the slide's bullets.\n"
+        "  This criterion exists because v0.6 Tier-F (D-084 finding 4)\n"
+        "  surfaced that AI images were 'generic / too conceptual';\n"
+        "  the judge's job in v0.7+ is to gatekeep that failure mode.\n\n"
         "Respond with EXACTLY ONE LINE in this format:\n"
-        "  YES <one-clause reason>\n"
+        "  YES <one-clause reason naming the concrete technical elements>\n"
         "or\n"
-        "  NO <one-clause reason>\n"
+        "  NO <one-clause reason naming why it would be generic>\n"
         "Do not output anything else. Do not use markdown. The first word "
         "of your response must be YES or NO (uppercase)."
     )

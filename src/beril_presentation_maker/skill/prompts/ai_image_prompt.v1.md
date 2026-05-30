@@ -171,7 +171,14 @@ Field rules (validator-blocking):
    metaphor; narrative → metaphor okay).
 3. `{SUBSTORY_PATH}` — the substory's punchline. Image illustrates
    the punchline, not the slide title verbatim.
-4. **Channel B: read `USER_PROMPT_TEXT`** verbatim. Do not paraphrase
+4. **For `claim_evidence` slides (v0.7/D-088):** also read the
+   substory's **Critical analyses covered** block from
+   `{SUBSTORY_PATH}`. Extract method names, mechanism vocabulary,
+   and notebook-specific technical terms. These ANCHOR the image
+   prompt so the generated image carries identifiable technical
+   detail rather than generic visual hooks. See "Channel A
+   authoring discipline" §3-bis below for the load-bearing usage.
+5. **Channel B: read `USER_PROMPT_TEXT`** verbatim. Do not paraphrase
    the user's intent.
 
 ### Escape hatches
@@ -254,6 +261,60 @@ When `slide_compose.v1` flagged a `concept_illustration` slide:
      image, the negative_prompt suffices.
 4. **Author a negative_prompt** as described above.
 
+### 3-bis. Technical-specificity for claim_evidence slides (v0.7/D-088)
+
+When the slide layout is `claim_evidence` (rather than
+`concept_illustration`), the v0.7 image-gen decision layer
+admitted this slide because it has ≥3 distinct bullets that the
+LLM-judge predicted map to a multi-panel diagram (the "three
+mechanisms" / "four phases" / "N categories" pattern). The
+judge's approval was contingent on the existence of *concrete
+technical content* the image could anchor to. Your job in the
+prompt-authoring step is to FLAVOR the image_prompt with that
+technical content so the generated image carries identifiable
+technical detail rather than generic visual hooks (the v0.6
+Tier-F D-084 finding 4 failure mode this contract addresses).
+
+Concretely, for claim_evidence images:
+
+1. **Read the substory's `Critical analyses covered:` block.**
+   Extract method names (e.g., "MaAsLin2", "Spearman ρ"),
+   mechanism vocabulary (e.g., "bile-acid 7α-dehydroxylation",
+   "iron-acquisition siderophores"), notebook citations (e.g.,
+   "NB13"), and substantive numeric anchors (e.g., "n=485",
+   "FDR=0.05") that appear in the substory's analyses.
+2. **Decide which N bullets you're illustrating.** Typically the
+   claim_evidence's `bullets` field carries 3–5 items. Each one
+   should be a separate visual panel in the generated image.
+   The image_prompt should explicitly say "three panels: <panel
+   1 description with technical anchors>, <panel 2 ...>,
+   <panel 3 ...>" rather than a single composite scene.
+3. **Anchor each panel to specific technical content.** For
+   each panel, name what visual element corresponds to the
+   bullet's technical claim — a labeled mechanism schematic, a
+   named molecular structure, a method-step diagram, a
+   measurement icon with the named variable. Avoid generic
+   stand-ins ("a microbiome", "an abstract pathway") in favor of
+   identifiable concrete elements ("E. coli cell with labeled
+   yersiniabactin biosynthesis cluster", "bile-acid 7α-OH
+   stereo-center mechanism arrow").
+4. **Use the substory analysis vocabulary in the image_prompt
+   verbatim where possible.** If the analyses say "MaAsLin2",
+   the image_prompt should say "MaAsLin2-style effect-size plot"
+   rather than "a statistical bar chart". The audience reads
+   the labels; matching the slide's vocabulary keeps the image
+   on-message.
+5. **Negative_prompt still applies** — the visual elements you
+   name explicitly are permitted (per the T3 in-image-text
+   verdict); generic decoration is excluded by the existing
+   negative_prompt floor.
+
+The technical-specificity discipline above is the load-bearing
+companion to the v0.7 LLM-judge's technical-specificity
+criterion (per D-088). The judge approves only when it can
+envision concrete technical elements; the prompt-author's job
+is to deliver them.
+
 ## Channel B authoring discipline (user-initiated)
 
 When the user explicitly requested an image:
@@ -308,6 +369,17 @@ are still observed.
   slide that doesn't actually serve the substory. If the slide
   doesn't need an image, drop the slide — don't fill it with a
   decorative one.
+- **PA-8 (v0.7/D-088): claim_evidence image without technical
+  flavor.** A claim_evidence image_prompt that uses generic
+  visual stand-ins ("a microbiome", "an abstract pathway")
+  instead of the substory's specific mechanism / method /
+  measurement vocabulary. The v0.7 LLM-judge approved this
+  claim_evidence slide only because it had ≥3 distinct bullets
+  AND the judge could envision concrete technical content; your
+  prompt must deliver that concrete technical content. Always
+  tie the image to the substory's `Critical analyses covered:`
+  vocabulary (named methods, named mechanisms, named molecular
+  structures). See "Channel A authoring discipline" §3-bis.
 
 ## Self-review pass
 

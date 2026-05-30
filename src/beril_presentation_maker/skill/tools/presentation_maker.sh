@@ -73,6 +73,12 @@
 #                            (default: skipped per architecture R6).
 #   --max-image-cost-usd <n> Cumulative image-gen cap in USD (default: 0.50,
 #                            ~30 images at $0.014 / gemini-3-pro-image).
+#   --max-image-approvals <n> v0.7/D-088: per-deck approval count cap.
+#                            Default 4 (~2 big_idea opens + ~2 claim_evidence
+#                            multi-panel diagrams). Separate from the dollar
+#                            cap; whichever trips first short-circuits the
+#                            rest of the per-slide loop. Set to 0 to disable
+#                            (cost cap still bounds spend).
 #   --image-style <style>    Force style override across all images this run
 #                            (e.g., scientific_illustration / metaphor).
 #   --image-provider <p>     Force image-gen provider (M5b/D-062):
@@ -183,6 +189,18 @@ AUTO_APPROVE_IMAGES=0         # bypass per-slide approval gate (CI / power users
 IMAGE_ALLOW_EXPLORATORY=0     # allow concept_illustration on EXPLORATORY tier
 MAX_IMAGE_COST_USD="0.50"     # cumulative cap; default ~30 images at $0.014/each
 IMAGE_STYLE=""                # optional style override forwarded to ai_image_prompt
+# v0.7/D-088 Tier D.2: per-deck approval count cap. D-088 widens
+# eligibility (claim_evidence with ≥3 bullets becomes eligible alongside
+# concept_illustration's big_idea-only scope), so a cap on the count of
+# approvals — separate from the dollar cap — keeps decks from over-
+# illustrating. The cost cap (MAX_IMAGE_COST_USD) bounds spend; this
+# cap bounds visual density. Both gates fire independently; whichever
+# trips first short-circuits the rest of the per-slide loop.
+# Default 4 per D-088: ~2 big_idea opens (existing approvals) +
+# ~2 claim_evidence multi-panel diagrams across the substories. Tune
+# down for shorter talks; tune up if the operator deliberately wants
+# a more visual-heavy deck.
+MAX_IMAGE_APPROVALS=4
 
 # M5b/D-062: image-gen provider selection. Empty default = auto-resolve
 # via env-var precedence (GOOGLE_AI_STUDIO_API_KEY > CBORG_API_KEY).
@@ -423,6 +441,7 @@ while [[ $# -gt 0 ]]; do
     --auto-approve-images)   AUTO_APPROVE_IMAGES=1; shift ;;
     --image-allow-exploratory) IMAGE_ALLOW_EXPLORATORY=1; shift ;;
     --max-image-cost-usd)    MAX_IMAGE_COST_USD="$2"; shift 2 ;;
+    --max-image-approvals)   MAX_IMAGE_APPROVALS="$2"; shift 2 ;;
     --image-style)           IMAGE_STYLE="$2"; shift 2 ;;
     # M5b/D-062: image-gen provider selection (auto-resolved when empty)
     --image-provider)        IMAGE_PROVIDER="$2"; shift 2 ;;
@@ -2375,6 +2394,39 @@ stage_image_gen() {
         >/dev/null
       n_skipped=$((n_skipped + 1))
       continue
+    fi
+
+    # 3b-bis. v0.7/D-088 Tier D.2: approval-count cap. D-088 widens
+    # eligibility to claim_evidence with ≥3 bullets, so a count cap
+    # bounds visual density independently of the dollar cap. The
+    # check is per-deck (MAX_IMAGE_APPROVALS, default 4); MAX=0
+    # disables. Once the cap trips, break out of the per-slide
+    # loop entirely — no point evaluating further candidates we
+    # know we won't approve. Per-slide skip-records get written
+    # for the slides we never reached so the manifest stays
+    # complete.
+    if [[ "$MAX_IMAGE_APPROVALS" -gt 0
+          && "$n_approved" -ge "$MAX_IMAGE_APPROVALS" ]]; then
+      echo "    approval cap ($MAX_IMAGE_APPROVALS) reached;" >&2
+      echo "    recording skip for $slide_id + remaining flagged slides" >&2
+      "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-skipped \
+        --draft-dir "$OUTDIR" --slide-id "$slide_id" \
+        --reason "approval count cap (${MAX_IMAGE_APPROVALS}) reached per D-088 Tier D.2" \
+        >/dev/null
+      n_skipped=$((n_skipped + 1))
+      # Drain remaining slide_ids from the loop input so they each
+      # get a skip record. The loop's `while IFS= read -r` consumes
+      # the rest one-by-one; we record-skipped each before
+      # `continue` so the manifest reflects every flagged slide.
+      while IFS= read -r remaining_slide_id; do
+        [[ -z "$remaining_slide_id" ]] && continue
+        "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" record-skipped \
+          --draft-dir "$OUTDIR" --slide-id "$remaining_slide_id" \
+          --reason "approval count cap (${MAX_IMAGE_APPROVALS}) reached per D-088 Tier D.2" \
+          >/dev/null
+        n_skipped=$((n_skipped + 1))
+      done
+      break
     fi
 
     # 3c. Resolve the slide's stub path (the fragment is the stub for v0.3.3).
