@@ -102,7 +102,14 @@ def test_happy_path_no_findings(tmp_path):
 def test_missing_data_figure_for_curated_analysis(tmp_path):
     """Substory cites an analysis whose NB-id matches a curated
     figure, but the substory has 0 data_figure slides. D-080
-    violation."""
+    violation; D-085 also fires (per-figure detail).
+
+    v0.7/D-085: when a substory has 0 relevant figures used, BOTH
+    the v0.6 finding (per-substory summary) AND the v0.7 per-figure
+    finding(s) fire. The v0.6 finding is the worst-case summary;
+    the v0.7 findings name each specific unused figure (here,
+    just 1).
+    """
     curated = _write_curated(tmp_path, ["figures/NB13_phage.png"])
     substories = _write_substories(
         tmp_path, [("S1", ["NB13_phagefoundry.ipynb"])])
@@ -112,13 +119,23 @@ def test_missing_data_figure_for_curated_analysis(tmp_path):
                title="claim", bullets=["evidence"]),
     ])
     report = fp.check_figure_provenance(spec, substories, curated)
-    assert len(report.findings) == 1
-    f = report.findings[0]
-    assert f.kind == "missing_data_figure_for_curated_analysis"
+    # v0.6 + v0.7: 1 missing_data_figure (per-substory) + 1
+    # relevant_figure_not_used (per-figure; 1 unused figure).
+    v06 = [f for f in report.findings
+           if f.kind == "missing_data_figure_for_curated_analysis"]
+    v07 = [f for f in report.findings
+           if f.kind == "relevant_figure_not_used"]
+    assert len(v06) == 1
+    assert len(v07) == 1
+    f = v06[0]
     assert f.severity == "soft-warning"
     assert f.substory_id == "S1"
     assert "NB13_phage.png" in f.message
-    # Utilization rate is 0/1 substories covered
+    # v0.7 finding also names the figure + substory
+    assert v07[0].substory_id == "S1"
+    assert "NB13_phage.png" in v07[0].message
+    # Utilization rate is 0/1 substories covered (v0.6 metric
+    # unchanged in v0.7).
     assert report.utilization_rate == 0.0
 
 
@@ -224,7 +241,11 @@ def test_parse_substory_analyses_extracts_notebooks(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_utilization_rate_partial_coverage(tmp_path):
-    """3 substories with curated figures; 2 use them → 2/3 rate."""
+    """3 substories with curated figures; 2 use them → 2/3 rate.
+
+    v0.7/D-085: S3 emits both findings (1 v0.6 + 1 v0.7); S1 + S2
+    emit none (each used their relevant figure). Utilization rate
+    is the v0.6 per-substory metric — unchanged in v0.7."""
     curated = _write_curated(tmp_path, [
         "figures/NB13_phage.png",
         "figures/NB14_phageome.png",
@@ -245,10 +266,19 @@ def test_utilization_rate_partial_coverage(tmp_path):
                title="x", bullets=["x"]),
     ])
     report = fp.check_figure_provenance(spec, substories, curated)
-    # rate = 2 (covered) / 3 (with curated available)
+    # rate = 2 (covered) / 3 (with curated available) — v0.6 metric
     assert report.utilization_rate == pytest.approx(2 / 3)
-    assert len(report.findings) == 1
-    assert report.findings[0].substory_id == "S3"
+    # v0.6 finding: 1 (S3 has 0 data_figures)
+    v06 = [f for f in report.findings
+           if f.kind == "missing_data_figure_for_curated_analysis"]
+    assert len(v06) == 1
+    assert v06[0].substory_id == "S3"
+    # v0.7 finding: 1 (S3's unused NB15 figure)
+    v07 = [f for f in report.findings
+           if f.kind == "relevant_figure_not_used"]
+    assert len(v07) == 1
+    assert v07[0].substory_id == "S3"
+    assert "NB15_cocktail.png" in v07[0].message
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +366,14 @@ def test_cli_writes_json_to_audit_dir_by_default(tmp_path):
     assert out_path.is_file()
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == fp.SCHEMA_VERSION
-    assert len(payload["findings"]) == 1
+    # v0.7/D-085: S1 has 1 unused relevant figure → 2 findings
+    # (1 v0.6 missing_data_figure + 1 v0.7 relevant_figure_not_used).
+    assert len(payload["findings"]) == 2
+    kinds = sorted(f["kind"] for f in payload["findings"])
+    assert kinds == [
+        "missing_data_figure_for_curated_analysis",
+        "relevant_figure_not_used",
+    ]
 
 
 def test_cli_text_format_to_stdout(tmp_path, capsys):
@@ -448,3 +485,225 @@ def test_review_cascade_figure_provenance_absent_returns_empty(tmp_path):
     from beril_presentation_maker.skill.tools import review_cascade as rc
     findings = rc._read_figure_provenance(tmp_path)
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# v0.7 Tier A.1 — relevant_figure_not_used per-figure finding (D-085)
+# ---------------------------------------------------------------------------
+#
+# Per D-085: figures are paid for at curator time; use EVERY relevant
+# curated figure, not "at least one" per substory. The new finding
+# fires once per UNUSED relevant figure (the v0.6 finding fires once
+# per substory with 0 figures used). Both are P1 soft-warnings.
+
+def test_relevant_figure_not_used_fires_per_unused_figure(tmp_path):
+    """The v0.7/D-085 failure mode Adam Tier-F flagged: substory has
+    2 curated figures matching its analyses, uses 1, leaves 1
+    clustered out. v0.6's contract (≥1 data_figure when curated
+    exists) was satisfied → v0.6 finding does NOT fire. v0.7's
+    contract (use EVERY relevant figure) catches the unused one."""
+    curated = _write_curated(tmp_path, [
+        "figures/NB13_phage.png",
+        "figures/NB14_phageome.png",
+    ])
+    substories = _write_substories(tmp_path, [
+        # S1 cites BOTH NB13 + NB14 (both curated figures relevant)
+        ("S1", ["NB13_phagefoundry.ipynb",
+                "NB14_endogenous_phageome.ipynb"]),
+    ])
+    # S1 uses ONLY NB13 — NB14 is left as a claim_evidence bullet.
+    spec = _write_spec(tmp_path, [
+        _slide("data_figure", substory_id="S1",
+               figure="figures/NB13_phage.png",
+               title="phage cocktail design", caption="x"),
+        _slide("claim_evidence", substory_id="S1",
+               title="phageome dynamics",
+               bullets=["figure NB14 shows the longitudinal trend"]),
+    ])
+    report = fp.check_figure_provenance(spec, substories, curated)
+
+    # v0.6 finding does NOT fire (S1 has ≥1 relevant data_figure;
+    # the v0.6 contract was satisfied).
+    v06 = [f for f in report.findings
+           if f.kind == "missing_data_figure_for_curated_analysis"]
+    assert v06 == [], (
+        "v0.6 finding should NOT fire when substory uses ≥1 "
+        "relevant figure; the v0.7 finding handles partial-coverage")
+
+    # v0.7 finding fires for NB14 (the unused one) but NOT NB13.
+    v07 = [f for f in report.findings
+           if f.kind == "relevant_figure_not_used"]
+    assert len(v07) == 1
+    f = v07[0]
+    assert f.substory_id == "S1"
+    assert f.severity == "soft-warning"
+    assert "NB14_phageome.png" in f.message
+    # Adam-direction pin: the message cites the no-budget framing
+    assert "budget" in f.message.lower(), (
+        "v0.7 finding message should mention the no-figure-budget "
+        "framing from D-085 so operators understand why the rule "
+        "differs from v0.6's 'at least one' contract")
+    # Evidence captures the partial-coverage state
+    assert f.evidence["unused_figure"] == "figures/NB14_phageome.png"
+    assert f.evidence["unused_figure_nb_id"] == "NB14"
+    assert f.evidence["n_relevant_figures_total"] == 2
+    assert f.evidence["n_relevant_figures_used"] == 1
+    assert f.evidence["relevant_figures_used"] == ["figures/NB13_phage.png"]
+
+    # Utilization rate (v0.6 metric) still reports 1.0 because the
+    # v0.6 per-substory rate counts substories-covered, and S1 IS
+    # covered (it has at least one data_figure using a curated
+    # figure). The v0.7 finding is the per-figure refinement that
+    # caches the missing nuance.
+    assert report.utilization_rate == 1.0
+
+
+def test_relevant_figure_not_used_fires_per_figure_when_multiple_unused(tmp_path):
+    """Substory with 3 relevant figures, 1 used → 2 separate
+    relevant_figure_not_used findings (one per unused figure).
+    Each names a different figure."""
+    curated = _write_curated(tmp_path, [
+        "figures/NB13_phage.png",
+        "figures/NB14_phageome.png",
+        "figures/NB15_cocktail.png",
+    ])
+    substories = _write_substories(tmp_path, [
+        ("S1", ["NB13_phagefoundry.ipynb",
+                "NB14_endogenous_phageome.ipynb",
+                "NB15_patient_cocktail.ipynb"]),
+    ])
+    spec = _write_spec(tmp_path, [
+        _slide("data_figure", substory_id="S1",
+               figure="figures/NB13_phage.png", title="x", caption="x"),
+    ])
+    report = fp.check_figure_provenance(spec, substories, curated)
+    # v0.6: no finding (1 relevant figure used → "covered")
+    v06 = [f for f in report.findings
+           if f.kind == "missing_data_figure_for_curated_analysis"]
+    assert v06 == []
+    # v0.7: 2 findings (NB14 + NB15 unused)
+    v07 = [f for f in report.findings
+           if f.kind == "relevant_figure_not_used"]
+    assert len(v07) == 2
+    unused_figures = sorted(f.evidence["unused_figure"] for f in v07)
+    assert unused_figures == [
+        "figures/NB14_phageome.png",
+        "figures/NB15_cocktail.png",
+    ]
+
+
+def test_relevant_figure_not_used_silent_when_all_relevant_used(tmp_path):
+    """Substory with 2 relevant figures, both used → no v0.6 OR v0.7
+    finding. The happy-path for D-085."""
+    curated = _write_curated(tmp_path, [
+        "figures/NB13_phage.png",
+        "figures/NB14_phageome.png",
+    ])
+    substories = _write_substories(tmp_path, [
+        ("S1", ["NB13_phagefoundry.ipynb",
+                "NB14_endogenous_phageome.ipynb"]),
+    ])
+    spec = _write_spec(tmp_path, [
+        _slide("data_figure", substory_id="S1",
+               figure="figures/NB13_phage.png", title="x", caption="x"),
+        _slide("data_figure", substory_id="S1",
+               figure="figures/NB14_phageome.png", title="x", caption="x"),
+    ])
+    report = fp.check_figure_provenance(spec, substories, curated)
+    assert report.findings == []
+
+
+def test_relevant_figure_not_used_silent_when_no_relevant(tmp_path):
+    """Substory whose analyses don't match any curated figure
+    → no v0.7 finding (same gating as v0.6: rule fires only when
+    a relevant figure exists)."""
+    curated = _write_curated(tmp_path, ["figures/NB13_phage.png"])
+    substories = _write_substories(
+        tmp_path, [("S1", ["NB99_unrelated.ipynb"])])
+    spec = _write_spec(tmp_path, [
+        _slide("claim_evidence", substory_id="S1",
+               title="claim", bullets=["evidence"]),
+    ])
+    report = fp.check_figure_provenance(spec, substories, curated)
+    assert report.findings == []
+
+
+def test_relevant_figure_not_used_lifts_in_cascade(tmp_path):
+    """review_cascade._read_figure_provenance must lift the v0.7
+    finding with kind=figure_provenance:relevant_figure_not_used at
+    P1 (the cascade reader is generic over finding kinds; this test
+    pins the wiring for the new kind explicitly)."""
+    from beril_presentation_maker.skill.tools import review_cascade as rc
+
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    payload = {
+        "schema_version": fp.SCHEMA_VERSION,
+        "findings": [
+            {
+                "kind": "relevant_figure_not_used",
+                "severity": "soft-warning",
+                "substory_id": "S2",
+                "slide_id": None,
+                "message": ("substory S2 cites NB14 but no data_figure "
+                            "uses figures/NB14_phageome.png; no figure "
+                            "budget per D-085"),
+                "evidence": {
+                    "unused_figure": "figures/NB14_phageome.png",
+                    "unused_figure_nb_id": "NB14",
+                    "n_relevant_figures_total": 2,
+                    "n_relevant_figures_used": 1,
+                },
+            },
+        ],
+    }
+    (audit_dir / "figure_provenance.json").write_text(
+        json.dumps(payload), encoding="utf-8")
+
+    findings = rc._read_figure_provenance(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.kind == "figure_provenance:relevant_figure_not_used"
+    assert f.severity == "P1"
+    assert f.tier == "tier1"
+    assert "S2" in f.detail
+    # Evidence carries through
+    assert f.evidence.get("substory_id") == "S2"
+    assert f.evidence.get("figprov_kind") == "relevant_figure_not_used"
+    assert f.evidence.get("unused_figure") == "figures/NB14_phageome.png"
+
+
+def test_v0_6_and_v0_7_findings_coexist_when_zero_used(tmp_path):
+    """When a substory has 2 relevant figures and uses 0, the v0.6
+    finding (per-substory summary) AND TWO v0.7 findings (one per
+    unused figure) all fire together. Each finding kind carries its
+    own structural meaning; readers can filter by kind."""
+    curated = _write_curated(tmp_path, [
+        "figures/NB13_phage.png",
+        "figures/NB14_phageome.png",
+    ])
+    substories = _write_substories(tmp_path, [
+        ("S1", ["NB13_phagefoundry.ipynb",
+                "NB14_endogenous_phageome.ipynb"]),
+    ])
+    # S1 uses NEITHER figure.
+    spec = _write_spec(tmp_path, [
+        _slide("claim_evidence", substory_id="S1",
+               title="combined claim", bullets=["mention NB13", "mention NB14"]),
+    ])
+    report = fp.check_figure_provenance(spec, substories, curated)
+    v06 = [f for f in report.findings
+           if f.kind == "missing_data_figure_for_curated_analysis"]
+    v07 = [f for f in report.findings
+           if f.kind == "relevant_figure_not_used"]
+    assert len(v06) == 1, "v0.6 per-substory summary should fire (0 used)"
+    assert len(v07) == 2, "v0.7 per-figure detail should fire for EACH unused"
+    # Findings are complementary, not redundant — they carry different
+    # detail granularity.
+    assert v06[0].substory_id == "S1"
+    assert {f.evidence["unused_figure"] for f in v07} == {
+        "figures/NB13_phage.png",
+        "figures/NB14_phageome.png",
+    }
+    # Utilization rate stays at 0/1 (S1 not covered).
+    assert report.utilization_rate == 0.0

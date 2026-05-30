@@ -1,18 +1,38 @@
 #!/usr/bin/env python3
-"""check_figure_provenance.py — v0.6 figure-utilization validator
-(D-080 + D-081).
+"""check_figure_provenance.py — figure-utilization validator
+(v0.6 D-080 + D-081; v0.7 D-085 per-figure refinement).
 
 Adam-rubric pin from D-079: *"every arc should back a claim or
 finding by relevant figure if possible."* The v0.5.1 Tier-E read
-surfaced figure under-use as a load-bearing weakness; v0.6 ships
-the contract.
+surfaced figure under-use as a load-bearing weakness; v0.6 shipped
+the contract; v0.7 D-085 refines it per Adam Tier-0 DQ1: figures
+are paid for at curator time, so use EVERY relevant curated
+figure, not "at least one" per substory.
 
-Per-substory contract (D-080):
+Per-substory contract (v0.6 D-080, retained):
 
   IF a curated figure exists for any of a substory's critical
   analyses, THEN at least one R-slide in that substory MUST be a
   `data_figure` slide whose `content.figure` field matches the
-  curated path.
+  curated path. (Emits `missing_data_figure_for_curated_analysis`
+  when the substory has 0 data_figures using any relevant figure.)
+
+Per-figure contract (v0.7 D-085, refines D-080):
+
+  For EACH curated figure whose NB-id matches a substory's
+  analyses, the substory MUST have a `data_figure` slide using
+  that specific figure. There is no figure budget — figures are
+  pre-paid at curator time. (Emits `relevant_figure_not_used`
+  once per unused relevant figure per substory.)
+
+The two findings are complementary, not redundant:
+
+- The v0.6 finding fires when the substory composed 0 relevant
+  data_figures (regression check; the worst-case failure mode).
+- The v0.7 finding fires for each specific unused relevant figure
+  (catches the v0.6 ibd Tier-F failure mode: substory composed 1
+  data_figure for 1 of 2 relevant figures, leaving the second
+  figure clustered out of the deck even though it was relevant).
 
 Curated-figure ↔ analysis matching (D-081 strict counting):
 
@@ -37,7 +57,10 @@ A "data_figure used" iff (D-081):
 Output:
 
 - Standalone CLI: writes `audit/figure_provenance.json`
-  (`figure-provenance.v1`) by default.
+  (`figure-provenance.v1`) by default. v0.7 keeps the schema
+  version at v1 — the new finding kind is additive; existing
+  consumers see findings with an unfamiliar `kind` field but
+  the report shape is unchanged.
 - Cascade integration: `review_cascade.py::_read_figure_provenance`
   reads the audit JSON (M5b/D-073 read-if-present pattern;
   cascade never invokes this script) and lifts each finding into
@@ -46,18 +69,26 @@ Output:
 
 Findings (kinds):
 
-- `missing_data_figure_for_curated_analysis` — substory has ≥1
-  analysis whose NB-id matches a curated figure, but the substory
-  has 0 data_figure slides using any curated figure.
+- `missing_data_figure_for_curated_analysis` — v0.6/D-080:
+  substory has ≥1 analysis whose NB-id matches a curated figure,
+  but the substory has 0 data_figure slides using any curated
+  figure. The worst-case rate (no relevant figures used at all).
+- `relevant_figure_not_used` — v0.7/D-085: a specific curated
+  figure whose NB-id matches a substory's analyses is not
+  composed as a data_figure slide in that substory. Fires once
+  per unused relevant figure (so a substory with 2 relevant
+  figures + 1 used emits 1 finding for the unused one).
 - `data_figure_path_not_in_curated_inventory` — a `data_figure`
   slide cites a `figure:` path that's not in the curated
   inventory (drift / fabrication).
 
 Test coverage: `tests/unit/test_check_figure_provenance.py`.
 
-Refs: D-080 (the contract); D-081 (strict counting rule);
-D-072 (the register-discipline precedent this mirrors);
-`prompts/slide_compose.v3.1_overlay.md` (the prompt-side companion).
+Refs: D-080 (the original v0.6 contract); D-081 (strict counting
+rule); D-085 (v0.7 per-figure refinement); D-072 (the register-
+discipline precedent this mirrors); `prompts/slide_compose.v3.2_overlay.md`
+(the v0.7 prompt-side companion); `prompts/slide_compose.v3.1_overlay.md`
+(the v0.6 prompt-side companion).
 """
 from __future__ import annotations
 
@@ -299,6 +330,13 @@ def check_figure_provenance(
     findings: list[FigureFinding] = []
 
     # Per-substory check.
+    # v0.6/D-080 finding (`missing_data_figure_for_curated_analysis`)
+    # fires once per substory when 0 relevant figures are used.
+    # v0.7/D-085 finding (`relevant_figure_not_used`) fires once per
+    # specific unused relevant figure per substory. The two are
+    # complementary: the v0.6 finding catches the worst-case
+    # (no figures used at all); the v0.7 finding catches partial
+    # coverage (1 of 2 relevant figures used).
     n_substories_with_curated = 0
     n_substories_covered = 0
     for sid, notebooks in analyses_per_substory.items():
@@ -316,13 +354,16 @@ def check_figure_provenance(
         n_substories_with_curated += 1
         # Count data_figure slides in THIS substory that point at
         # any of the relevant curated figures.
-        used = []
+        used_figures = set()
         for slide_idx, slide_sid, fig in df_slides:
             if slide_sid != sid:
                 continue
             if fig in relevant_curated:
-                used.append((slide_idx, fig))
-        if not used:
+                used_figures.add(fig)
+        unused_figures = relevant_curated - used_figures
+
+        # v0.6/D-080 finding — fires when NO relevant figures used.
+        if not used_figures:
             n_curated = len(relevant_curated)
             findings.append(FigureFinding(
                 kind="missing_data_figure_for_curated_analysis",
@@ -346,6 +387,38 @@ def check_figure_provenance(
             ))
         else:
             n_substories_covered += 1
+
+        # v0.7/D-085 finding — fires once per specific unused
+        # relevant figure (whether or not the v0.6 finding also
+        # fired; in the "0 used" case BOTH findings fire, the v0.6
+        # one giving the per-substory summary and the v0.7 ones
+        # naming each specific unused figure).
+        for unused_fig in sorted(unused_figures):
+            findings.append(FigureFinding(
+                kind="relevant_figure_not_used",
+                severity="soft-warning",
+                substory_id=sid,
+                slide_id=None,
+                message=(
+                    f"substory {sid} cites analyses matching "
+                    f"curated figure {unused_fig!r} (NB-id "
+                    f"{_nb_id(Path(unused_fig).name)}), but no "
+                    f"data_figure slide in substory {sid} uses "
+                    f"this figure — per D-085, every curated "
+                    f"figure relevant to a substory's analyses "
+                    f"should be composed as a data_figure slide "
+                    f"in that substory. Figures are pre-paid at "
+                    f"curator time; there is no figure budget."),
+                evidence={
+                    "unused_figure": unused_fig,
+                    "unused_figure_nb_id": _nb_id(
+                        Path(unused_fig).name),
+                    "substory_analyses_notebooks": notebooks,
+                    "n_relevant_figures_total": len(relevant_curated),
+                    "n_relevant_figures_used": len(used_figures),
+                    "relevant_figures_used": sorted(used_figures),
+                },
+            ))
 
     # Per-data_figure-slide check: figure path must be in curated
     # inventory (D-081 strict counting + per-prompt "Curated-figure-
