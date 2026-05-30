@@ -394,16 +394,16 @@ def test_build_concat_variadic_three_sources(tmp_path):
 
 def test_run_smoke_rejects_invalid_version(tmp_path):
     """run_smoke must validate the version arg and raise ValueError
-    on a string that's not 'v3' or 'v3.1'."""
+    on a string that's not 'v3', 'v3.1', or 'v3.2'."""
     import pytest as _pytest
-    with _pytest.raises(ValueError, match="v3.*v3.1"):
+    with _pytest.raises(ValueError, match="v3.*v3.1.*v3.2"):
         smoke.run_smoke(fragment_only=True, keep_tmpdir=False,
                         version="v4")
 
 
 def test_cli_version_flag_documented():
-    """`--help` lists the --version flag + both choices so operators
-    discover the v3.1 path."""
+    """`--help` lists the --version flag + all three choices so
+    operators discover the v3.1/v3.2 paths."""
     import subprocess as _sp
     result = _sp.run(
         [sys.executable, str(smoke.SKILL_REPO_ROOT / "src"
@@ -415,30 +415,118 @@ def test_cli_version_flag_documented():
     help_text = result.stdout + result.stderr
     assert "--version" in help_text
     assert "v3.1" in help_text
+    assert "v3.2" in help_text
     # Default explicitly named so operators know what they get
     assert "default" in help_text.lower()
 
 
-def test_cli_default_version_is_v3_1():
-    """Per D-080 + Tier C resolution: default --version is v3.1
-    (validates the full v0.6 stack; a v3.1 smoke implicitly covers
-    v3). Pin so a future default change is intentional."""
-    import argparse
-    # Extract the ap definition; introspect the default. Easiest:
-    # call main with --check-recent (no LLM) and assert no
-    # exception; default applies but check_recent_pass doesn't use
-    # version, so we need a different probe.
-    #
-    # Direct probe: ask argparse what the default is.
-    ap = argparse.ArgumentParser()
-    # Mirror the actual flag definition; the value of ap.set_defaults
-    # is what we want. We instead extract from source — same
-    # source-pin pattern as the orchestrator tests.
+def test_cli_default_version_is_v3_2():
+    """Per v0.7 Tier F: default --version is v3.2 (validates the
+    full v0.7 stack; a v3.2 smoke implicitly covers v3 + v3.1).
+    Pin so a future default change is intentional."""
     src = (smoke.SKILL_REPO_ROOT / "src" / "beril_presentation_maker"
            / "skill" / "tools" / "smoke_v3_prompt.py").read_text(
                encoding="utf-8")
-    # The default v3.1 must appear in the --version flag definition.
-    assert 'choices=["v3", "v3.1"], default="v3.1"' in src, (
-        "expected `choices=[\"v3\", \"v3.1\"], default=\"v3.1\"` in "
-        "smoke source; if this changed intentionally, update the "
-        "test + V0_6 docs.")
+    # The default v3.2 must appear in the --version flag definition.
+    assert ('choices=["v3", "v3.1", "v3.2"], default="v3.2"' in src), (
+        "expected `choices=[\"v3\", \"v3.1\", \"v3.2\"], "
+        "default=\"v3.2\"` in smoke source; if this changed "
+        "intentionally, update the test + V0_7 docs.")
+
+
+
+# ===========================================================================
+# v0.7 Tier F — --version v3.2 stacked concat (D-085 / D-086 / D-087)
+# ===========================================================================
+#
+# v3.2 stacks the figure-relevance + deck_close + arc-transition
+# overlays on the v3.1 chain (for slide_compose) and adds the
+# transition_from_prior overlay on the v3 chain (for substory_design).
+# A v3.2 smoke implicitly validates the v3 + v3.1 chains too.
+
+
+def test_v3_2_overlay_files_exist_on_disk():
+    """v3.2 overlays for BOTH slide_compose and substory_design
+    must ship with the skill (per Tier A + Tier B)."""
+    assert smoke.SLIDE_OVERLAY_V3_2.is_file(), (
+        f"slide_compose v3.2 overlay missing at "
+        f"{smoke.SLIDE_OVERLAY_V3_2}")
+    assert smoke.SUBSTORY_OVERLAY_V3_2.is_file(), (
+        f"substory_design v3.2 overlay missing at "
+        f"{smoke.SUBSTORY_OVERLAY_V3_2}")
+
+
+def test_compute_prompt_sha_includes_v3_2_overlays(tmp_path, monkeypatch):
+    """compute_prompt_sha must include both v3.2 overlay files in
+    the sha computation — so a v3-only or v3.1-only pass record
+    can't satisfy a v3.2 gate (the sha would differ)."""
+    # Read the actual sha; should be deterministic.
+    sha = smoke.compute_prompt_sha()
+    assert len(sha) == 64  # SHA-256 hex
+    # Now mutate the v3.2 slide overlay and re-compute; sha must
+    # change. Use a monkeypatch that points the constant at a
+    # different file.
+    fake_overlay = tmp_path / "fake_slide_v3_2_overlay.md"
+    fake_overlay.write_text("UNIQUE_TEST_MARKER_v3_2_slide\n",
+                             encoding="utf-8")
+    monkeypatch.setattr(smoke, "SLIDE_OVERLAY_V3_2", fake_overlay)
+    new_sha = smoke.compute_prompt_sha()
+    assert new_sha != sha, (
+        "compute_prompt_sha must change when v3.2 slide overlay "
+        "content changes; a v3.1 pass record would otherwise "
+        "satisfy a v3.2 gate")
+
+
+def test_compute_prompt_sha_includes_v3_2_substory_overlay(
+        tmp_path, monkeypatch):
+    """Same as above for the v3.2 substory_design overlay."""
+    sha = smoke.compute_prompt_sha()
+    fake_overlay = tmp_path / "fake_substory_v3_2_overlay.md"
+    fake_overlay.write_text("UNIQUE_TEST_MARKER_v3_2_substory\n",
+                             encoding="utf-8")
+    monkeypatch.setattr(smoke, "SUBSTORY_OVERLAY_V3_2", fake_overlay)
+    new_sha = smoke.compute_prompt_sha()
+    assert new_sha != sha, (
+        "compute_prompt_sha must change when v3.2 substory overlay "
+        "content changes")
+
+
+def test_run_smoke_v3_2_validation_passes(tmp_path, monkeypatch):
+    """run_smoke must accept version='v3.2' (the v0.7 default)
+    without raising ValueError on the validation step.
+
+    We don't actually invoke the LLM here. Strategy: monkeypatch
+    FIXTURE_DIR to a non-existent path so the fixture-check raises
+    FileNotFoundError BEFORE the smoke would invoke claude. If
+    version validation rejected 'v3.2', ValueError would raise
+    FIRST (before the fixture check) and the FileNotFoundError
+    would never fire — that's what this test pins."""
+    import pytest as _pytest
+    monkeypatch.setattr(smoke, "FIXTURE_DIR", tmp_path / "no_such_fixture")
+    with _pytest.raises(FileNotFoundError, match="fixture missing"):
+        smoke.run_smoke(fragment_only=True, keep_tmpdir=False,
+                        version="v3.2")
+
+
+def test_build_concat_variadic_four_sources(tmp_path):
+    """build_concat with 4 sources = v3.2 slide_compose chain.
+    Bytes in concat order: v2, v3-overlay, v3.1-overlay, v3.2-overlay."""
+    a = tmp_path / "a.md"
+    a.write_text("==A==\n", encoding="utf-8")
+    b = tmp_path / "b.md"
+    b.write_text("==B==\n", encoding="utf-8")
+    c = tmp_path / "c.md"
+    c.write_text("==C==\n", encoding="utf-8")
+    d = tmp_path / "d.md"
+    d.write_text("==D==\n", encoding="utf-8")
+    out = tmp_path / "out.md"
+    smoke.build_concat(a, b, c, d, out=out)
+    body = out.read_text(encoding="utf-8")
+    a_pos = body.find("==A==")
+    b_pos = body.find("==B==")
+    c_pos = body.find("==C==")
+    d_pos = body.find("==D==")
+    assert a_pos >= 0 and b_pos >= 0 and c_pos >= 0 and d_pos >= 0
+    assert a_pos < b_pos < c_pos < d_pos, (
+        f"4-source build_concat order wrong: a={a_pos}, b={b_pos}, "
+        f"c={c_pos}, d={d_pos}; expected strictly ascending")

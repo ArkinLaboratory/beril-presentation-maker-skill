@@ -105,23 +105,48 @@ SUBSTORY_OVERLAY = PROMPTS_DIR / "substory_design.v3_overlay.md"
 # overlays.
 SLIDE_OVERLAY_V3_1 = PROMPTS_DIR / "slide_compose.v3.1_overlay.md"
 
+# v0.7/D-085 + D-086 + D-087: v3.2 overlays stack on the v3.1 chain
+# (slide_compose) + on the v3 chain (substory_design). v3.2 introduces
+# three contracts:
+#   D-085 — figure-relevance rule (no budgeting; use every relevant
+#           curated figure)
+#   D-086 — deck_close composer authoring rule (consumed in v3.2
+#           overlay; the deck_close slide itself is produced by
+#           the dedicated deck_close.v1.md agent in Tier C.3)
+#   D-087 — `Transition from prior:` field emission in
+#           substory_design (cross-substory arc-bridge data)
+# Including both v3.2 overlays in the prompt-sha forces a re-smoke
+# on any v3.2 invocation when a v3 or v3.1 pass record exists —
+# matching the v0.6 sha-invalidation discipline.
+SLIDE_OVERLAY_V3_2 = PROMPTS_DIR / "slide_compose.v3.2_overlay.md"
+SUBSTORY_OVERLAY_V3_2 = PROMPTS_DIR / "substory_design.v3.2_overlay.md"
+
 
 # ---------------------------------------------------------------------------
 # Prompt-body sha
 # ---------------------------------------------------------------------------
 
 def compute_prompt_sha() -> str:
-    """SHA-256 of the four prompt source files (v1/v2 + v3 overlay
-    for both substory_design and slide_compose). Captures the exact
-    prompt content the smoke validated against. Used by the
-    orchestrator's gate-check to detect prompt drift after a pass.
+    """SHA-256 of all prompt source files (v1/v2 + v3 overlay + v3.1
+    overlay + v3.2 overlays for both substory_design and
+    slide_compose). Captures the exact prompt content the smoke
+    validated against. Used by the orchestrator's gate-check to
+    detect prompt drift after a pass.
 
-    Order: substory_v1, substory_overlay, slide_v2, slide_overlay
-    (alphabetical for stability).
+    Order: substory_v1, substory_overlay (v3), substory_overlay_v3.2,
+    slide_v2, slide_overlay (v3), slide_overlay_v3.1,
+    slide_overlay_v3.2 — alphabetical-by-stage + within-stage-by-
+    version for stability.
+
+    v0.7/D-085 et al.: including v3.2 overlays in the sha forces a
+    re-smoke when a v3 or v3.1 pass record exists and a v3.2
+    invocation is attempted. Same sha-invalidation discipline as
+    v0.6 used for v3.1.
     """
     h = hashlib.sha256()
-    for path in (SUBSTORY_V1, SUBSTORY_OVERLAY,
-                 SLIDE_V2, SLIDE_OVERLAY, SLIDE_OVERLAY_V3_1):
+    for path in (SUBSTORY_V1, SUBSTORY_OVERLAY, SUBSTORY_OVERLAY_V3_2,
+                 SLIDE_V2, SLIDE_OVERLAY, SLIDE_OVERLAY_V3_1,
+                 SLIDE_OVERLAY_V3_2):
         if not path.is_file():
             raise FileNotFoundError(
                 f"prompt source missing: {path}; cannot compute sha")
@@ -328,7 +353,7 @@ def invoke_claude(system_prompt_path: Path, user_prompt: str,
 
 def run_smoke(fragment_only: bool, keep_tmpdir: bool,
               timeout_s: int = 600,
-              version: str = "v3.1",
+              version: str = "v3.2",
               ) -> tuple[bool, list[FragmentIssue], dict]:
     """Run the smoke. Returns (passed, issues, evidence-dict).
 
@@ -339,15 +364,17 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
     keep_tmpdir=True leaves the per-run temp dir around for
     inspection on failure.
 
-    version: "v3" or "v3.1". Selects the stacked concat the smoke
-    composes against. Default "v3.1" — v3.1 stacks on v3, so a
-    v3.1 smoke implicitly validates the v3 chain too. Use "v3"
-    explicitly when you want to validate ONLY the v3 contract
-    (e.g., regression-checking after a v3-only prompt edit).
+    version: "v3", "v3.1", or "v3.2". Selects the stacked concat
+    the smoke composes against. Default "v3.2" (v0.7 — validates
+    the full v3.2 stack: slide_compose v2 + v3 + v3.1 + v3.2
+    overlays; substory_design v1 + v3 + v3.2 overlays). Use "v3"
+    or "v3.1" explicitly to regression-check earlier contracts in
+    isolation.
     """
-    if version not in ("v3", "v3.1"):
+    if version not in ("v3", "v3.1", "v3.2"):
         raise ValueError(
-            f"version must be 'v3' or 'v3.1'; got: {version!r}")
+            f"version must be 'v3', 'v3.1', or 'v3.2'; "
+            f"got: {version!r}")
     if not FIXTURE_DIR.is_dir():
         raise FileNotFoundError(
             f"smoke fixture missing at {FIXTURE_DIR}")
@@ -364,17 +391,32 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
         # `build_v3_concat_prompts` does at orchestrator start).
         # v3:   cat v2.md + v3_overlay.md
         # v3.1: cat v2.md + v3_overlay.md + v3.1_overlay.md
+        # v3.2: cat v2.md + v3_overlay.md + v3.1_overlay.md
+        #             + v3.2_overlay.md (slide_compose)
+        #       cat v1.md + v3_overlay.md + v3.2_overlay.md (substory_design)
         concat_dir = tmpdir / "_prompts"
         concat_dir.mkdir()
         slide_concat = concat_dir / f"slide_compose.{version}.concat.md"
-        substory_concat = concat_dir / "substory_design.v3.concat.md"
         slide_sources = [SLIDE_V2, SLIDE_OVERLAY]
-        if version == "v3.1":
+        if version in ("v3.1", "v3.2"):
             slide_sources.append(SLIDE_OVERLAY_V3_1)
+        if version == "v3.2":
+            slide_sources.append(SLIDE_OVERLAY_V3_2)
         build_concat(*slide_sources, out=slide_concat)
-        # substory_design is unchanged in v3.1 — both versions use
-        # the same v1 + v3 overlay stack.
-        build_concat(SUBSTORY_V1, SUBSTORY_OVERLAY, out=substory_concat)
+        # substory_design: v3 + v3.1 share the v1+v3 chain; v3.2
+        # stacks the new substory overlay (D-087's transition_from_prior
+        # field). Distinct concat path for v3.2 so any future v3.x
+        # substory_design changes get isolated concat files.
+        substory_concat_name = (
+            "substory_design.v3.2.concat.md"
+            if version == "v3.2"
+            else "substory_design.v3.concat.md"
+        )
+        substory_concat = concat_dir / substory_concat_name
+        substory_sources = [SUBSTORY_V1, SUBSTORY_OVERLAY]
+        if version == "v3.2":
+            substory_sources.append(SUBSTORY_OVERLAY_V3_2)
+        build_concat(*substory_sources, out=substory_concat)
 
         # Stage the fixture into tmpdir. The smoke composes against
         # a copy so the fixture stays read-only.
@@ -569,12 +611,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Gate-check only; do NOT invoke the LLM. Returns rc=0 "
              "if a fresh pass record exists, rc=1 otherwise.")
     ap.add_argument(
-        "--version", choices=["v3", "v3.1"], default="v3.1",
-        help="Which stacked concat to compose against. v3 = cat "
-             "v2.md + v3_overlay.md. v3.1 = cat v2.md + "
-             "v3_overlay.md + v3.1_overlay.md (default; validates "
-             "the full v0.6 chain — a v3.1 smoke implicitly "
-             "covers v3 too).")
+        "--version", choices=["v3", "v3.1", "v3.2"], default="v3.2",
+        help="Which stacked concat to compose against. "
+             "v3 = cat v2.md + v3_overlay.md. "
+             "v3.1 = cat v2.md + v3_overlay.md + v3.1_overlay.md. "
+             "v3.2 (default; v0.7) = cat v2.md + v3_overlay.md + "
+             "v3.1_overlay.md + v3.2_overlay.md (slide_compose); "
+             "+ cat substory_design v1 + v3_overlay + v3.2_overlay "
+             "(substory_design). A v3.2 smoke implicitly validates "
+             "the v3 + v3.1 chains too.")
     args = ap.parse_args(argv)
 
     if args.check_recent:
