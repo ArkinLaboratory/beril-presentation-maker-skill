@@ -32,6 +32,7 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
                   substory_design_v3_concat_path: str = "",
                   slide_compose_v3_1_concat_path: str = "",
                   slide_compose_v3_2_concat_path: str = "",
+                  substory_design_v3_2_concat_path: str = "",
                   ) -> tuple[int, str, str]:
     """Invoke a dispatcher helper (`_substory_design_prompt_path` or
     `_slide_compose_prompt_path`) with the given PROMPTS_VERSION + a
@@ -47,6 +48,8 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
     same shell-var names so the dispatcher echoes them back.
 
     v0.7/D-085 adds SLIDE_COMPOSE_V3_2_CONCAT_PATH for the v3.2 stack.
+    v0.7/D-087 Tier B adds SUBSTORY_DESIGN_V3_2_CONCAT_PATH for the
+    v3.2 substory_design stack (which adds transition_from_prior).
     """
     text = ORCH_SH.read_text(encoding="utf-8")
     # Pull the two helper definitions.
@@ -66,6 +69,7 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
         SUBSTORY_DESIGN_V3_CONCAT_PATH={substory_design_v3_concat_path!r}
         SLIDE_COMPOSE_V3_1_CONCAT_PATH={slide_compose_v3_1_concat_path!r}
         SLIDE_COMPOSE_V3_2_CONCAT_PATH={slide_compose_v3_2_concat_path!r}
+        SUBSTORY_DESIGN_V3_2_CONCAT_PATH={substory_design_v3_2_concat_path!r}
         {helpers_src}
         {helper}
         """)
@@ -91,25 +95,29 @@ def _run_dispatch(prompts_version: str, prompts_dir: Path,
     # v0.6/D-080: v3.1 reuses the v3 substory_design concat
     # (substory_design isn't changed in v3.1).
     ("v3.1", "substory_design.v3.concat.md"),
-    # v0.7/D-085 Tier A: v3.2 also reuses v3 substory_design until
-    # Tier B (D-087) ships the substory_design.v3.2_overlay (the
-    # `transition_from_prior` field emitter). Until then, v3.2
-    # invocations get the v3 substory_design concat.
-    ("v3.2", "substory_design.v3.concat.md"),
+    # v0.7/D-087 Tier B: v3.2 has its OWN substory_design concat
+    # (cat v1 + v3_overlay + v3.2_overlay). The v3.2 overlay adds
+    # the transition_from_prior field per D-087 — the cleaner-
+    # data-flow path Adam chose at Tier-0 DQ3 over a slide_compose-
+    # only solution.
+    ("v3.2", "substory_design.v3.2.concat.md"),
 ])
 def test_substory_design_dispatcher(version, expected_filename, tmp_path):
     """Per D-074: v1/v2 → v1 substory_design (identical contract);
-    v3 → concat(v1 + v3_overlay) per D-078; v3.1 + v3.2 (Tier A) also
-    point at the v3 concat (substory_design unchanged in v3.1 per
-    D-080; v3.2 Tier B will extend per D-087). Per D-075/D-078 the
-    v3 path comes from a build-time shell var; the test simulates
-    that by setting SUBSTORY_DESIGN_V3_CONCAT_PATH to the expected
-    path."""
+    v3 → concat(v1 + v3_overlay) per D-078; v3.1 reuses v3 concat
+    (substory_design unchanged in v3.1 per D-080); v3.2 has its own
+    concat with the v3.2 overlay stacked per D-087 Tier B. Per
+    D-075/D-078 the v3 path comes from a build-time shell var; the
+    test simulates that by setting SUBSTORY_DESIGN_V3_CONCAT_PATH
+    (v3/v3.1) or SUBSTORY_DESIGN_V3_2_CONCAT_PATH (v3.2)."""
     v3_path = (f"{tmp_path}/{expected_filename}"
-               if version in ("v3", "v3.1", "v3.2") else "")
+               if version in ("v3", "v3.1") else "")
+    v3_2_path = (f"{tmp_path}/{expected_filename}"
+                 if version == "v3.2" else "")
     rc, stdout, stderr = _run_dispatch(
         version, tmp_path, "_substory_design_prompt_path",
-        substory_design_v3_concat_path=v3_path)
+        substory_design_v3_concat_path=v3_path,
+        substory_design_v3_2_concat_path=v3_2_path)
     assert rc == 0, f"helper failed: {stderr}"
     assert stdout == f"{tmp_path}/{expected_filename}"
 
@@ -975,7 +983,12 @@ def test_build_v3_concat_creates_v3_2_concat_when_v3_2(tmp_path):
     the v3.2 overlay onto the v3.1 chain and write a SEPARATE concat
     file (slide_compose.v3.2.concat.md). The v3 + v3.1 concats are
     also written (they're the substrate); all three shell vars get
-    populated."""
+    populated.
+
+    v0.7/D-087 Tier B: v3.2 substory_design overlay is also required
+    (the substory_design.v3.2_overlay.md fixture must be staged or
+    the orchestrator's substory v3.2 concat-build will fail with
+    ENOENT)."""
     text = ORCH_SH.read_text(encoding="utf-8")
     fn_src = _extract_function(text, "build_v3_concat_prompts")
     prompts_dir = tmp_path / "prompts"
@@ -996,6 +1009,10 @@ def test_build_v3_concat_creates_v3_2_concat_when_v3_2(tmp_path):
     (prompts_dir / "substory_design.v3_overlay.md").write_text(
         "==V3-SUBSTORY-OVERLAY-MARKER==\nv3 substory overlay\n",
         encoding="utf-8")
+    # v0.7/D-087 Tier B: substory v3.2 overlay required for v3.2 build
+    (prompts_dir / "substory_design.v3.2_overlay.md").write_text(
+        "==V3-2-SUBSTORY-OVERLAY-MARKER==\nv3.2 transition_from_prior\n",
+        encoding="utf-8")
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
 
@@ -1008,6 +1025,7 @@ def test_build_v3_concat_creates_v3_2_concat_when_v3_2(tmp_path):
         SUBSTORY_DESIGN_V3_CONCAT_PATH=""
         SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
         SLIDE_COMPOSE_V3_2_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_2_CONCAT_PATH=""
         {fn_src}
         build_v3_concat_prompts
         echo "RET_V3=$SLIDE_COMPOSE_V3_CONCAT_PATH"
@@ -1137,3 +1155,188 @@ def test_help_documents_v3_2():
     # should at least describe v3.2 in the same documentation block
     # as v3 + v3.1.
     assert "v3.2" in help_text and "v3.1" in help_text and "v3" in help_text
+
+
+# ---------------------------------------------------------------------------
+# v0.7 Tier B — substory_design v3.2 overlay (D-087)
+# ---------------------------------------------------------------------------
+#
+# v3.2 substory_design adds the transition_from_prior field emission
+# per Adam Tier-0 DQ3 (cleaner data flow over slide_compose-only).
+# Stacked concat: v1 body + v3 overlay + v3.2 overlay. The v3.2
+# substory_design concat is DISTINCT from the v3 substory_design
+# concat (different prompt-body sha) so v3 + v3.1 invocations keep
+# their existing concat while v3.2 gets the new one.
+
+SUBSTORY_V3_2_OVERLAY_PATH = (REPO_ROOT / "src" / "beril_presentation_maker"
+                              / "skill" / "prompts"
+                              / "substory_design.v3.2_overlay.md")
+
+
+def test_substory_design_v3_2_overlay_file_present_on_disk():
+    """Belt + suspenders: the substory_design v3.2 overlay file
+    ships with the repo (so build_v3_concat_prompts can stack it
+    on v3 at orchestrator start)."""
+    assert SUBSTORY_V3_2_OVERLAY_PATH.is_file(), (
+        f"substory_design v3.2 overlay missing at "
+        f"{SUBSTORY_V3_2_OVERLAY_PATH}")
+    body = SUBSTORY_V3_2_OVERLAY_PATH.read_text(encoding="utf-8")
+    # Self-identifies as v3.2
+    assert "v3.2" in body.lower()
+    # References stacking on v3 overlay (the concat-order contract)
+    assert "v3_overlay" in body, (
+        "substory v3.2 overlay should reference v3_overlay (the v3 "
+        "chain it stacks on)")
+    # References v1 (the body it ultimately concats with)
+    assert "v1" in body
+    # The D-087 contract is cited
+    assert "D-087" in body, (
+        "substory v3.2 overlay should cite D-087 (the decision the "
+        "transition_from_prior field implements)")
+    # The new field name is documented (load-bearing per D-087)
+    assert "transition_from_prior" in body.lower() or \
+           "transition from prior" in body.lower(), (
+        "substory v3.2 overlay must document the "
+        "`transition_from_prior` / `Transition from prior:` field "
+        "(the v3.2 contract")
+
+
+def test_build_v3_concat_creates_v3_2_substory_concat_when_v3_2(tmp_path):
+    """When PROMPTS_VERSION=v3.2, build_v3_concat_prompts must stack
+    the substory_design v3.2 overlay onto the v3 substory_design
+    chain and write a SEPARATE concat file
+    (substory_design.v3.2.concat.md). The v3 substory_design concat
+    is also written (it's the substrate); both shell vars get
+    populated."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    fn_src = _extract_function(text, "build_v3_concat_prompts")
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    # Stage all source files build_v3_concat_prompts reads.
+    (prompts_dir / "slide_compose.v2.md").write_text(
+        "==V2-SLIDE-MARKER==\nv2 content\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3_overlay.md").write_text(
+        "==V3-SLIDE-OVERLAY-MARKER==\nv3 overlay\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.1_overlay.md").write_text(
+        "==V3-1-SLIDE-OVERLAY-MARKER==\nv3.1 overlay\n",
+        encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.2_overlay.md").write_text(
+        "==V3-2-SLIDE-OVERLAY-MARKER==\nv3.2 overlay\n",
+        encoding="utf-8")
+    (prompts_dir / "substory_design.v1.md").write_text(
+        "==V1-SUBSTORY-MARKER==\nv1 substory\n", encoding="utf-8")
+    (prompts_dir / "substory_design.v3_overlay.md").write_text(
+        "==V3-SUBSTORY-OVERLAY-MARKER==\nv3 substory overlay\n",
+        encoding="utf-8")
+    (prompts_dir / "substory_design.v3.2_overlay.md").write_text(
+        "==V3-2-SUBSTORY-OVERLAY-MARKER==\nv3.2 substory overlay (transition_from_prior)\n",
+        encoding="utf-8")
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+
+    wrapper = textwrap.dedent(f"""\
+        set -euo pipefail
+        PROMPTS_VERSION=v3.2
+        PROMPTS_DIR={prompts_dir!s}
+        AUDIT_DIR={audit_dir!s}
+        SLIDE_COMPOSE_V3_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_2_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_2_CONCAT_PATH=""
+        {fn_src}
+        build_v3_concat_prompts
+        echo "RET_SUB_V3=$SUBSTORY_DESIGN_V3_CONCAT_PATH"
+        echo "RET_SUB_V3_2=$SUBSTORY_DESIGN_V3_2_CONCAT_PATH"
+        """)
+    result = subprocess.run(["bash", "-c", wrapper],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+    # v3 substory concat exists (substrate)
+    sub_v3_concat = audit_dir / "_prompts" / "substory_design.v3.concat.md"
+    assert sub_v3_concat.is_file()
+    # v3.2 substory concat exists (stacked on top)
+    sub_v3_2_concat = audit_dir / "_prompts" / "substory_design.v3.2.concat.md"
+    assert sub_v3_2_concat.is_file()
+    # v3.2 concat contains markers in order:
+    # v1 + v3-overlay + v3.2-overlay
+    body = sub_v3_2_concat.read_text(encoding="utf-8")
+    v1_pos = body.find("==V1-SUBSTORY-MARKER==")
+    v3_pos = body.find("==V3-SUBSTORY-OVERLAY-MARKER==")
+    v3_2_pos = body.find("==V3-2-SUBSTORY-OVERLAY-MARKER==")
+    assert all(p >= 0 for p in (v1_pos, v3_pos, v3_2_pos))
+    assert v1_pos < v3_pos < v3_2_pos, (
+        f"substory v3.2 concat order wrong: v1={v1_pos}, "
+        f"v3-overlay={v3_pos}, v3.2-overlay={v3_2_pos}; expected "
+        f"strictly ascending")
+    # Both shell vars populated
+    assert f"RET_SUB_V3={sub_v3_concat}" in result.stdout
+    assert f"RET_SUB_V3_2={sub_v3_2_concat}" in result.stdout
+
+
+def test_build_v3_concat_v3_1_path_does_NOT_create_v3_2_substory_concat(
+    tmp_path,
+):
+    """Running with PROMPTS_VERSION=v3.1 must produce ONLY the v3
+    substory concat, NOT the v3.2 one. The v3.2 substory concat
+    path stays empty."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    fn_src = _extract_function(text, "build_v3_concat_prompts")
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "slide_compose.v2.md").write_text("v2\n",
+                                                     encoding="utf-8")
+    (prompts_dir / "slide_compose.v3_overlay.md").write_text(
+        "v3 overlay\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.1_overlay.md").write_text(
+        "v3.1 overlay\n", encoding="utf-8")
+    (prompts_dir / "slide_compose.v3.2_overlay.md").write_text(
+        "v3.2 overlay\n", encoding="utf-8")
+    (prompts_dir / "substory_design.v1.md").write_text("v1\n",
+                                                       encoding="utf-8")
+    (prompts_dir / "substory_design.v3_overlay.md").write_text(
+        "v3 sub overlay\n", encoding="utf-8")
+    (prompts_dir / "substory_design.v3.2_overlay.md").write_text(
+        "v3.2 sub overlay\n", encoding="utf-8")
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+
+    wrapper = textwrap.dedent(f"""\
+        set -euo pipefail
+        PROMPTS_VERSION=v3.1
+        PROMPTS_DIR={prompts_dir!s}
+        AUDIT_DIR={audit_dir!s}
+        SLIDE_COMPOSE_V3_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
+        SLIDE_COMPOSE_V3_2_CONCAT_PATH=""
+        SUBSTORY_DESIGN_V3_2_CONCAT_PATH=""
+        {fn_src}
+        build_v3_concat_prompts
+        echo "RET_SUB_V3_2=$SUBSTORY_DESIGN_V3_2_CONCAT_PATH"
+        """)
+    result = subprocess.run(["bash", "-c", wrapper],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    # v3.2 substory concat must NOT exist (only built when PROMPTS_VERSION=v3.2)
+    sub_v3_2_concat = audit_dir / "_prompts" / "substory_design.v3.2.concat.md"
+    assert not sub_v3_2_concat.exists()
+    # Shell var stays empty
+    for line in result.stdout.splitlines():
+        if line.startswith("RET_SUB_V3_2="):
+            assert line == "RET_SUB_V3_2=", (
+                f"v3.1 path leaked v3.2 substory concat var: {line!r}")
+
+
+def test_v3_2_pre_flight_requires_substory_v3_2_overlay():
+    """The pre-flight prompt-existence loop must include
+    `substory_design.v3.2_overlay.md` so missing-overlay fails
+    early instead of at orchestrator start with a cryptic ENOENT."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    pattern = r'^for f in (.+?); do$'
+    matches = re.findall(pattern, text, re.MULTILINE)
+    loop_line = next((m for m in matches if "substory_design" in m), "")
+    assert "substory_design.v3.2_overlay.md" in loop_line, (
+        f"pre-flight loop missing substory_design.v3.2_overlay.md; "
+        f"got: {loop_line}")

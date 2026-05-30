@@ -107,8 +107,8 @@
 #                                   D-080; no budget, use every relevant
 #                                   curated figure] + D-086 deck_close layout
 #                                   + D-087 transition_from_prior field on
-#                                   substory_design; slides + substory_design
-#                                   BOTH carry v3.2 overlays).
+#                                   substory_design — Tier B; slides +
+#                                   substory_design BOTH carry v3.2 overlays).
 #                            Independent axis from --architecture-pipeline.
 #                            Default v2 per D-074 until v0.5/v0.6 cut-over
 #                            A/B passes.
@@ -526,7 +526,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md slide_compose.v3.1_overlay.md slide_compose.v3.2_overlay.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md substory_design.v3.2_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md slide_compose.v3.1_overlay.md slide_compose.v3.2_overlay.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -608,23 +608,24 @@ SUBSTORY_DESIGN_V3_CONCAT_PATH=""
 SLIDE_COMPOSE_V3_1_CONCAT_PATH=""
 # v0.7/D-085: v3.2 stacks figure-relevance refinement + deck_close +
 # arc-transition USAGE overlays on the v3.1 chain (cat v2 +
-# v3_overlay + v3.1_overlay + v3.2_overlay). The substory_design
-# v3.2 overlay (D-087's transition_from_prior emission) lands in
-# Tier B; until then, v3.2 reuses v3 substory_design concat. The
-# composer can still USE the field when present (D-087 instructs
-# composer to read it); the field just won't be populated until
-# Tier B's substory_design v3.2 overlay ships.
+# v3_overlay + v3.1_overlay + v3.2_overlay).
 SLIDE_COMPOSE_V3_2_CONCAT_PATH=""
+# v0.7/D-087 Tier B: substory_design v3.2 overlay adds the
+# `transition_from_prior` field emission. v3.2 substory_design
+# concat = cat v1 + v3_overlay + v3.2_overlay (stacked on the v3
+# substory_design contract).
+SUBSTORY_DESIGN_V3_2_CONCAT_PATH=""
 
 _substory_design_prompt_path() {
   # v0.6/D-080: v3.1 reuses the v3 substory_design concat
   # (substory_design isn't changed in v3.1 — only slide_compose
   # gets the figure-utilization overlay).
-  # v0.7/D-085 Tier A: v3.2 also reuses v3 substory_design until
-  # Tier B (D-087) ships the substory_design v3.2 overlay.
+  # v0.7/D-087 Tier B: v3.2 has its OWN substory_design concat
+  # (the v3.2 overlay adds transition_from_prior emission).
   case "$PROMPTS_VERSION" in
-    v1|v2)         echo "$PROMPTS_DIR/substory_design.v1.md" ;;
-    v3|v3.1|v3.2)  echo "$SUBSTORY_DESIGN_V3_CONCAT_PATH" ;;
+    v1|v2)    echo "$PROMPTS_DIR/substory_design.v1.md" ;;
+    v3|v3.1)  echo "$SUBSTORY_DESIGN_V3_CONCAT_PATH" ;;
+    v3.2)     echo "$SUBSTORY_DESIGN_V3_2_CONCAT_PATH" ;;
   esac
 }
 _slide_compose_prompt_path() {
@@ -697,16 +698,25 @@ build_v3_concat_prompts() {
       > "$SLIDE_COMPOSE_V3_2_CONCAT_PATH"
   fi
 
-  # --- substory_design concat (same for v3 + v3.1 + v3.2 Tier A) ---
+  # --- substory_design v3 concat (always built; v3.2 stacks on this) ---
   # v0.5.1 Tier A.2 / D-078: v1 body + v3 overlay; overlay last so
   # its v3 Output-format-supersede statement wins on the conflicting
   # template section.
-  # Tier B / D-087 will add a substory_design v3.2 overlay; until
-  # then v3.2 invocations reuse this v3 concat.
   local substory_v1="$PROMPTS_DIR/substory_design.v1.md"
   local substory_overlay="$PROMPTS_DIR/substory_design.v3_overlay.md"
   SUBSTORY_DESIGN_V3_CONCAT_PATH="$concat_dir/substory_design.v3.concat.md"
   cat "$substory_v1" "$substory_overlay" > "$SUBSTORY_DESIGN_V3_CONCAT_PATH"
+
+  # --- substory_design v3.2 concat (stacked overlay; built only when needed) ---
+  # v0.7/D-087 Tier B: v3.2 substory_design adds transition_from_prior
+  # emission. Stacked order: v1 body + v3 overlay + v3.2 overlay
+  # (overlay-last attention rule per D-075).
+  if [[ "$PROMPTS_VERSION" == "v3.2" ]]; then
+    local substory_v3_2_overlay="$PROMPTS_DIR/substory_design.v3.2_overlay.md"
+    SUBSTORY_DESIGN_V3_2_CONCAT_PATH="$concat_dir/substory_design.v3.2.concat.md"
+    cat "$substory_v1" "$substory_overlay" "$substory_v3_2_overlay" \
+      > "$SUBSTORY_DESIGN_V3_2_CONCAT_PATH"
+  fi
 
   echo "[orchestrator] v$PROMPTS_VERSION concat prompts:" >&2
   case "$PROMPTS_VERSION" in
@@ -714,7 +724,10 @@ build_v3_concat_prompts() {
     v3.1) echo "  slide_compose:   $SLIDE_COMPOSE_V3_1_CONCAT_PATH" >&2 ;;
     *)    echo "  slide_compose:   $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2 ;;
   esac
-  echo "  substory_design: $SUBSTORY_DESIGN_V3_CONCAT_PATH" >&2
+  case "$PROMPTS_VERSION" in
+    v3.2) echo "  substory_design: $SUBSTORY_DESIGN_V3_2_CONCAT_PATH" >&2 ;;
+    *)    echo "  substory_design: $SUBSTORY_DESIGN_V3_CONCAT_PATH" >&2 ;;
+  esac
 }
 
 # v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
