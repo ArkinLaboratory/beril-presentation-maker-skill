@@ -304,3 +304,141 @@ def test_cli_with_explicit_paths(ect, project_with_signal, tmp_path):
 def test_cli_missing_project_dir_returns_2(ect, tmp_path):
     rc = ect.main([str(tmp_path / "nope"), "--quiet"])
     assert rc == 2
+
+
+
+# ===========================================================================
+# v0.7 Tier E.0 — reference_databases + external_cohorts + notebook_count (D-089)
+# ===========================================================================
+
+def test_reference_databases_extracted_from_readme(ect, tmp_path):
+    """README mentioning MIBiG + MetaCyc + GTDB should populate
+    reference_databases in canonical case."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "# Project README\n\n"
+        "We annotate BGCs against MIBiG and pathways against MetaCyc. "
+        "Taxonomy via GTDB-Tk.\n",
+        encoding="utf-8",
+    )
+    report = ect.extract_cross_tenant(project)
+    assert "MIBiG" in report.reference_databases
+    assert "MetaCyc" in report.reference_databases
+    assert "GTDB" in report.reference_databases
+
+
+def test_reference_databases_preserves_canonical_case(ect, tmp_path):
+    """Match is case-insensitive but the stored value is the canonical
+    form (MIBiG mixed case carries meaning the audience reads)."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "BGCs scored against mibig database; pathways via METACYC.\n",
+        encoding="utf-8",
+    )
+    report = ect.extract_cross_tenant(project)
+    # Canonical case preserved despite mixed-case input
+    assert "MIBiG" in report.reference_databases
+    assert "MetaCyc" in report.reference_databases
+
+
+def test_external_cohorts_extracted(ect, tmp_path):
+    """HMP2 + FRANZOSA_2019 in REPORT should populate external_cohorts."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    (project / "REPORT.md").write_text(
+        "# REPORT\n\nValidation against HMP2 metabolomics. "
+        "Cross-cohort bridge to FRANZOSA_2019 metabolites.\n",
+        encoding="utf-8",
+    )
+    report = ect.extract_cross_tenant(project)
+    assert "HMP2" in report.external_cohorts
+    assert "FRANZOSA_2019" in report.external_cohorts
+
+
+def test_notebook_count_matches_notebooks_scanned(ect, tmp_path):
+    """notebook_count is len(notebooks_scanned)."""
+    project = tmp_path / "test_project"
+    notebooks = project / "notebooks"
+    notebooks.mkdir(parents=True)
+    # Write 3 minimal notebook stubs
+    for i in range(3):
+        (notebooks / f"NB0{i}_test.ipynb").write_text(
+            '{"cells": [], "metadata": {}, "nbformat": 4, '
+            '"nbformat_minor": 5}',
+            encoding="utf-8",
+        )
+    report = ect.extract_cross_tenant(project)
+    assert report.notebook_count == 3
+    assert len(report.notebooks_scanned) == 3
+
+
+def test_notebook_count_zero_when_no_notebooks_dir(ect, tmp_path):
+    """Missing notebooks/ dir → notebook_count=0 (no crash)."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    report = ect.extract_cross_tenant(project)
+    assert report.notebook_count == 0
+    assert report.notebooks_scanned == []
+
+
+def test_new_fields_serialize_to_dict(ect, tmp_path):
+    """to_dict() includes the new fields."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "MIBiG and HMP2 cited.\n", encoding="utf-8",
+    )
+    report = ect.extract_cross_tenant(project)
+    d = report.to_dict()
+    assert "reference_databases" in d
+    assert "external_cohorts" in d
+    assert "notebook_count" in d
+    assert "MIBiG" in d["reference_databases"]
+    assert "HMP2" in d["external_cohorts"]
+    assert d["notebook_count"] == 0
+
+
+def test_new_fields_default_empty_when_no_signal(ect, tmp_path):
+    """Empty project (no README/REPORT mentions) → empty lists,
+    count=0 (defensive — no_signal_fallback still True)."""
+    project = tmp_path / "empty_project"
+    project.mkdir()
+    report = ect.extract_cross_tenant(project)
+    assert report.reference_databases == []
+    assert report.external_cohorts == []
+    assert report.notebook_count == 0
+
+
+def test_reference_db_distinct_from_kberdl_db(ect, tmp_path):
+    """KEGG (a K-BERDL DB) should land in kberdl_db_list; MIBiG (a
+    reference DB) in reference_databases. Don't cross-pollute."""
+    project = tmp_path / "test_project"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "Pathways via KEGG; BGCs against MIBiG.\n", encoding="utf-8",
+    )
+    report = ect.extract_cross_tenant(project)
+    assert "kegg" in report.kberdl_db_list
+    assert "kegg" not in [r.lower() for r in report.reference_databases]
+    assert "MIBiG" in report.reference_databases
+    assert "mibig" not in report.kberdl_db_list
+
+
+def test_canonical_name_helper_finds_canonical(ect):
+    """_canonical_name maps a case-insensitive match to canonical case."""
+    canon = ect._canonical_name("mibig",
+                                  ect.KNOWN_REFERENCE_DATABASES)
+    assert canon == "MIBiG"
+    canon = ect._canonical_name("HMP2",
+                                  ect.KNOWN_EXTERNAL_COHORTS)
+    assert canon == "HMP2"
+
+
+def test_canonical_name_helper_defensive_fallback(ect):
+    """If the match isn't in the canonical list (defensive), return
+    the trimmed match-text rather than crashing."""
+    canon = ect._canonical_name("UNKNOWN_THING",
+                                  ect.KNOWN_REFERENCE_DATABASES)
+    assert canon == "UNKNOWN_THING"

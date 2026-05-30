@@ -67,6 +67,63 @@ ship empty arrays as a stand-in):
 - `no_signal_fallback` — boolean. Required to be `true` only when
   the extractor reported no signal.
 
+### v0.7/D-089 Tier E.1: extended signal fields (read but do NOT add to slide content)
+
+The signal JSON now carries three additional structured fields the
+extractor (`extract_cross_tenant.py` v0.7) populates:
+
+- `reference_databases` — array of canonical names (e.g. `MIBiG`,
+  `MetaCyc`, `GTDB`, `BRENDA`, `INPHARED`, `AntiSMASH`). These are
+  external annotation databases used by the project but NOT hosted
+  within K-BERDL. They sit conceptually alongside `kberdl_db_list`
+  but the audience needs to know they're external (a different
+  trust/maintenance model).
+- `external_cohorts` — array of canonical names (e.g. `HMP2`,
+  `FRANZOSA_2019`, `PROTECT`). Named external sample/patient
+  collections the project drew data from.
+- `notebook_count` — integer count of `.ipynb` files in the
+  project's `notebooks/` tree. Use this when phrasing the title +
+  speaker_notes to ground the "N notebooks" framing in the actual
+  count (the v0.6 ibd slide-27 said "31 notebooks" while the
+  project had 32; that's the failure mode this field prevents).
+
+**These three fields do NOT appear in the cross_tenant_integration
+slide-content schema.** They are signal inputs you USE when
+authoring `title` and `speaker_notes_seed`; they don't become slide
+fields. The slide-content schema is unchanged in v0.7 (no schema
+churn; cross_tenant_integration's required+optional content fields
+are the same as v0.5+).
+
+**Verbatim discipline (D-089):** when the signal carries these
+fields, your `title` and `speaker_notes_seed` MUST enumerate the
+tiers present (primary K-BERDL DBs + external reference DBs +
+external cohorts + notebook count) without free-text invention. The
+v0.6 ibd slide-27 failure mode was the composer free-texting "8
+K-BERDL DBs, 31 notebooks" when the project actually used 8
+primary + 4 reference DBs + HMP2 cohort + 32 notebooks. v0.7
+prevents that by giving you the structured signal; your job is
+transcription, not synthesis.
+
+Concretely for v0.7+:
+
+- **Title structure**: "This work integrates {N} K-BERDL databases
+  + {M} external reference catalogs across {K} notebooks." (Adjust
+  phrasing for tier/mode; the COUNTS come from `kberdl_db_list`,
+  `reference_databases`, and `notebook_count` verbatim.)
+- **Speaker notes structure**: name the primary K-BERDL DBs by role
+  (e.g., "metagenomics + metabolomics as primary workhorses"), then
+  the external reference DBs by role ("MIBiG for BGC catalog,
+  MetaCyc for pathway ontology, GTDB for taxonomy"), then the
+  external cohorts ("HMP2 for external validation across N
+  citations"), then the notebook count.
+
+- The `tools/check_cross_tenant_grounding.py` validator (v0.7 Tier
+  E.2) enforces grounding: it flags any database/cohort named in
+  your title or speaker_notes that ISN'T in the signal
+  (hallucination) and any signal entry MISSING from your notes
+  (omission). Your compositional discipline is your first defense;
+  the validator is the backstop.
+
 Slide-level fields (alongside `layout` + `content`):
 - `position` — integer 0 (this is a single-slide fragment; the merge
   script renumbers).

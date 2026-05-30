@@ -496,6 +496,50 @@ def _read_figure_provenance(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_cross_tenant_grounding(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/cross_tenant_grounding.json (v0.7 Tier E.2 / D-089
+    output) if present. Per D-089: cross-tenant grounding findings
+    emit at P1 severity (soft-warning; never gates).
+
+    Each GroundingFinding maps to a cascade finding with
+    `kind=cross_tenant_grounding:<finding-kind>` (e.g.,
+    `cross_tenant_grounding:database_omission`,
+    `cross_tenant_grounding:cohort_hallucination`,
+    `cross_tenant_grounding:notebook_count_mismatch`).
+
+    Read-if-present per the figure_provenance pattern: the cascade
+    does NOT invoke check_cross_tenant_grounding.py.
+    """
+    payload = _load_json_safe(
+        draft_dir / "audit" / "cross_tenant_grounding.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        # Per D-089: all cross-tenant-grounding findings are P1
+        # soft-warnings. Map defensively.
+        sev = f.get("severity", "soft-warning")
+        if sev in ("soft-warning", "P1"):
+            sev = "P1"
+        elif sev in ("P2",):
+            sev = "P2"
+        else:
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind=f"cross_tenant_grounding:{f.get('kind', '?')}",
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={"ctg_kind": f.get("kind"),
+                      **(f.get("evidence") or {})},
+        ))
+    return findings
+
+
 def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
     """Read audit/substory_shape.json (v0.5 Tier B / D-073 output) if
     present. Per D-073: substory-shape findings emit at P1 severity
@@ -608,6 +652,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_figure_provenance(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"figure_provenance read raised: {exc}")
+
+    # 8. Cross-tenant grounding (v0.7 Tier E.2 / D-089; read-if-present).
+    try:
+        findings.extend(_read_cross_tenant_grounding(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"cross_tenant_grounding read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)

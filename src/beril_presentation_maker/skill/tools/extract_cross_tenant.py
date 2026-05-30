@@ -79,6 +79,52 @@ KNOWN_KBERDL_DBS: tuple[str, ...] = (
 )
 
 
+# v0.7/D-089 Tier E.0: external reference databases used for
+# annotation but NOT hosted within K-BERDL. These appear in the
+# methods/data-sources slide content separately from primary
+# K-BERDL DBs because they're external dependencies (the audience
+# needs to know the project depends on annotations from outside
+# the BERDL platform).
+#
+# Adam Tier-F (D-084 finding 5) flagged the ibd v0.6 slide-27 as
+# missing exactly these — the slide said "8 K-BERDL DBs, 31
+# notebooks" but the substory analyses cited MIBiG (BGC catalog),
+# MetaCyc (pathway ontology), GTDB (taxonomy), BRENDA (enzyme),
+# INPHARED (phage genomes) as annotation sources. v0.7 lifts them
+# to first-class signal so the composer can enumerate them.
+KNOWN_REFERENCE_DATABASES: tuple[str, ...] = (
+    "MIBiG", "MetaCyc", "GTDB", "BRENDA", "INPHARED",
+    "ModelSEEDDatabase", "ModelSEED",
+    "RefSeq", "GenBank",  # NCBI databases used as annotation refs
+    "AntiSMASH", "antiSMASH",
+    "HUMAnN3", "HUMANn3",  # HMP analysis tool referenced as a DB
+    "PATRIC", "BV-BRC",
+    "JGI-IMG", "IMG",  # JGI Integrated Microbial Genomes
+)
+
+
+# v0.7/D-089 Tier E.0: external cohorts (named patient/sample
+# collections from outside the project's primary data source).
+# Adam Tier-F flagged ibd v0.6 as missing the HMP2 cohort
+# acknowledgment despite HMP2 being cited 15+ times across
+# substories (external validation, metabolomics, viromics,
+# serology). The composer needs the cohort list explicitly so
+# it can attribute external data sources.
+KNOWN_EXTERNAL_COHORTS: tuple[str, ...] = (
+    "HMP2", "HMP",
+    "iHMP",  # Integrative HMP
+    "FRANZOSA_2019", "Franzosa_2019",  # canonical IBD cohort
+    "PRISM", "RISK", "PROTECT",
+    "MetaHIT",  # European metagenomics cohort
+    "AGP", "American_Gut",  # American Gut Project
+    "ELDERMET",
+    "MetaCardis",
+    "TwinsUK",
+    "NMDC",  # National Microbiome Data Collaborative
+    "NEON",  # National Ecological Observatory
+)
+
+
 # Sibling-project reference patterns. The matched group is the project_id.
 # Project IDs are lowercase identifiers with underscores (BERIL convention).
 SIBLING_PROJECT_PATTERNS: tuple[re.Pattern, ...] = (
@@ -129,6 +175,14 @@ class CrossTenantReport:
     """Aggregated cross-tenant signal for a project.
 
     Used to fill the cross_tenant_integration slide content.
+
+    v0.7/D-089 Tier E.0: extended with three new fields per the
+    Adam-Tier-F D-084 finding 5 fix — the ibd v0.6 slide-27 was
+    missing external reference databases (MIBiG/MetaCyc/GTDB/
+    BRENDA), external cohorts (HMP2), and correct notebook count.
+    The new fields are first-class signal the composer
+    (cross_tenant.v1 Tier E.1) reads to enumerate all four tiers
+    in title + speaker_notes verbatim (no free-text invention).
     """
     project_id: str
     tenant_list: list[str] = field(default_factory=list)
@@ -139,6 +193,10 @@ class CrossTenantReport:
     raw_evidence: list[SignalEvidence] = field(default_factory=list)
     files_scanned: list[str] = field(default_factory=list)
     notebooks_scanned: list[str] = field(default_factory=list)
+    # v0.7/D-089 Tier E.0 additions
+    reference_databases: list[str] = field(default_factory=list)
+    external_cohorts: list[str] = field(default_factory=list)
+    notebook_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -151,6 +209,10 @@ class CrossTenantReport:
             "raw_evidence": [dataclasses.asdict(e) for e in self.raw_evidence],
             "files_scanned": self.files_scanned,
             "notebooks_scanned": self.notebooks_scanned,
+            # v0.7/D-089 Tier E.0
+            "reference_databases": self.reference_databases,
+            "external_cohorts": self.external_cohorts,
+            "notebook_count": self.notebook_count,
         }
 
     def to_slide_content(self, title: str | None = None) -> dict:
@@ -200,6 +262,23 @@ def _scan_text_for_terms(
                 kind=kind,
             ))
     return evidence
+
+
+def _canonical_name(matched_text: str,
+                     canonical_list: tuple[str, ...]) -> str:
+    """Map a matched term back to its canonical form from the
+    known-list. The scan is case-insensitive but the canonical form
+    (MIBiG, MetaCyc, HMP2 — mixed case + numbers) carries meaning
+    the audience reads literally on the slide; preserve it.
+
+    Falls back to the original matched_text if no canonical match
+    (shouldn't happen because _scan_text_for_terms only emits
+    evidence for terms in the canonical list, but defensive)."""
+    norm = matched_text.strip().lower()
+    for canon in canonical_list:
+        if canon.lower() == norm:
+            return canon
+    return matched_text.strip()
 
 
 def _scan_text_for_sibling_projects(
@@ -356,6 +435,13 @@ def extract_cross_tenant(project_dir: Path) -> CrossTenantReport:
         report.raw_evidence.extend(
             _scan_text_for_sibling_projects(text, str(p)))
         report.raw_evidence.extend(_scan_text_for_kbase_urls(text, str(p)))
+        # v0.7/D-089 Tier E.0: external reference DBs + cohorts
+        report.raw_evidence.extend(
+            _scan_text_for_terms(text, KNOWN_REFERENCE_DATABASES,
+                                  "reference_db", str(p)))
+        report.raw_evidence.extend(
+            _scan_text_for_terms(text, KNOWN_EXTERNAL_COHORTS,
+                                  "external_cohort", str(p)))
 
     # Notebooks (recursive)
     notebooks_dir = project_dir / "notebooks"
@@ -373,6 +459,12 @@ def extract_cross_tenant(project_dir: Path) -> CrossTenantReport:
     kberdl_counter: Counter[str] = Counter()
     sibling_counter: Counter[str] = Counter()
     urls: list[str] = []
+    # v0.7/D-089 Tier E.0: separate counters for reference DBs +
+    # external cohorts. These are tracked verbatim (preserve case)
+    # because the canonical names (MIBiG, MetaCyc, HMP2, etc.) carry
+    # meaning the audience reads literally on the slide.
+    reference_db_counter: Counter[str] = Counter()
+    external_cohort_counter: Counter[str] = Counter()
 
     for ev in report.raw_evidence:
         norm = ev.matched_text.strip().lower().replace("-", "_")
@@ -391,6 +483,18 @@ def extract_cross_tenant(project_dir: Path) -> CrossTenantReport:
         elif ev.kind == "kbase_url":
             if ev.matched_text not in urls:
                 urls.append(ev.matched_text)
+        elif ev.kind == "reference_db":
+            # Preserve canonical case (MIBiG, MetaCyc, etc.) — the
+            # match-text is whatever the doc had; the canonical form
+            # is in KNOWN_REFERENCE_DATABASES. Map back to canonical
+            # by case-insensitive lookup.
+            canonical = _canonical_name(ev.matched_text,
+                                         KNOWN_REFERENCE_DATABASES)
+            reference_db_counter[canonical] += 1
+        elif ev.kind == "external_cohort":
+            canonical = _canonical_name(ev.matched_text,
+                                         KNOWN_EXTERNAL_COHORTS)
+            external_cohort_counter[canonical] += 1
 
     # Most-mentioned first; drop singletons that are also in URL list
     report.tenant_list = sorted(tenant_counter.keys())
@@ -405,6 +509,10 @@ def extract_cross_tenant(project_dir: Path) -> CrossTenantReport:
         for pid in sorted(sibling_counter.keys())
     ]
     report.kbase_urls = urls
+    # v0.7/D-089 Tier E.0: populate the new structured fields
+    report.reference_databases = sorted(reference_db_counter.keys())
+    report.external_cohorts = sorted(external_cohort_counter.keys())
+    report.notebook_count = len(report.notebooks_scanned)
     report.no_signal_fallback = (
         not report.tenant_list
         and not report.kberdl_db_list
