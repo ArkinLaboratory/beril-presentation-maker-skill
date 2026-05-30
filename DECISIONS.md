@@ -2238,3 +2238,195 @@ D-079 (the v0.5.1 D run that surfaced the bug);
 fdm draft_6 dir shows the symptom (`audit/snapshots/slide_spec.raw.json`
 + `working/slide_spec.json` both present and valid; missing
 post-validation artifacts because the orchestrator bailed early).
+
+---
+
+## D-084 — 2026-05-28 — v0.6 Tier-F Adam-veto: DON'T SHIP; five carry items open v0.7
+
+**Context:** v0.6 (v3.1 prompts) Tier D + E live A/B completed
+2026-05-27 on both projects:
+
+- ibd_phage_targeting: 32 slides (was 34 at v0.5.1); figure-
+  utilization 100% (was 66.7%); cascade findings = 0/0/0/0
+  (P0–P3); schema errors = 0.
+- functional_dark_matter: 27 slides (was 29); figure-utilization
+  100% (held); schema errors = 0. (FDM cascade artifacts
+  incomplete — no `review_cascade.json`, `adversarial_review.*`,
+  `presentation_validation.json`; the M4b cascade may have hit
+  an interruption distinct from rendering. Not load-bearing for
+  this veto; flagged for v0.7 Tier 0 inspection.)
+
+All mechanical targets met: figure-utilization ≥70% on both decks
+(actually 100%); audience-prose + Q/A/R/C regression-checks held
+implicitly (cascade clean); image-render bug fixed in Tier B.1.
+
+**Decision (Adam Tier-F veto 2026-05-28):** DON'T SHIP as v0.6.0.
+Five qualitative findings from Adam's read of both draft_6 decks
+that the v0.6 metric set does not cover.
+
+### The five findings
+
+1. **Per-arc figure clustering** (load-bearing). The 100%
+   utilization metric counts coverage breadth (every substory
+   with curated figures has ≥1 data_figure slide) but doesn't
+   enforce *per-arc placement*. In practice figures cluster
+   into one arc; other arcs that could legitimately use figures
+   don't. Adam-rubric from D-079 was *per-arc*, not "somewhere
+   in the deck." The D-080 contract is too lenient; D-081's
+   counting rule needs a per-arc distribution component.
+
+2. **No arc transitions / arcs don't build on each other.**
+   Each substory composes in isolation; nothing in
+   `substory_design` or `slide_compose` crosses arc boundaries.
+   The deck reads as N independent substories, not a cumulative
+   argument. New design surface for v0.7 — possibly explicit
+   transition slides, possibly "callback to prior arc"
+   guidance in each substory's intro.
+
+3. **No closing synthesis.** The Q/A/R/C contract closes each
+   substory but nothing closes the *deck*. No final slide
+   brings the arcs together into a unified point. Likely needs
+   a new layout (`deck_close` / `synthesis` / `unified_point`)
+   or special treatment of the final substory's C-slot.
+
+4. **AI images generic / too conceptual.** Adam: "ok but
+   perhaps a little generic and a little too conceptual. A
+   little more technical detail would be nice." Tier-F
+   diagnostic (Explore subagent 2026-05-28) found the LLM-
+   judge is correctly conservative — rejects 29/30 (ibd) and
+   22/23 (fdm) image decisions, only approves on `big_idea`
+   slides because data-heavy slides "specific stats/species/
+   metrics that a generic illustration cannot meaningfully
+   represent." Root cause is architectural: D-008 / D-064
+   reserve `concept_illustration` for metaphor / infographic /
+   conceptual-diagram images, which in practice means only
+   `big_idea` slides — and `big_idea` is by design a metaphor
+   slot. **v0.7 direction (Adam 2026-05-28):** expand approval
+   scope to include one `claim_evidence` per substory when its
+   bullet structure naturally maps to a visual (e.g., "three
+   mechanisms" → 3-panel diagram); slide_compose + image-gen
+   prompt pull technical detail from substory analyses; LLM-
+   judge gets a "technical-specificity" criterion. Not (B)
+   expectation-reset.
+
+5. **Slide 27 data-sources list incorrect/incomplete (ibd).**
+   Tier-F diagnostic (Explore subagent 2026-05-28) confirmed:
+   slide says "8 K-BERDL databases, 31 notebooks" — generic
+   templated wording. Ground truth from `02_substories.md`:
+   8 primary K-BERDL databases + 4 external reference
+   databases (MIBiG, MetaCyc, GTDB, BRENDA) + external cohorts
+   (HMP2 cited 15× across substories) + 32 active notebooks
+   (NB00–NB17 with sub-variants; 1 superseded NB01-parent).
+   Root cause: slide-compose template for the methods slot
+   is under-specified. The Q/A/R/C contract doesn't cover this
+   slot (deck-spanning methods slide, not a substory beat); v3
+   + v3.1 overlays didn't touch it. **v0.7 direction (Adam
+   2026-05-28):** structured methods-slot composition — new
+   layout (or new composer template) with explicit tiered
+   fields: primary_databases, reference_databases,
+   external_cohorts, notebook_count. Curator stage outputs
+   this structure (extends `02_substories.md` /
+   `methods_provenance.md` format); slide_compose reads
+   structured fields instead of templating from free text.
+
+### What ships on main from v0.6 work
+
+All 5 commits remain on main:
+
+- `1cf6689` v0.6 Tier B: redirect validator stderr to file (D-083)
+- `c91d59c` v0.6 Tier B.1: renderer honors image_path on big_idea
+  + claim_evidence (D-082)
+- `5c9a2f8` v0.6 Tier A: slide_compose.v3.1_overlay +
+  --prompts-version v3.1 (D-080)
+- `eeaf0e4` v0.6 Tier A.1: check_figure_provenance.py + cascade
+  integration (D-080/D-081)
+- `0b5afb1` v0.6 Tier C: smoke_v3_prompt.py extension for v3.1
+  (D-080)
+
+Tests: 1440 → 1477 (+37). Suite green.
+
+No `v0.6.0` git tag (per veto). v3.1 prompts available via
+`--prompts-version v3.1` (gated on fresh smoke-pass per D-076
+extension); v0.5.1's `--force-v3-smoke-stale` bypass still works
+for v3 specifically. v3.1 is the working default for figure-
+utilization work but unblessed for production.
+
+### Cross-cutting lessons (carry to v0.7 design)
+
+**Lesson 1: Mechanical metric coverage breadth ≠ qualitative
+per-arc placement.** D-080/D-081 counted "any data_figure in a
+substory with curated figures available" — Adam meant "every arc
+with relevant figures uses them per arc." The metric was
+gameable in the way that doesn't matter (no slide cheats) but
+also gameable in the way that DOES matter (figure clustering).
+v0.7's per-arc rule needs distribution-aware counting.
+
+**Lesson 2: Tier-E/F veto pattern remains the load-bearing
+quality gate.** This is the 3rd consecutive Adam-veto-over-
+mechanical-result (M6 mechanical-FAIL + still-don't-ship per
+D-066; v0.5.1 mechanical-PASS + still-don't-ship per D-079;
+v0.6 mechanical-PASS + still-don't-ship per D-084). The pattern
+is robust precisely because metrics ALWAYS lag qualitative
+read. Don't try to design the perfect metric — design metrics
+that catch what we know, expect the read to surface what we
+don't.
+
+**Lesson 3: Architectural decisions about slot semantics have
+downstream visibility consequences.** D-008/D-064 reserving
+`concept_illustration` for metaphors made sense locally but
+forced AI images into the only metaphor slot (`big_idea`) and
+made them feel "generic" by construction. Adam's image
+feedback isn't about prompt-quality — it's about which slots
+get AI illustration treatment. v0.7's claim_evidence expansion
+is the architectural answer.
+
+**Lesson 4: Per-slot composer templates are an under-examined
+failure surface.** Slide 27 (methods slot) had a template-
+level bug that escaped every prior cascade because the cascade
+focuses on Q/A/R/C content discipline + figure provenance,
+not "is this deck-spanning template slot composed correctly
+from upstream data." v0.7 should sweep for other under-
+specified slots (data_table? workflow_diagram?
+section_divider?) before they recur.
+
+### v0.7 opens with
+
+- D-084-A: per-arc figure rule (refines D-080; distribution-
+  aware counting in D-081).
+- D-084-B: arc-transitions design surface.
+- D-084-C: closing synthesis slide layout (`deck_close`?).
+- D-084-D: image-gen scope expansion to claim_evidence +
+  technical-specificity prompt/judge criteria.
+- D-084-E: structured methods-slot composition.
+
+Plus open v0.5.1 carries (still real, deferred again):
+
+- Retraction-aware composer / `discarded_results.md` filter
+  (no recurrence in v0.6 — gate from V0_6_PUNCH_LIST line 236
+  doesn't fire; deferral remains acceptable).
+- Compression / mode-budget heuristics (ibd 32 slides, fdm 27 —
+  closer to STRONG mode budget 18–32; ibd still slightly over).
+  Lower priority now than at v0.5.1.
+
+**Alternatives considered:**
+
+- **(a) Ship as v0.6.0** — rejected; same Adam-veto-final
+  principle that produced D-066, D-079. Metric green does not
+  override qualitative read.
+- **(b) Address image-gen via expectation-reset (B) instead of
+  scope expansion (A)** — rejected; doesn't address Adam's
+  actual complaint, just acknowledges it as out-of-scope.
+  Adam called the (A) direction explicitly.
+- **(c) Defer methods slot to v0.8** — rejected; the slide-27
+  bug is concrete + bounded + scoped well to v0.7. Fixing
+  it now also surfaces the broader "per-slot template under-
+  specification" sweep (Lesson 4).
+
+**Related:** [V0_6_PUNCH_LIST.md](V0_6_PUNCH_LIST.md) Tier F;
+D-079 (precedent veto pattern; v0.5.1 inputs the v0.6 work
+addressed half of); D-066 (M6 cut-over veto-final pattern);
+D-080 / D-081 (the figure-utilization contract this veto says
+needs per-arc refinement); D-064 / D-008 (the image-gen slot
+semantics this veto says need scope expansion);
+V0_7_PUNCH_LIST.md (when drafted); [[project-presentation-
+maker-v0-6]] (the v0.6 retrospective entry).
