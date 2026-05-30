@@ -50,10 +50,12 @@ def ss():
 # ---------------------------------------------------------------------------
 
 def test_layouts_in_vocabulary(ss):
-    """v0.3.2 added data_table → 16 layouts."""
-    assert len(ss.LAYOUTS) == 16
-    assert len(set(ss.LAYOUTS)) == 16
+    """v0.3.2 added data_table → 16 layouts;
+    v0.7/D-086 added deck_close → 17 layouts."""
+    assert len(ss.LAYOUTS) == 17
+    assert len(set(ss.LAYOUTS)) == 17
     assert "data_table" in ss.LAYOUTS
+    assert "deck_close" in ss.LAYOUTS
 
 
 # ---------------------------------------------------------------------------
@@ -305,15 +307,21 @@ def test_example_slide_spec_covers_all_layouts(ss):
     "workflow_diagram", "methods_summary", "concept_illustration",
     "cross_tenant_integration", "implications", "acknowledgments",
     "references", "qa_anticipated",
+    "deck_close",  # v0.7/D-086
 ])
 def test_example_slide_per_layout(ss, layout):
     """Each layout's example_slide() produces a slide that, when wrapped in
-    a minimal spec with only that slide, validates."""
+    a minimal spec with only that slide, validates.
+
+    Uses mode=lightning-5 to avoid the v0.7/D-086 deck_close-presence
+    soft-warning that fires on talk-30 STRONG specs missing deck_close
+    (orthogonal to per-layout schema check; that check has its own
+    coverage)."""
     slide = ss.example_slide(layout, slide_id=1, substory_id=None)
     spec = {
         "schema_version": ss.SCHEMA_VERSION,
         "project_id": "x",
-        "mode": "talk-30",
+        "mode": "lightning-5",
         "audience": "peer",
         "tier": "STRONG",
         "throughline": {
@@ -795,10 +803,13 @@ def test_cli_example_unknown_layout_errors(ss, capsys):
 # ---------------------------------------------------------------------------
 
 def _spec_with_one_slide(ss, slide):
+    # mode=lightning-5 to avoid the v0.7/D-086 deck_close-presence
+    # soft-warning that fires on talk-30 STRONG specs missing deck_close
+    # (orthogonal to the per-layout advisory-cap checks below).
     return {
         "schema_version": ss.SCHEMA_VERSION,
         "project_id": "x",
-        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "mode": "lightning-5", "audience": "peer", "tier": "STRONG",
         "throughline": {"id": "TL1", "punchline": "x", "tier_evidence": "STRONG"},
         "substories": [],
         "slides": [slide],
@@ -1043,3 +1054,227 @@ def test_cli_validate_rc1_when_errors_and_soft_warnings_mixed(ss, tmp_path):
     p.write_text(json.dumps(spec))
     rc = ss.main(["validate", str(p)])
     assert rc == 1
+
+# ---------------------------------------------------------------------------
+# v0.7 Tier C.0 — deck_close validator + mode-gated presence check (D-086)
+# ---------------------------------------------------------------------------
+
+def _deck_close_content_valid():
+    """Canonical valid deck_close content per D-086."""
+    return {
+        "unified_point": "The deck unified takeaway in one or two sentences.",
+        "key_takeaways": [
+            "First arc takeaway.",
+            "Second arc takeaway.",
+            "Third arc takeaway.",
+        ],
+        "forward_call": "Next experiment / open question / validation gap.",
+        "data_source": "S1 C-slot + S2 C-slot + REPORT.md sect 3.",
+    }
+
+
+def _spec_with_deck_close(ss, mode="talk-30", deck_close_content=None):
+    """Build a minimal spec at the given mode with a single deck_close
+    slide (using deck_close_content if provided, else canonical)."""
+    content = deck_close_content or _deck_close_content_valid()
+    return {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": mode, "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None,
+                    "layout": "deck_close", "content": content}],
+    }
+
+
+def test_deck_close_in_LAYOUTS(ss):
+    """deck_close is in the LAYOUTS tuple per D-086."""
+    assert "deck_close" in ss.LAYOUTS
+
+
+def test_deck_close_in_layout_checkers(ss):
+    """deck_close has a dispatched validator (assert in module covers
+    this too; pin explicitly)."""
+    assert "deck_close" in ss.LAYOUT_CHECKERS
+
+
+def test_deck_close_required_modes_only_talk_30(ss):
+    """Per Adam Tier-0 DQ2: only mode=talk-30 (STRONG) gates deck_close
+    presence. Below STRONG (lightning-5, talk-15 BRIEF) it stays
+    optional and absence is silent."""
+    assert ss.DECK_CLOSE_REQUIRED_MODES == frozenset({"talk-30"})
+
+
+def test_deck_close_valid_content_passes(ss):
+    """A canonical deck_close slide validates with no issues."""
+    spec = _spec_with_deck_close(ss, mode="talk-30")
+    issues = ss.validate_slide_spec(spec)
+    assert issues == [], "; ".join(i.format() for i in issues)
+
+
+def test_deck_close_missing_unified_point_errors(ss):
+    """unified_point is required (hard error if missing)."""
+    content = _deck_close_content_valid()
+    del content["unified_point"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    err_paths = [i.path for i in issues if i.severity == "error"]
+    assert any("unified_point" in p for p in err_paths)
+
+
+def test_deck_close_missing_forward_call_errors(ss):
+    content = _deck_close_content_valid()
+    del content["forward_call"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    err_paths = [i.path for i in issues if i.severity == "error"]
+    assert any("forward_call" in p for p in err_paths)
+
+
+def test_deck_close_missing_data_source_errors(ss):
+    content = _deck_close_content_valid()
+    del content["data_source"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    err_paths = [i.path for i in issues if i.severity == "error"]
+    assert any("data_source" in p for p in err_paths)
+
+
+def test_deck_close_key_takeaways_too_few_errors(ss):
+    """key_takeaways requires 3-5 items; 2 should error (and the rest
+    of the spec still validates)."""
+    content = _deck_close_content_valid()
+    content["key_takeaways"] = ["only one", "and another"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    err_paths = [i.path for i in issues if i.severity == "error"]
+    assert any("key_takeaways" in p for p in err_paths)
+
+
+def test_deck_close_key_takeaways_too_many_errors(ss):
+    """key_takeaways requires 3-5 items; 6 should error."""
+    content = _deck_close_content_valid()
+    content["key_takeaways"] = [f"item {i}" for i in range(6)]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    err_paths = [i.path for i in issues if i.severity == "error"]
+    assert any("key_takeaways" in p for p in err_paths)
+
+
+def test_deck_close_key_takeaways_exactly_3_passes(ss):
+    """3 key_takeaways (the lower bound) passes."""
+    content = _deck_close_content_valid()
+    content["key_takeaways"] = ["a", "b", "c"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    assert issues == [], "; ".join(i.format() for i in issues)
+
+
+def test_deck_close_key_takeaways_exactly_5_passes(ss):
+    """5 key_takeaways (the upper bound) passes."""
+    content = _deck_close_content_valid()
+    content["key_takeaways"] = ["a", "b", "c", "d", "e"]
+    spec = _spec_with_deck_close(ss, mode="talk-30",
+                                 deck_close_content=content)
+    issues = ss.validate_slide_spec(spec)
+    assert issues == [], "; ".join(i.format() for i in issues)
+
+
+def test_deck_close_presence_required_on_talk_30(ss):
+    """A talk-30 spec WITHOUT a deck_close slide emits the soft-warning
+    presence finding per D-086."""
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None, "layout": "big_idea",
+                    "content": {"title": "headline"}}],
+    }
+    issues = ss.validate_slide_spec(spec)
+    deck_close_warnings = [
+        i for i in issues
+        if "deck_close" in i.message and i.severity == "soft-warning"
+    ]
+    assert len(deck_close_warnings) == 1, (
+        "exactly one deck_close presence soft-warning expected on "
+        "talk-30 without deck_close; got: "
+        + "; ".join(i.format() for i in issues)
+    )
+    # Cite D-086 in the message so operators can find the rationale
+    assert "D-086" in deck_close_warnings[0].message
+
+
+def test_deck_close_presence_silent_on_lightning_5(ss):
+    """A lightning-5 spec WITHOUT a deck_close slide does NOT warn
+    (mode-gated check fires only on talk-30 per Adam DQ2)."""
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "lightning-5", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None, "layout": "big_idea",
+                    "content": {"title": "headline"}}],
+    }
+    issues = ss.validate_slide_spec(spec)
+    deck_close_warnings = [i for i in issues if "deck_close" in i.message]
+    assert deck_close_warnings == []
+
+
+def test_deck_close_presence_silent_on_talk_15(ss):
+    """Same: talk-15 BRIEF is below STRONG; no deck_close gate."""
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-15", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{"id": 1, "substory_id": None, "layout": "big_idea",
+                    "content": {"title": "headline"}}],
+    }
+    issues = ss.validate_slide_spec(spec)
+    deck_close_warnings = [i for i in issues if "deck_close" in i.message]
+    assert deck_close_warnings == []
+
+
+def test_deck_close_presence_silent_when_present_on_talk_30(ss):
+    """A talk-30 spec WITH a deck_close slide does NOT trigger the
+    presence soft-warning (the rule fires only on absence)."""
+    spec = _spec_with_deck_close(ss, mode="talk-30")
+    issues = ss.validate_slide_spec(spec)
+    deck_close_warnings = [
+        i for i in issues
+        if "missing deck_close" in i.message
+    ]
+    assert deck_close_warnings == []
+
+
+def test_example_slide_deck_close_is_valid(ss):
+    """The canonical example_slide("deck_close") output validates."""
+    slide = ss.example_slide("deck_close", slide_id=1, substory_id=None)
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "lightning-5",  # avoid the presence-gated warning
+        "audience": "peer",
+        "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                        "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [slide],
+    }
+    issues = ss.validate_slide_spec(spec)
+    assert issues == [], "; ".join(i.format() for i in issues)

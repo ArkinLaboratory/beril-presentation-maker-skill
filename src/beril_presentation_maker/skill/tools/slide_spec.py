@@ -77,6 +77,7 @@ LAYOUTS: tuple[str, ...] = (
     "acknowledgments",
     "references",
     "qa_anticipated",
+    "deck_close",                # v0.7/D-086: closing-synthesis slide
 )
 
 MODES: tuple[str, ...] = (
@@ -878,6 +879,31 @@ def _check_qa_anticipated(content: dict, path: str) -> list[ValidatorIssue]:
     return iss
 
 
+def _check_deck_close(content: dict, path: str) -> list[ValidatorIssue]:
+    """v0.7/D-086 closing-synthesis layout. The deck_close slide is the
+    deck-spanning closer that unifies all substories into a single
+    takeaway. Composer (slide_compose v3.2 per D-086) reads VERBATIM
+    from `working/deck_close_signal.json` (curator output) and emits
+    this slide; the four content fields are the structured synthesis
+    the curator approved.
+
+    Required fields:
+    - unified_point: 1-2 sentences capturing the deck's overall takeaway.
+    - key_takeaways: list of 3-5 bullets, each tying to one arc/substory.
+    - forward_call: 1-2 sentences with a forward-looking actionable
+      statement (next experiment / open question / validation gap).
+    - data_source: free-text citation string naming substories or REPORT
+      sections grounding the synthesis.
+    """
+    iss: list[ValidatorIssue] = []
+    _check_required_str(content, "unified_point", path, iss)
+    _check_str_list(content, "key_takeaways", path, iss,
+                    required=True, min_len=3, max_len=5)
+    _check_required_str(content, "forward_call", path, iss)
+    _check_required_str(content, "data_source", path, iss)
+    return iss
+
+
 # Dispatcher
 LAYOUT_CHECKERS = {
     "title":                    _check_title,
@@ -896,9 +922,24 @@ LAYOUT_CHECKERS = {
     "acknowledgments":          _check_acknowledgments,
     "references":               _check_references,
     "qa_anticipated":           _check_qa_anticipated,
+    "deck_close":               _check_deck_close,
 }
 assert set(LAYOUT_CHECKERS.keys()) == set(LAYOUTS), \
     "LAYOUT_CHECKERS must cover the entire vocabulary"
+
+
+# v0.7/D-086: modes for which deck_close presence is required (soft-warning
+# if absent). Below this set, deck_close is optional — short talks
+# (lightning-5) and tighter formats (talk-15 BRIEF) don't need a
+# deck-spanning synthesis slide because the per-substory C-slots already
+# provide sufficient closure at that talk length.
+#
+# Adam Tier-0 DQ2: deck_close gates presence-required iff mode is STRONG
+# (talk-30). The mode value is the SPEC.MODE field (talk-30, talk-15,
+# etc.); the tier value (STRONG/THIN/EXPLORATORY) is orthogonal. Current
+# read: only talk-30 triggers required-presence; talk-45 may follow at
+# v0.8+ if it sees use.
+DECK_CLOSE_REQUIRED_MODES: frozenset[str] = frozenset({"talk-30"})
 
 
 # ---------------------------------------------------------------------------
@@ -1033,6 +1074,27 @@ def validate_slide_spec(spec: dict) -> list[ValidatorIssue]:
                     if v not in VALIDATOR_STATUS:
                         iss.append(ValidatorIssue(f"{sp}.validator_status.{k}",
                             f"must be one of {VALIDATOR_STATUS}, got {v!r}"))
+
+    # v0.7/D-086 mode-gated presence: deck_close is required for STRONG-
+    # mode talks (currently talk-30). Soft-warning (advisory) when absent
+    # so the orchestrator's tier-1 cascade surfaces it without blocking
+    # render. Below STRONG (lightning-5, talk-15 BRIEF), deck_close is
+    # OPTIONAL and absence is silent.
+    spec_mode = spec.get("mode")
+    if spec_mode in DECK_CLOSE_REQUIRED_MODES:
+        has_deck_close = any(
+            isinstance(s, dict) and s.get("layout") == "deck_close"
+            for s in slides
+        )
+        if not has_deck_close:
+            iss.append(ValidatorIssue(
+                "$.slides",
+                f"missing deck_close slide (required on mode={spec_mode!r} "
+                f"per D-086 — composer reads working/deck_close_signal.json "
+                f"to author the closing-synthesis slide; if signal absent, "
+                f"curator stage failed to emit it)",
+                severity="soft-warning",
+            ))
 
     return iss
 
@@ -1337,6 +1399,20 @@ def dump_json_schema() -> dict:
                 "evidence_pointer": {"type": "string", "minLength": 1},
             },
         },
+        "deck_close_content": {
+            "type": "object",
+            "required": ["unified_point", "key_takeaways",
+                         "forward_call", "data_source"],
+            "properties": {
+                "unified_point": {"type": "string", "minLength": 1},
+                "key_takeaways": {
+                    "type": "array", "minItems": 3, "maxItems": 5,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "forward_call": {"type": "string", "minLength": 1},
+                "data_source": {"type": "string", "minLength": 1},
+            },
+        },
     }
 
     schema = {
@@ -1530,6 +1606,30 @@ def example_slide(layout: str, slide_id: int = 1, substory_id: str | None = "S1"
             "question": "Anticipated question from the audience?",
             "answer_summary": "Brief, evidence-anchored answer.",
             "evidence_pointer": "REPORT.md §4.1",
+        },
+        "deck_close": {
+            "unified_point": (
+                "Three lines of evidence converge on a 6-target phage "
+                "therapeutic strategy for the E1 IBD ecotype."
+            ),
+            "key_takeaways": [
+                "IBD burden stratifies non-randomly across 3 eco-phenotypes, "
+                "with E1 the highest-severity stratum.",
+                "E1 pathobionts form a 2-narrative consortium "
+                "(iron-acquisition + bile-acid 7α-dehydroxylation).",
+                "Six consortium targets show Tier-1/Tier-2 phage-feasibility "
+                "stratification enabling prescriptive matching.",
+            ],
+            "forward_call": (
+                "Validate predicted Tier-1 targets in murine colitis "
+                "models; expand to longitudinal human cohort stratified "
+                "by eco-phenotype."
+            ),
+            "data_source": (
+                "S1 C-slot (ecological stratification), S2 C-slot "
+                "(pathobiont narratives), S3 C-slot (phage feasibility); "
+                "REPORT.md §3.2 + §4."
+            ),
         },
     }
     base["content"] = contents[layout]

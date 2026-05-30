@@ -96,7 +96,13 @@ def _wrap(slides_list, mode="talk-30", substories=None, n_pad=None):
 
 
 def _full_talk_30_spec(ss, vp):
-    """A spec that should pass P1, P2, P7, P8, P9 (within reason)."""
+    """A spec that should pass P1, P2, P7, P8, P9 (within reason).
+
+    v0.7/D-086: talk-30 STRONG requires a deck_close slide; include
+    one so the pre-flight slide_spec validator doesn't emit a
+    presence soft-warning that test_cli_dirty_spec_returns_1
+    misinterprets as rc=3 (schema pre-flight failure).
+    """
     slides = []
     sid = 1
     # Title (slide 1 — required)
@@ -117,6 +123,11 @@ def _full_talk_30_spec(ss, vp):
     slides.append(ss.example_slide("acknowledgments", slide_id=sid, substory_id=None))
     sid += 1
     slides.append(ss.example_slide("references", slide_id=sid, substory_id=None))
+    sid += 1
+    # v0.7/D-086: deck_close required on talk-30 STRONG. Without this,
+    # the slide_spec pre-flight in validate_presentation emits a
+    # soft-warning that the CLI treats as schema-failure rc=3.
+    slides.append(ss.example_slide("deck_close", slide_id=sid, substory_id=None))
     sid += 1
     substories = [
         {"id": "S1", "punchline": "x",

@@ -137,6 +137,11 @@ class AssemblyError(Exception):
 SPEC_TO_MASTER_LAYOUT = {
     "data_table": "data_figure",   # title placeholder + body region; handler
                                    # removes body and renders its own table
+    # v0.7/D-086: deck_close uses methods_summary's geometry (title +
+    # bullets-in-trimmed-body + footer band). Same shape; _fill_deck_close
+    # reserves the lower 0.30" zone for the forward_call textbox above
+    # the methods-style footer.
+    "deck_close": "methods_summary",
 }
 
 
@@ -1692,6 +1697,64 @@ def _fill_qa_anticipated(slide, content, draft_dir, warnings):
         _set_speaker_notes(slide, detail.strip())
 
 
+def _fill_deck_close(slide, content, draft_dir, warnings):
+    """v0.7/D-086 closing-synthesis slide.
+
+    Layout geometry:
+    - Title placeholder: `unified_point` (the deck's overall takeaway).
+    - Body placeholder: `key_takeaways` (3-5 bullets, one per arc).
+    - Forward-call textbox below the body: the actionable "what next"
+      statement. Composer-authored from `forward_call`; this is the
+      load-bearing forward-looking line for the audience.
+    - Footer band at FOOTER_SAFE_BOTTOM: `data_source` citation
+      (subdued; the audience reads the takeaways, the data_source is
+      for the audit trail).
+
+    Mirrors the methods_summary geometry — title at top, bullets in
+    the trimmed body region, a textbox in the lower zone, and a
+    footer band at the master's footer position.
+    """
+    _set_title(slide, content["unified_point"])
+    _set_placeholder_bullets(slide, 1, content["key_takeaways"])
+    # Trim the body placeholder above the forward-call zone — same
+    # pattern as methods_summary: reserve the lower band for the
+    # forward_call textbox + data_source footer below.
+    _mp = _find_placeholder(slide, 1)
+    if _mp is not None:
+        _mp.left = Inches(0.34)
+        _mp.top = Inches(1.30)
+        _mp.width = Inches(9.32)
+        _mp.height = Inches(2.85)   # bottom 4.15; reserve 4.15-4.45 for
+                                    # forward_call, 4.52+ for data_source
+    # Dense key_takeaways shrink-to-fit (3-5 bullets, each 1 sentence;
+    # average ~80 chars per bullet → 240-400 chars in the body region).
+    _enable_normautofit(slide, 1)
+
+    # Forward-call textbox — the audience's actionable takeaway.
+    # Positioned just below the trimmed body placeholder, above the
+    # data_source footer. Bold-ish via larger font; this is the
+    # "what next" line the audience leaves with.
+    forward_call = content.get("forward_call", "").strip()
+    if forward_call:
+        fc_tb = _add_textbox(slide, forward_call,
+                             0.34, 4.18, 9.32, 0.30,
+                             font_size_pt=14, color_rgb=GRAPHITE_GRAY_RGB)
+        _fit_textbox(fc_tb,
+                     ladder=((160, 140000), (220, 120000), (300, 100000),
+                             (400, 90000)),
+                     full_below=160,
+                     warnings=warnings,
+                     where=f"deck_close forward_call "
+                           f"(slide {getattr(slide, 'slide_id', '?')})")
+
+    # Data-source footer — subdued, audit-trail-only band.
+    data_source = content.get("data_source", "").strip()
+    if data_source:
+        _add_textbox(slide, data_source,
+                     0.30, 4.52, 9.40, 0.28,
+                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+
+
 # Dispatcher
 LAYOUT_HANDLERS = {
     "title":                    _fill_title,
@@ -1710,6 +1773,7 @@ LAYOUT_HANDLERS = {
     "acknowledgments":          _fill_acknowledgments,
     "references":               _fill_references,
     "qa_anticipated":           _fill_qa_anticipated,
+    "deck_close":               _fill_deck_close,   # v0.7/D-086
 }
 
 

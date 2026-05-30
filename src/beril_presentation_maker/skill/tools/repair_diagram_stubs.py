@@ -361,6 +361,7 @@ VALID_LAYOUTS = (
     "workflow_diagram", "methods_summary", "concept_illustration",
     "cross_tenant_integration", "implications", "acknowledgments",
     "references", "qa_anticipated",
+    "deck_close",  # v0.7/D-086
 )
 
 

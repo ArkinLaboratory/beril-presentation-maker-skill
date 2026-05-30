@@ -195,11 +195,15 @@ def test_repair_diagram_drops_non_object_nodes():
 # ---------------------------------------------------------------------------
 
 def _make_minimal_spec(workflow_diagram_content: dict) -> dict:
-    """Build a minimal valid slide_spec with one workflow_diagram slide."""
+    """Build a minimal valid slide_spec with one workflow_diagram slide.
+
+    Uses mode=lightning-5 to avoid the v0.7/D-086 deck_close-presence
+    soft-warning (talk-30 STRONG would require a deck_close slide;
+    repair-diagram tests are orthogonal to that contract)."""
     return {
         "schema_version": slide_spec.SCHEMA_VERSION,
         "project_id": "test",
-        "mode": "talk-30",
+        "mode": "lightning-5",
         "audience": "peer",
         "tier": "STRONG",
         "throughline": {
@@ -440,11 +444,15 @@ def test_repair_bullets_unaffected_layouts():
 
 def test_repair_spec_runs_bullet_repair_alongside_diagram_repair():
     """End-to-end: spec with both diagram AND bullet violations
-    gets both repaired in one pass."""
+    gets both repaired in one pass.
+
+    Uses mode=lightning-5 to avoid the v0.7/D-086 deck_close-presence
+    warning that's orthogonal to the diagram + bullet repair tested
+    here."""
     spec = {
         "schema_version": slide_spec.SCHEMA_VERSION,
         "project_id": "test",
-        "mode": "talk-30",
+        "mode": "lightning-5",
         "audience": "peer",
         "tier": "STRONG",
         "throughline": {"id": "TL1", "punchline": "x",

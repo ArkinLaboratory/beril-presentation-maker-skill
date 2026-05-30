@@ -148,15 +148,16 @@ def test_assemble_example_spec_smoke(ss, asm, tmp_path):
     result = asm.assemble(spec_path, out)
 
     from pptx import Presentation
-    assert result.n_slides == 16  # v0.3.2: + data_table
+    assert result.n_slides == 17  # v0.3.2: + data_table; v0.7/D-086: + deck_close
     assert out.is_file()
     prs = Presentation(out)
-    assert len(prs.slides) == 16  # v0.3.2: + data_table
+    assert len(prs.slides) == 17  # v0.3.2: + data_table; v0.7/D-086: + deck_close
     layouts_used = {s.slide_layout.name for s in prs.slides}
-    # data_table is aliased to data_figure's master layout — so the master-
-    # layout names cover 15 of the 16 spec layouts (data_table reuses
-    # data_figure's master).
-    expected_master_layouts = set(ss.LAYOUTS) - {"data_table"}
+    # data_table is aliased to data_figure's master layout (v0.3.2);
+    # deck_close is aliased to methods_summary's master layout
+    # (v0.7/D-086) — so the master-layout names cover 15 of the 17
+    # spec layouts.
+    expected_master_layouts = set(ss.LAYOUTS) - {"data_table", "deck_close"}
     assert layouts_used == expected_master_layouts
 
 
@@ -670,7 +671,7 @@ def test_master_path_override(ss, asm, tmp_path):
     out = tmp_path / "slides.pptx"
 
     result = asm.assemble(spec_path, out, master_path=custom)
-    assert result.n_slides == 16  # v0.3.2: + data_table
+    assert result.n_slides == 17  # v0.3.2: + data_table; v0.7/D-086: + deck_close
 
 
 def test_default_master_path_resolves(asm):

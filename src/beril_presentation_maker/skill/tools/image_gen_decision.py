@@ -58,6 +58,13 @@ _STRUCTURAL_NO_IMAGE = frozenset({
     "qa_anticipated",
     "methods_summary",
     "cross_tenant_integration",
+    # v0.7/D-086: deck_close is the closing-synthesis slot. Composer
+    # reads structured fields verbatim from deck_close_signal.json
+    # (unified_point + key_takeaways + forward_call + data_source);
+    # adding an AI image would conflict with the "verbatim from
+    # curator" contract + the 3-5 key_takeaways bullet structure
+    # already fills the slide body.
+    "deck_close",
 })
 
 _HAS_OWN_FIGURE = frozenset({

@@ -1,686 +1,28 @@
 {
-  "$defs": {
-    "acknowledgments_content": {
-      "properties": {
-        "code_repo_url": {
-          "type": "string"
-        },
-        "contributors": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "funder_logos": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "tenant_attribution": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "contributors"
-      ],
-      "type": "object"
-    },
-    "big_idea_content": {
-      "properties": {
-        "supporting_graphic": {
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "type": "object"
-    },
-    "big_number_content": {
-      "properties": {
-        "headline": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "source_footer": {
-          "type": "string"
-        },
-        "sub_pointer": {
-          "type": "string"
-        },
-        "subtitle": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "headline",
-        "subtitle"
-      ],
-      "type": "object"
-    },
-    "claim_evidence_content": {
-      "properties": {
-        "bullets": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "maxItems": 3,
-          "minItems": 1,
-          "type": "array"
-        },
-        "citations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "figure": {
-          "type": "string"
-        },
-        "figure_caption": {
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "bullets"
-      ],
-      "type": "object"
-    },
-    "concept_illustration_content": {
-      "properties": {
-        "ai_disclosure_footer": {
-          "type": "boolean"
-        },
-        "caption": {
-          "type": "string"
-        },
-        "image_path": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "image_prompt": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "provenance": {
-          "properties": {
-            "approved_at": {
-              "type": "string"
-            },
-            "channel": {
-              "enum": [
-                "A",
-                "B"
-              ]
-            },
-            "cost_usd": {
-              "type": "number"
-            },
-            "model": {
-              "minLength": 1,
-              "type": "string"
-            },
-            "quant_content_score": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "model",
-            "cost_usd",
-            "channel",
-            "approved_at"
-          ],
-          "type": "object"
-        },
-        "style": {
-          "enum": [
-            "metaphor",
-            "infographic",
-            "conceptual_diagram",
-            "scientific_illustration",
-            "watercolor",
-            "minimalist",
-            "abstract"
-          ]
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "image_path",
-        "image_prompt",
-        "style",
-        "provenance"
-      ],
-      "type": "object"
-    },
-    "cross_tenant_integration_content": {
-      "properties": {
-        "data_flow_diagram": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/diagram"
-            }
-          ]
-        },
-        "kberdl_db_list": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "no_signal_fallback": {
-          "type": "boolean"
-        },
-        "sibling_project_refs": {
-          "items": {
-            "properties": {
-              "project_id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "what_was_leveraged": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "project_id",
-              "what_was_leveraged"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "tenant_list": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "type": "object"
-    },
-    "data_figure_content": {
-      "properties": {
-        "caption": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "data_source": {
-          "type": "string"
-        },
-        "figure": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "figure",
-        "caption"
-      ],
-      "type": "object"
-    },
-    "data_table_content": {
-      "properties": {
-        "caption": {
-          "type": "string"
-        },
-        "columns": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "maxItems": 6,
-          "minItems": 2,
-          "type": "array"
-        },
-        "data_source": {
-          "type": "string"
-        },
-        "footnote": {
-          "type": "string"
-        },
-        "highlight_rows": {
-          "items": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "rows": {
-          "items": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "maxItems": 12,
-          "minItems": 1,
-          "type": "array"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "columns",
-        "rows"
-      ],
-      "type": "object"
-    },
-    "diagram": {
-      "properties": {
-        "edges": {
-          "items": {
-            "properties": {
-              "from": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "kind": {
-                "enum": [
-                  "straight",
-                  "elbow",
-                  "curved"
-                ]
-              },
-              "label": {
-                "type": "string"
-              },
-              "to": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "from",
-              "to",
-              "kind"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "kind": {
-          "enum": [
-            "boxes_and_arrows"
-          ]
-        },
-        "nodes": {
-          "items": {
-            "properties": {
-              "fill_color": {
-                "type": "string"
-              },
-              "h": {
-                "type": "number"
-              },
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "label": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "shape": {
-                "enum": [
-                  "rectangle",
-                  "rounded",
-                  "ellipse",
-                  "parallelogram",
-                  "cylinder",
-                  "callout",
-                  "swimlane"
-                ]
-              },
-              "text_color": {
-                "type": "string"
-              },
-              "w": {
-                "type": "number"
-              },
-              "x": {
-                "type": "number"
-              },
-              "y": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "id",
-              "label",
-              "shape",
-              "x",
-              "y",
-              "w",
-              "h"
-            ],
-            "type": "object"
-          },
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "kind",
-        "nodes",
-        "edges"
-      ],
-      "type": "object"
-    },
-    "implications_content": {
-      "properties": {
-        "bullets": {
-          "items": {
-            "properties": {
-              "claim": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "evidence_pointer": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "claim",
-              "evidence_pointer"
-            ],
-            "type": "object"
-          },
-          "maxItems": 3,
-          "minItems": 1,
-          "type": "array"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "bullets"
-      ],
-      "type": "object"
-    },
-    "methods_summary_content": {
-      "properties": {
-        "bullets": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "maxItems": 10,
-          "minItems": 5,
-          "type": "array"
-        },
-        "see_notes_footer": {
-          "type": "boolean"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "tools_versions": {
-          "items": {
-            "properties": {
-              "tool": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "version": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "tool",
-              "version"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "title",
-        "bullets"
-      ],
-      "type": "object"
-    },
-    "qa_anticipated_content": {
-      "properties": {
-        "answer_detail": {
-          "type": "string"
-        },
-        "answer_summary": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "evidence_pointer": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "question": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "question",
-        "answer_summary",
-        "evidence_pointer"
-      ],
-      "type": "object"
-    },
-    "references_content": {
-      "properties": {
-        "ai_disclosure": {
-          "type": "string"
-        },
-        "full_pool_in_speaker_notes": {
-          "type": "boolean"
-        },
-        "refs_short": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "maxItems": 8,
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "refs_short"
-      ],
-      "type": "object"
-    },
-    "section_divider_content": {
-      "properties": {
-        "punchline": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "substory_number": {
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "punchline"
-      ],
-      "type": "object"
-    },
-    "title_content": {
-      "properties": {
-        "affiliation": {
-          "type": "string"
-        },
-        "date": {
-          "type": "string"
-        },
-        "presenter": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "subtitle": {
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "venue": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "presenter",
-        "date"
-      ],
-      "type": "object"
-    },
-    "two_column_compare_content": {
-      "properties": {
-        "left_col_content": {
-          "oneOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": "array"
-            }
-          ]
-        },
-        "left_col_title": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "right_col_content": {
-          "oneOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "type": "array"
-            }
-          ]
-        },
-        "right_col_title": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "left_col_title",
-        "left_col_content",
-        "right_col_title",
-        "right_col_content"
-      ],
-      "type": "object"
-    },
-    "workflow_diagram_content": {
-      "properties": {
-        "diagram": {
-          "$ref": "#/$defs/diagram"
-        },
-        "step_caption": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        },
-        "title": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "tool_version_footer": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "diagram",
-        "step_caption"
-      ],
-      "type": "object"
-    }
-  },
-  "$id": "https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/src/beril_presentation_maker/skill/references/slide_spec.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/src/beril_presentation_maker/skill/references/slide_spec.schema.json",
+  "title": "BERIL Presentation Maker \u2014 slide_spec.json schema",
   "description": "v1.0 contract for slide_spec.json. The hand-rolled validator in tools/slide_spec.py is the authoritative source; this JSON Schema is generated for documentation and prompt-context hygiene.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "mode",
+    "audience",
+    "tier",
+    "throughline",
+    "substories",
+    "slides"
+  ],
   "properties": {
-    "audience": {
-      "enum": [
-        "peer"
-      ]
+    "schema_version": {
+      "const": "1.0"
     },
-    "citation_pool_ref": {
-      "type": "string"
-    },
-    "created_at": {
-      "type": "string"
+    "project_id": {
+      "type": "string",
+      "minLength": 1
     },
     "draft_dir": {
-      "type": "string"
-    },
-    "last_modified": {
       "type": "string"
     },
     "mode": {
@@ -693,18 +35,154 @@
         "poster-v"
       ]
     },
+    "audience": {
+      "enum": [
+        "peer"
+      ]
+    },
+    "tier": {
+      "enum": [
+        "STRONG",
+        "THIN",
+        "EXPLORATORY"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "last_modified": {
+      "type": "string"
+    },
     "model_used": {
       "type": "object"
     },
-    "project_id": {
-      "minLength": 1,
+    "throughline": {
+      "type": "object",
+      "required": [
+        "id",
+        "punchline",
+        "tier_evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "punchline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier_evidence": {
+          "enum": [
+            "STRONG",
+            "THIN",
+            "EXPLORATORY"
+          ]
+        }
+      }
+    },
+    "substories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "punchline",
+          "slide_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "punchline": {
+            "type": "string",
+            "minLength": 1
+          },
+          "slide_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "approved_at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "citation_pool_ref": {
       "type": "string"
     },
-    "schema_version": {
-      "const": "1.0"
-    },
     "slides": {
+      "type": "array",
+      "minItems": 1,
       "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "layout",
+          "content"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "layout": {
+            "enum": [
+              "title",
+              "section_divider",
+              "big_idea",
+              "big_number",
+              "claim_evidence",
+              "two_column_compare",
+              "data_figure",
+              "data_table",
+              "workflow_diagram",
+              "methods_summary",
+              "concept_illustration",
+              "cross_tenant_integration",
+              "implications",
+              "acknowledgments",
+              "references",
+              "qa_anticipated",
+              "deck_close"
+            ]
+          },
+          "substory_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content": {
+            "type": "object"
+          },
+          "speaker_notes": {
+            "type": "string"
+          },
+          "speaker_notes_provenance": {
+            "type": "array"
+          },
+          "validator_status": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "pass",
+                "soft-warning",
+                "accepted-with-warning",
+                "escalated",
+                "user-fixed",
+                "accepted-as-limitation"
+              ]
+            }
+          },
+          "revision_log": {
+            "type": "array"
+          }
+        },
         "allOf": [
           {
             "if": {
@@ -961,149 +439,720 @@
                 }
               }
             }
-          }
-        ],
-        "properties": {
-          "content": {
-            "type": "object"
           },
-          "id": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "layout": {
-            "enum": [
-              "title",
-              "section_divider",
-              "big_idea",
-              "big_number",
-              "claim_evidence",
-              "two_column_compare",
-              "data_figure",
-              "data_table",
-              "workflow_diagram",
-              "methods_summary",
-              "concept_illustration",
-              "cross_tenant_integration",
-              "implications",
-              "acknowledgments",
-              "references",
-              "qa_anticipated"
-            ]
-          },
-          "revision_log": {
-            "type": "array"
-          },
-          "speaker_notes": {
-            "type": "string"
-          },
-          "speaker_notes_provenance": {
-            "type": "array"
-          },
-          "substory_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "validator_status": {
-            "additionalProperties": {
-              "enum": [
-                "pass",
-                "soft-warning",
-                "accepted-with-warning",
-                "escalated",
-                "user-fixed",
-                "accepted-as-limitation"
-              ]
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "deck_close"
+                }
+              }
             },
-            "type": "object"
+            "then": {
+              "properties": {
+                "content": {
+                  "$ref": "#/$defs/deck_close_content"
+                }
+              }
+            }
           }
-        },
-        "required": [
-          "id",
-          "layout",
-          "content"
-        ],
-        "type": "object"
-      },
-      "minItems": 1,
-      "type": "array"
-    },
-    "substories": {
-      "items": {
-        "properties": {
-          "approved_at": {
-            "type": "string"
-          },
-          "id": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "punchline": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "slide_ids": {
-            "items": {
-              "minimum": 1,
-              "type": "integer"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "punchline",
-          "slide_ids"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "throughline": {
-      "properties": {
-        "id": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "punchline": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "tier_evidence": {
-          "enum": [
-            "STRONG",
-            "THIN",
-            "EXPLORATORY"
-          ]
-        }
-      },
-      "required": [
-        "id",
-        "punchline",
-        "tier_evidence"
-      ],
-      "type": "object"
-    },
-    "tier": {
-      "enum": [
-        "STRONG",
-        "THIN",
-        "EXPLORATORY"
-      ]
+        ]
+      }
     }
   },
-  "required": [
-    "schema_version",
-    "project_id",
-    "mode",
-    "audience",
-    "tier",
-    "throughline",
-    "substories",
-    "slides"
-  ],
-  "title": "BERIL Presentation Maker \u2014 slide_spec.json schema",
-  "type": "object"
+  "$defs": {
+    "diagram": {
+      "type": "object",
+      "required": [
+        "kind",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "boxes_and_arrows"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "shape",
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "shape": {
+                "enum": [
+                  "rectangle",
+                  "rounded",
+                  "ellipse",
+                  "parallelogram",
+                  "cylinder",
+                  "callout",
+                  "swimlane"
+                ]
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "w": {
+                "type": "number"
+              },
+              "h": {
+                "type": "number"
+              },
+              "fill_color": {
+                "type": "string"
+              },
+              "text_color": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "kind"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "straight",
+                  "elbow",
+                  "curved"
+                ]
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "title_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "presenter",
+        "date"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "presenter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "affiliation": {
+          "type": "string"
+        },
+        "venue": {
+          "type": "string"
+        }
+      }
+    },
+    "section_divider_content": {
+      "type": "object",
+      "required": [
+        "punchline"
+      ],
+      "properties": {
+        "punchline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "substory_number": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "big_idea_content": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supporting_graphic": {
+          "type": "string"
+        }
+      }
+    },
+    "big_number_content": {
+      "type": "object",
+      "required": [
+        "headline",
+        "subtitle"
+      ],
+      "properties": {
+        "headline": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sub_pointer": {
+          "type": "string"
+        },
+        "source_footer": {
+          "type": "string"
+        }
+      }
+    },
+    "claim_evidence_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bullets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "figure": {
+          "type": "string"
+        },
+        "figure_caption": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "two_column_compare_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "left_col_title",
+        "left_col_content",
+        "right_col_title",
+        "right_col_content"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_col_title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right_col_title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_col_content": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "right_col_content": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "data_figure_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "figure",
+        "caption"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "figure": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data_source": {
+          "type": "string"
+        }
+      }
+    },
+    "data_table_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "caption": {
+          "type": "string"
+        },
+        "footnote": {
+          "type": "string"
+        },
+        "data_source": {
+          "type": "string"
+        },
+        "highlight_rows": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "workflow_diagram_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "diagram",
+        "step_caption"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "diagram": {
+          "$ref": "#/$defs/diagram"
+        },
+        "step_caption": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tool_version_footer": {
+          "type": "string"
+        }
+      }
+    },
+    "methods_summary_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bullets": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tools_versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tool",
+              "version"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "see_notes_footer": {
+          "type": "boolean"
+        }
+      }
+    },
+    "concept_illustration_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "image_path",
+        "image_prompt",
+        "style",
+        "provenance"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "style": {
+          "enum": [
+            "metaphor",
+            "infographic",
+            "conceptual_diagram",
+            "scientific_illustration",
+            "watercolor",
+            "minimalist",
+            "abstract"
+          ]
+        },
+        "caption": {
+          "type": "string"
+        },
+        "ai_disclosure_footer": {
+          "type": "boolean"
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "model",
+            "cost_usd",
+            "channel",
+            "approved_at"
+          ],
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cost_usd": {
+              "type": "number"
+            },
+            "channel": {
+              "enum": [
+                "A",
+                "B"
+              ]
+            },
+            "approved_at": {
+              "type": "string"
+            },
+            "quant_content_score": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "cross_tenant_integration_content": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kberdl_db_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sibling_project_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "project_id",
+              "what_was_leveraged"
+            ],
+            "properties": {
+              "project_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "what_was_leveraged": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "data_flow_diagram": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/diagram"
+            }
+          ]
+        },
+        "no_signal_fallback": {
+          "type": "boolean"
+        }
+      }
+    },
+    "implications_content": {
+      "type": "object",
+      "required": [
+        "title",
+        "bullets"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bullets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": [
+              "claim",
+              "evidence_pointer"
+            ],
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_pointer": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "acknowledgments_content": {
+      "type": "object",
+      "required": [
+        "contributors"
+      ],
+      "properties": {
+        "contributors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "funder_logos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tenant_attribution": {
+          "type": "string"
+        },
+        "code_repo_url": {
+          "type": "string"
+        }
+      }
+    },
+    "references_content": {
+      "type": "object",
+      "required": [
+        "refs_short"
+      ],
+      "properties": {
+        "refs_short": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ai_disclosure": {
+          "type": "string"
+        },
+        "full_pool_in_speaker_notes": {
+          "type": "boolean"
+        }
+      }
+    },
+    "qa_anticipated_content": {
+      "type": "object",
+      "required": [
+        "question",
+        "answer_summary",
+        "evidence_pointer"
+      ],
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer_detail": {
+          "type": "string"
+        },
+        "evidence_pointer": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "deck_close_content": {
+      "type": "object",
+      "required": [
+        "unified_point",
+        "key_takeaways",
+        "forward_call",
+        "data_source"
+      ],
+      "properties": {
+        "unified_point": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_takeaways": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "forward_call": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data_source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
 }
