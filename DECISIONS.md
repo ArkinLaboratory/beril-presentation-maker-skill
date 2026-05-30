@@ -2430,3 +2430,510 @@ needs per-arc refinement); D-064 / D-008 (the image-gen slot
 semantics this veto says need scope expansion);
 V0_7_PUNCH_LIST.md (when drafted); [[project-presentation-
 maker-v0-6]] (the v0.6 retrospective entry).
+
+---
+
+## D-085 — 2026-05-28 — v0.7 DQ1 (redirected): no figure budgeting; "use figure when relevant" rule + per-arc-relevance validator
+
+**Context:** D-084-A opened the v0.7 figure-placement question as
+a per-arc *distribution* concern (Adam-rubric "every arc should
+back a claim or finding by relevant figure if possible"). My
+initial framing assumed budgeting language: max-per-arc caps,
+variance, ratio bounds. Adam (2026-05-28): *"I am not sure we
+should budget figures at all. If they are useful use them. Images
+actually cost something and we may need metrics. Figures have
+already been calculated."*
+
+The reframe lands cleanly: figures are paid-for at curator time
+(deterministic Python extracts from notebook artifacts; no
+per-render cost). AI images, by contrast, cost real dollars per
+slide. Budgeting language belongs on the cost side (AI images,
+D-084-D), not the figure side.
+
+**Decision:** v0.7-A drops figure budgeting entirely. Two changes:
+
+1. **`prompts/slide_compose.v3.2_overlay.md` carries the rule:**
+   *"If a curated figure is relevant to this arc's claim, USE IT
+   (`data_figure` slide). Do not relegate a relevant figure to a
+   bullet. There is no per-arc figure cap; use as many curated
+   figures as are relevant. Cost is borne at curator time, not at
+   slide time."* Plus an anti-pattern: *"figure-as-bullet-citation
+   (using a figure path in a `data_source` field instead of
+   composing a `data_figure` slide for it)."*
+
+2. **`tools/check_figure_provenance.py` extension —
+   per-arc-relevance audit (no distribution math):**
+   For each substory, list curated figures whose NB-id matches
+   the substory's cited analyses (existing matching rule). For
+   each, check whether the substory has a `data_figure` slide
+   using it. Emit `relevant_figure_not_used` finding (P1
+   soft-warning per D-080 lineage) when a curated figure is
+   relevant but the substory composed only bullets / claim_evidence
+   for that figure's content. No distribution math; no per-arc
+   caps; the metric is simply: per-substory, did the composer
+   USE every relevant figure?
+
+The old D-080/D-081 utilization-rate metric (coverage breadth) is
+RETAINED as a regression check — v0.7 must not regress from
+v0.6's 100%. The new metric ADDS a relevance gate.
+
+**Rationale:** Adam's diagnosis is correct. Budgeting language
+implies scarcity; curated figures don't have it. The behavior we
+want is "use every relevant figure," not "distribute fairly across
+arcs." The per-arc-relevance audit catches the v0.6 failure mode
+(figures clustered in one arc because the composer chose bullets
+for arcs with available figures) without imposing arbitrary caps.
+
+**Alternatives considered:**
+
+- **Rule only, no validator** — rejected; D-080's belt-and-
+  suspenders pattern is the right precedent (validator catches
+  what prompt guidance misses). The validator is cheap (no LLM
+  cost; reads existing artifacts).
+- **Stronger hard rule "MUST use every relevant curated figure"
+  with P1 (not soft-warning)** — rejected; over-constrains the
+  composer. There ARE legitimate reasons to omit a relevant
+  figure (e.g., the arc's claim is about something the figure
+  doesn't directly show even though NB-id matches). Soft-warning
+  + Adam Tier-F read is the right level.
+- **Original budgeting framing (max-per-arc cap, variance, ratio,
+  per-arc utilization rate)** — rejected; assumes scarcity that
+  doesn't exist for curated figures.
+
+**Implementation refinement to D-080/D-081:** D-080 retains the
+inviolable rules 8 + 9 from v3.1 ("data_figure required when
+curated figure exists; prefer data_figure over claim_evidence for
+R-slide"). D-085 doesn't replace those — it adds the per-arc-
+relevance audit as a new finding class within the same validator.
+D-081's strict counting rule remains the basis for what counts as
+"figure used" (data_figure slide with `figure:` pointing at a
+curated path).
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) DQ1 + Tier A
++ Tier A.1; D-080 / D-081 (the figure-utilization contract v0.7
+extends, not replaces); D-072 (the register-discipline precedent
+for prompt-side + validator-side pairing).
+
+---
+
+## D-086 — 2026-05-28 — v0.7 DQ2: new `deck_close` layout with explicit fields
+
+**Context:** D-084-C opened the closing-synthesis question. Adam's
+Tier-F read: *"we never summarize in a conclusion bringing it all
+together."* The deck has per-substory C-slots (Q/A/R/C conclusions
+per arc) but no deck-spanning closer that unifies the arcs into a
+single takeaway.
+
+**Decision:** New `deck_close` layout with explicit fields:
+
+```yaml
+layout: deck_close
+content:
+  unified_point: <string>      # the deck's overall takeaway (1-2 sentences)
+  key_takeaways: <list[str]>   # 3-5 bullets, each tying to one arc/substory
+  forward_call: <string>       # the implication / next-step / open question
+  data_source: <string>        # cited substories or REPORT sections grounding the synthesis
+```
+
+Curator stage produces a structured input
+(`working/deck_close_signal.json` or extends an existing artifact)
+with these fields drawn from the deck's substories and REPORT
+synthesis sections. `slide_compose.v3.2_overlay.md` carries the
+authoring rule. Renderer adds a `_fill_deck_close` per-layout
+filler (parallel to `_fill_big_idea`, `_fill_claim_evidence`).
+Validator adds presence + field-shape checks.
+
+Position in deck: final slide after the final substory's C-slot
++ any references / acknowledgments. The orchestrator's slide-
+ordering logic places it.
+
+**Rationale:** The closing synthesis is structurally a different
+slide-kind than per-substory C-slots — it's deck-spanning, not
+substory-bounded. Adam (DQ2): explicit new layout. The structured-
+fields shape forces curator + composer to ground the synthesis in
+real substory content (mitigates slide-27-class fabrication risk
+per D-091 / Lesson 4 sweep).
+
+**Alternatives considered:**
+
+- **Extend `claim_evidence`/`big_idea` with a `closing` variant
+  flag** — rejected; magic-flag pattern, semantically muddier.
+- **Final substory's C-slot becomes implicitly the deck closer
+  (no new layout)** — rejected; puts a deck-spanning concern
+  inside a per-substory unit, harder to validate. Per D-086 (DQ2
+  answer), deck-spanning concerns get explicit slide-kinds.
+
+**Open at Tier C of v0.7:** does `deck_close` skip on lightning-5
+talks? Likely yes (no synthesis needed below STRONG mode budget
+18). Validator gates presence-required-iff-mode-≥-STRONG. Resolve
+at Tier C implementation.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) DQ2 + Tier C;
+D-084-C (the veto-finding this addresses); SPEC.md + LAYOUT.md
+(updated at Tier C to document the new layout).
+
+---
+
+## D-087 — 2026-05-28 — v0.7 DQ3: arc transitions via `substory_design.v3.2` overlay + `transition_from_prior` field
+
+**Context:** D-084-B opened the arc-transitions question. Adam's
+Tier-F read: *"We still don't really get arc transition and they
+don't build on each other."* substory_design + slide_compose are
+currently arc-independent; each substory composes in isolation.
+
+**Decision:** v0.7-B adds arc-transition awareness via the
+substory_design stage, not slide_compose:
+
+1. **`prompts/substory_design.v3.2_overlay.md`** (new — overlay
+   on the v1+v3 substory_design concat) instructs the
+   substory-design LLM to emit a `transition_from_prior` field
+   per substory (absent or null for substory 1). The field is
+   a short string (1-2 sentences) capturing what claim from the
+   prior substory this one builds on / responds to / extends.
+2. **`prompts/slide_compose.v3.2_overlay.md`** instructs the
+   composer to use `transition_from_prior` (when present) when
+   authoring the substory's first non-Q slot — typically the
+   answer (A) slide should open by referencing the prior arc's
+   conclusion before stating its own. Becomes a soft preference
+   in the composer, not an inviolable rule.
+
+Schema change: `substory_design` output adds an optional
+`transition_from_prior: Optional[str]` field per substory.
+Backward-compatible (older decks without the field render as
+before).
+
+**Rationale:** Adam (DQ3) chose substory_design over slide_compose
+for cleaner data flow. The reasoning: arc-transition awareness is
+fundamentally about cross-substory relationships, which is the
+substory_design stage's job (it clusters notebooks into substories
++ assigns their order). slide_compose composes one substory at a
+time; pushing transition logic into a per-substory composer adds
+cross-substory awareness in the wrong place.
+
+This is more architecturally correct than my initial recommendation
+(slide_compose overlay only). The trade-off Adam accepted:
+substory_design schema change (small, additive, backward-compatible)
+in exchange for the cleaner data flow.
+
+**Alternatives considered:**
+
+- **`slide_compose.v3.2_overlay` guidance only (no substory-design
+  schema change)** — rejected per Adam DQ3 answer. Composer
+  already sees all substories in context but pushing the cross-arc
+  decision into the per-substory composer puts it in the wrong
+  place.
+- **New `arc_bridge` layout between substories (dedicated
+  transition slides)** — rejected; adds slide-count which
+  conflicts with the compression carry from v0.5.1 (decks already
+  trend slightly over mode budget).
+
+**Open at Tier B implementation:** is `transition_from_prior` a
+free-text field or a structured one (e.g., `references_claim:
+<substory-id.claim-id>`)? Likely free-text for v0.7; structured
+references add a v0.8 design surface. Resolve at Tier B.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) DQ3 + Tier B;
+D-084-B (the veto-finding this addresses); D-075 (the concat-
+overlay pattern v3.2 extends).
+
+---
+
+## D-088 — 2026-05-28 — v0.7 DQ4: image-gen scope expansion to `claim_evidence` with ≥3 distinct bullets
+
+**Context:** D-084-D opened the image-gen scope question. v0.6
+Tier-F diagnostic (Explore subagent 2026-05-28) found the
+LLM-judge is correctly conservative — rejects 29/30 image
+decisions on ibd. The constraint is the *eligible slot set*
+(D-008/D-064 reserve `concept_illustration` for metaphors, which
+in practice limits to `big_idea` slides), not the judge bar.
+Adam-direction (D-084 v0.7 input): expand scope.
+
+**Decision:** v0.7-D expands image-gen approval scope as follows:
+
+1. **Eligibility**: `claim_evidence` slides with ≥3 distinct
+   bullets become eligible for AI illustration in addition to the
+   existing `big_idea` slot. "Distinct bullet" means a bullet
+   describing a concept / mechanism / phase / category that's
+   visually representable (e.g., "three mechanisms: iron
+   acquisition, bile-acid 7α-dehydroxylation, AIEC pathology" →
+   3-panel diagram). The decision LLM-judge gets this as a new
+   eligibility gate.
+
+2. **Prompt template extension**: `image_gen_decision.py`'s
+   prompt-generation step (which composes the image-gen prompt
+   from the slide's content) is extended to pull technical detail
+   from the substory's analyses (methods text, statistics,
+   mechanism vocabulary) when the slide is `claim_evidence`. New
+   input contract: `image_gen_decision.py` receives the substory's
+   analyses references (notebook IDs + analysis names) so it can
+   compose technical-flavored prompts. Implementation: read
+   `02_substories.md` (already present in audit) and pass per-
+   substory analysis text to the prompt-generator.
+
+3. **Judge criterion extension**: the LLM-judge approval prompt
+   adds a "technical-specificity" criterion. Specifically: the
+   judge must reject a generated image if its visual content is
+   generic (e.g., abstract microbiome art) and approve only if it
+   carries identifiable technical elements (e.g., labeled diagram
+   panels matching the slide's bullets, schematic-style mechanism
+   illustration). Adds explicit rubric to the existing judge prompt.
+
+Expected behavior change: ibd deck (v0.6 baseline = 1 approved,
+on intro big_idea) might gain 1-3 additional approvals on
+technically-amenable claim_evidence slides. Cap eligibility at
+~4 approvals total per deck to bound cost (~$0.40 per image →
+~$1.60 worst case; current v0.6 spend was ~$0.05 per deck).
+
+**Rationale:** Adam (DQ4) chose the narrowest expansion. The
+judge's current strictness is doing the right thing (rejecting
+"generic illustration cannot meaningfully represent specific
+stats"). The constraint to relax is the eligible *slot set*, not
+the judge bar. claim_evidence-with-3-bullets is the smallest
+expansion that addresses Adam's "technical detail would be nice"
+feedback without flooding the judge with marginal candidates.
+
+**Alternatives considered:**
+
+- **`claim_evidence` + any R-slide (data_figure or
+  claim_evidence)** — rejected per Adam DQ4; broader scope, lower
+  precision, judge floods with too many candidates.
+- **All non-Q layouts except `data_figure`** — rejected per Adam
+  DQ4; broadest expansion, risks producing AI images on slots
+  that don't benefit (section_divider, agenda, etc.).
+- **Accept the slot's intent / no expansion (B from v0.6 Tier-F)**
+  — already rejected at D-084 (Adam direction was scope-expansion,
+  not expectation-reset).
+
+**Cost calibration:** image-gen ran ~$0.05/deck at v0.6 baseline
+(only 1 image approved). v0.7 expansion to ~4 images/deck pushes
+to ~$0.20/deck. Within the v0.7 live A/B's ~$26 budget envelope.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) DQ4 + Tier D;
+D-084-D (the veto-finding this addresses); D-008 / D-064 (the
+image-gen slot semantics v0.7-D refines); M5b retrospective
+[[project-presentation-maker-v0-4-m5b]] (the image-gen
+multi-provider layer that v0.7-D extends judge logic on).
+
+---
+
+## D-089 — 2026-05-28 — v0.7 DQ5: narrow fix to `cross_tenant_integration` speaker_notes + title; extend signal extractor
+
+**Context:** D-084-E opened the structured methods-slot question.
+The Tier-F diagnostic flagged slide 27 on ibd as the bug instance;
+the C2 audit (D-091) confirmed the bug is **localized** to the
+`cross_tenant_integration` layout, not a missing methods slot or
+a broader template-vulnerability class. Specifically:
+
+- The slide's `kberdl_db_list` field IS already structured-
+  sourced from `working/cross_tenant_signal.json` (and is
+  correct: 8 DBs).
+- The slide's `title` and `speaker_notes` are composer-authored
+  free-text. The title says "8 K-BERDL databases" (correct
+  count) but doesn't mention external reference DBs (MIBiG,
+  MetaCyc, GTDB, BRENDA) or external cohorts (HMP2 cited 15× per
+  the substory diagnostic). The speaker_notes claim "31
+  notebooks" (off by 1: 32 active vs 1 superseded NB01-parent)
+  and offer per-database attribution that's incomplete.
+
+So the v0.7-E fix is narrower than D-084-E originally framed.
+Adam (DQ5): narrow fix; defer broader methods_summary layout
+reform to v0.8 if it becomes necessary.
+
+**Decision:** v0.7-E ships:
+
+1. **Signal extractor extension** (`tools/extract_cross_tenant.py`
+   or equivalent — the M1 stage that produces
+   `cross_tenant_signal.json`): extend the extracted signal with
+   three new fields:
+   - `reference_databases: list[str]` — names of external annotation
+     databases detected in README/REPORT/notebooks (MIBiG, MetaCyc,
+     GTDB, BRENDA, INPHARED, etc.). Detection: deterministic
+     keyword scan of README + REPORT + notebook headers.
+   - `external_cohorts: list[str]` — names of external cohorts
+     cited (HMP2, FRANZOSA_2019, etc.). Detection: same keyword
+     scan + cross-reference with substory analyses.
+   - `notebook_count: int` — count of active notebooks (read
+     from `methods_provenance.md` or `02_substories.md`'s
+     analysis list). Excludes superseded notebooks (e.g.,
+     NB01 parent superseded by NB01b).
+
+2. **Composer agent update** (`cross_tenant.v1.md` per the C2
+   audit's pointer to the composer agent for this layout):
+   composer reads the extended structured signal and produces
+   title + speaker_notes that enumerate primary K-BERDL DBs +
+   external reference DBs + external cohorts + correct notebook
+   count. NO free-text invention of these counts/names.
+
+3. **Validator extension**: `tools/check_cross_tenant_grounding.py`
+   (new, or extend an existing validator) compares the composed
+   slide's title + speaker_notes against the structured signal —
+   flags any database/cohort named in title/notes that isn't in
+   the signal (potential hallucination) and any structured-
+   signal entry missing from notes (omission). Cascade-integrated
+   as P1 (soft-warning, advisory).
+
+Broader v0.8+ design (per Adam DQ5 "narrow now"): a new
+`methods_summary` layout that materializes the full methods
+provenance as a structured slide (D-084-E's original framing) is
+DEFERRED pending v0.7 Tier-F read outcome. If Adam reads v0.7
+and methods feels under-presented, v0.8 picks it up.
+
+**Rationale:** Adam (DQ5) chose narrow. The bug Adam flagged is
+specifically on cross_tenant_integration's free-text fields; the
+broader template-vulnerability class is mostly mythical per the
+C2 audit. Fix the actual bug; don't add a new layout
+preemptively.
+
+**Alternatives considered:**
+
+- **Broader: new methods_summary layout end-to-end** — rejected
+  per Adam DQ5 + C2 audit. Over-engineered for the actual bug.
+- **Both: narrow fix now + design broader v0.8** — partially
+  adopted; the narrow fix is v0.7-E; the broader design surface
+  remains open for v0.8 if v0.7 reads expose more.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) DQ5 + Tier E;
+D-084-E (the veto-finding this addresses); D-091 (the C2 audit
+that confirmed bug is localized); `working/cross_tenant_signal.json`
+(the structured signal v0.7-E extends).
+
+---
+
+## D-090 — 2026-05-28 — v0.7 C1: resumable cascade + pre-cascade checkpoint marker + `resume-cascade` CLI
+
+**Context:** v0.6 Tier-E live run on fdm rendered a valid .pptx
+but the audit directory is missing `review_cascade.json`,
+`adversarial_review.*`, and `presentation_validation.json` that
+ibd has. v0.7 Tier-0 C1 diagnostic (Explore subagent
+2026-05-28) root-caused: **operator-side interruption** — fdm's
+`run-summary.json` has `exit_code: 1` (vs ibd's `0`); the
+orchestrator was killed (Ctrl-C / shell close / signal) after
+merge/assemble but before the cascade wrote artifacts. The cascade
+is "advisory rc=0 always" so it would write a stub on internal
+failure; its complete absence means it never finished or never
+started.
+
+**Decision:** v0.7 adds three pieces to address the interruption
+class:
+
+1. **Idempotent / resumable cascade**: `stage_review_cascade`
+   in `presentation_maker.sh` becomes invokable against an
+   existing draft directory without re-running upstream stages.
+   The stage already reads `slide_spec.json` from disk; the
+   change is to remove any implicit dependencies on transient
+   in-memory state and ensure the stage's pre-conditions are
+   purely "draft directory exists + slide_spec.json valid."
+
+2. **Pre-cascade checkpoint marker**: write
+   `audit/cascade-started.json` with timestamp + git sha + the
+   stage list it plans to run BEFORE the cascade stages execute.
+   On clean completion, write `audit/cascade-completed.json`
+   with the same shape + completion timestamp. The difference
+   `started without completed` is the signature of an
+   interruption.
+
+3. **Operator-facing CLI subcommand**: `presentation_maker.sh
+   resume-cascade <draft-dir>` — invokes
+   `stage_review_cascade` against the named draft directory
+   without re-running merge/assemble. Operators can recover
+   from interruptions without paying the full live cost
+   (~$26) again.
+
+**Rationale:** Live runs are expensive; losing a deck's cascade
+artifacts to an interruption means re-running the full pipeline.
+Resumable cascade lets us recover cleanly; checkpoint markers let
+us diagnose. The CLI surface makes the recovery path explicit
+rather than requiring operators to know the orchestrator's
+internals.
+
+**Alternatives considered:**
+
+- **Checkpoint marker only; defer resumability** — rejected per
+  Adam C1 answer. Without resumability, the marker just tells
+  us "you lost the artifacts" — operationally insufficient.
+- **Defer entire fix to v0.8** — rejected per Adam C1 answer.
+  Risk of recurrence during v0.7's own live A/B (Tier G/H) is
+  real; better to fix before the risk lands.
+
+**Verification at v0.7 Tier 0**: invoke `resume-cascade` against
+the existing v0.6 fdm draft_6 directory; expect it to produce the
+three missing artifacts (review_cascade, adversarial_review,
+presentation_validation) without re-running merge/assemble. This
+also retroactively heals the v0.6 fdm audit gap.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) C1 + Tier 0;
+[[project-presentation-maker-v0-6]] §"Lesson 5" (the FDM cascade
+interruption that surfaced this); D-083 (the orchestrator
+tee/stderr fix from v0.6 — different bug class but adjacent
+reliability surface).
+
+---
+
+## D-091 — 2026-05-28 — v0.7 C2: per-slot template audit results — bug is localized to `cross_tenant_integration`; no broader fix needed in v0.7
+
+**Context:** v0.6 Lesson 4 (Adam Tier-F retrospective) flagged
+"per-slot composer templates are an under-examined failure
+surface." The slide-27 bug suggested other deck-spanning slots
+might have similar template-vulnerability (composer free-texts
+ground-truth claims that should be data-driven). v0.7 Tier-0
+C2 commissioned a per-slot audit.
+
+**Decision (audit result, not a design change):** the audit
+(Explore subagent 2026-05-28) found **no other vulnerable slots
+beyond the speaker_notes + title fields on
+`cross_tenant_integration`.** Every deck-spanning slot is one of:
+
+- **Placeholder-only**: `title`, `acknowledgments` — no factual
+  claims to fabricate.
+- **Structured-sourced**: `cross_tenant_integration.kberdl_db_list`
+  (from `cross_tenant_signal.json`), `references` (from
+  `citation_pool.json`), `methods_summary` (M0 design — from
+  `methods_provenance.md`). Composer reads structured fields,
+  does not invent.
+- **Per-substory + Q/A/R/C-protected**: `claim_evidence`,
+  `data_figure`, `data_table`, `workflow_diagram`,
+  `section_divider`, `big_idea`. v3 / v3.1 overlays + D-072
+  register-discipline + D-080 figure-utilization contracts cover
+  these.
+
+The slide-27 bug is genuinely localized: `cross_tenant_integration`
+has structured `kberdl_db_list` but free-text `title` +
+`speaker_notes`. D-089 fixes that one slot. No other slots need
+v0.7 work for the same bug class.
+
+**Implication for v0.7 scope:** D-084-E's framing as "per-slot
+template under-specification is a structural class needing
+sweep+fix" was too broad. The class exists conceptually (Lesson
+4 stands as a lesson — free-text fields that assert ground-truth
+claims ARE vulnerable wherever they appear), but in practice the
+sweep found exactly one slot instance. Fix that one, move on.
+
+**Implication for v0.8+**: any NEW layout added later (including
+`deck_close` from D-086) should be design-audited for the same
+class before composer-authoring kicks in. The C2 audit also
+flagged the proposed `deck_close` design as "vulnerable only if
+the unified_point / key_takeaways / forward_call fields are
+free-text composed without grounding in structured curator
+output." D-086's design forces those fields through a
+`deck_close_signal.json` (or equivalent) — that's the
+preventive design pattern. Codified for future layouts.
+
+**Rationale:** Empirical audit beats theoretical sweep. The bug
+Adam flagged was real but narrower than the framing implied.
+Don't add layout-reform work to v0.7 for a bug class that's a
+single instance.
+
+**Alternatives considered:**
+
+- **Defensive layout reform for all deck-spanning slots** —
+  rejected as over-engineering for a single instance.
+- **Defer the audit, just fix slide 27** — rejected; the audit
+  was cheap (~5 min subagent) and the negative result IS
+  valuable evidence for v0.7 scope sizing.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) C2 + Tier 0;
+[[project-presentation-maker-v0-6]] §"Lesson 4" (the per-slot
+template lesson this audit operationalizes); D-089 (the localized
+fix the audit narrowed scope to); D-086 (the deck_close layout
+design that incorporates the audit's preventive-pattern
+guidance).
