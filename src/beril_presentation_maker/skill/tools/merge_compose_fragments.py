@@ -606,6 +606,17 @@ def main() -> int:
                          "(qa_prep stage output). If present, splice "
                          "qa_anticipated slides at deck end before "
                          "acknowledgments.")
+    ap.add_argument("--deck-close-fragment-path", default=None,
+                    help="v0.7/D-086 Tier C.3: optional path to "
+                         "deck_close.json fragment (stage_deck_close "
+                         "output). If present and non-empty, splice "
+                         "as the deck's narrative closer between the "
+                         "final substory's last slide and the "
+                         "cross_tenant / qa / acks / refs metadata "
+                         "block. Empty slides[] (no_signal_fallback "
+                         "from extract_deck_close) → nothing spliced; "
+                         "validate_slide_spec's mode-gated soft-warning "
+                         "surfaces the absent slide on talk-30 STRONG.")
     ap.add_argument("--image-manifest-path", default=None,
                     help="Optional path to working/05_images/manifest.json "
                          "(v0.3.3 image-gen stage output). If present, "
@@ -751,6 +762,49 @@ def main() -> int:
     n_notes_derived = derive_speaker_notes_files(
         fragments, substories, speaker_notes_dir
     )
+
+    # 3.5. Deck-close slide (v0.7/D-086 Tier C.3 — optional, deck-
+    #      level, between final substory and the metadata block).
+    #      Per D-086 the deck_close is the deck's narrative closer:
+    #      unified_point + 3-5 key_takeaways + forward_call +
+    #      data_source synthesized from substory C-slots + REPORT
+    #      Future-directions. Goes BEFORE cross_tenant + qa +
+    #      acks + refs so the closing synthesis is the last
+    #      narrative beat before the metadata slides.
+    #
+    #      Mode-gated upstream (orchestrator only invokes
+    #      stage_deck_close on talk-30 STRONG); below STRONG the
+    #      fragment file may not exist, OR it exists with empty
+    #      slides[] (no_signal_fallback case). Both shapes are
+    #      handled here: missing-file → skip silently; empty
+    #      slides[] → splice nothing. The mode-gated soft-warning
+    #      in validate_slide_spec catches the talk-30 case where
+    #      the slide SHOULD have landed but didn't.
+    deck_close_path = (Path(args.deck_close_fragment_path)
+                       if args.deck_close_fragment_path else None)
+    if deck_close_path is not None and deck_close_path.is_file():
+        try:
+            dc_data = _load_json_lenient(deck_close_path)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: cannot parse deck_close fragment at "
+                  f"{deck_close_path}: {e}", file=sys.stderr)
+            dc_data = None
+        if isinstance(dc_data, dict):
+            dc_slides = dc_data.get("slides", [])
+            for dc_slide in dc_slides:
+                # Promote speaker_notes_seed → speaker_notes per the
+                # deck_close.v1 contract (parallel to cross_tenant's
+                # pattern; the speaker_notes stage runs only on
+                # substory slides).
+                seed = dc_slide.get("speaker_notes_seed")
+                cleaned = strip_orchestrator_metadata(dc_slide)
+                if (isinstance(seed, str) and seed.strip()
+                        and "speaker_notes" not in cleaned):
+                    cleaned["speaker_notes"] = seed.strip()
+                cleaned["id"] = next_id
+                cleaned.pop("substory_id", None)
+                slides.append(cleaned)
+                next_id += 1
 
     # 4. Cross-tenant slide (optional, deck-level — between last substory
     #    and acknowledgments). Per cross_tenant.v1.md, this is a single

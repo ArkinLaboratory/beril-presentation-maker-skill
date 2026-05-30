@@ -478,10 +478,10 @@ esac
 # (added in v0.3.0). v0.3.3: extended to include image_gen (between
 # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3).
 case "$RESUME_FROM" in
-  ""|plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
+  ""|plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|deck_close|speaker_notes|image_gen|merge|adversarial_review|revise_slides) ;;
   *)
     echo "Error: invalid --resume-from '$RESUME_FROM'" >&2
-    echo "       valid stages: plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
+    echo "       valid stages: plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|deck_close|speaker_notes|image_gen|merge|adversarial_review|revise_slides" >&2
     exit 1 ;;
 esac
 if [[ -n "$RESUME_FROM" && -z "$DRAFT_DIR_OVERRIDE" ]]; then
@@ -968,6 +968,8 @@ set_draft_paths() {
   CITATION_POOL_PATH="$WORKING_DIR/citation_pool.json"
   CROSS_TENANT_MD="$WORKING_DIR/cross_tenant_signal.md"
   CROSS_TENANT_JSON="$WORKING_DIR/cross_tenant_signal.json"
+  # v0.7/D-086 Tier C: deck_close curator signal + composer fragment.
+  DECK_CLOSE_SIGNAL_JSON="$WORKING_DIR/deck_close_signal.json"
   CURATED_FIGURES="$WORKING_DIR/curated_figures.md"
   FIGURES_INVENTORY="$WORKING_DIR/figures_inventory.md"
   # v0.4 M1/M3: Phase-0 reuse/originate staging (phase0_reuse.py output).
@@ -1713,6 +1715,101 @@ as a JSON fragment with kind='cross_tenant_set' to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/cross_tenant.v1.md" \
     "$user_prompt" "$fragment_path" "cross_tenant"
+}
+
+stage_deck_close() {
+  # v0.7/D-086 Tier C.3: deck-spanning closing-synthesis slide.
+  # Two-step (mirrors stage_cross_tenant per D-086 + Adam Tier-0 DQ
+  # "Separate stage emits deck_close.json fragment"):
+  # (a) Run extract_deck_close.py to pull the structured signal from
+  #     narrative/02_substories.md (per-substory Conclusion-for-next)
+  #     + narrative/00_throughline.md (unified_point) + REPORT.md
+  #     (forward_call from Future-directions / Next-steps sections).
+  # (b) If signal present, run deck_close.v1.md to compose a single
+  #     deck_close slide. Composer reads structured fields VERBATIM
+  #     per D-086; if no signal (curator-stage failure), skip the
+  #     LLM call and emit an empty-slides fragment so the merger
+  #     splices nothing — Tier C.0's mode-gated soft-warning will
+  #     surface the absence on talk-30 STRONG runs.
+  #
+  # Mode-gating per Adam Tier-0 DQ2: only fire on talk-30 STRONG;
+  # talk-45 / talk-15 / lightning-5 skip silently. The skip is
+  # SILENT (not "skipped advisory") because deck_close is optional
+  # by design on sub-STRONG modes; the per-substory C-slots
+  # provide sufficient closure at those talk lengths.
+  echo "" >&2
+  echo "[Stage 4.5/5] deck_close" >&2
+
+  if [[ "$MODE" != "talk-30" ]]; then
+    echo "  mode=$MODE — deck_close is optional below talk-30 STRONG (D-086); skipping" >&2
+    return 0
+  fi
+
+  local signal_json="$DECK_CLOSE_SIGNAL_JSON"
+  local fragment_path="$SLIDES_DIR/deck_close.json"
+
+  # Step (a): extract signal
+  "$PYTHON_BIN" "$TOOLS_DIR/extract_deck_close.py" \
+    "$OUTDIR" \
+    --out "$signal_json" \
+    --quiet 2>&1 | sed 's/^/    /' >&2
+
+  # Step (b): check signal + decide whether to compose
+  local has_signal
+  has_signal=$("$PYTHON_BIN" -c "
+import json, sys
+try:
+    d = json.load(open('$signal_json'))
+    print('false' if d.get('no_signal_fallback') else 'true')
+except Exception:
+    print('false', file=sys.stderr)
+    print('false')
+")
+
+  if [[ "$has_signal" != "true" ]]; then
+    echo "  no deck_close signal detected (curator-stage extraction" >&2
+    echo "  could not pull per-substory takeaways) — emitting empty" >&2
+    echo "  fragment so the merger splices nothing. The Tier C.0" >&2
+    echo "  mode-gated soft-warning will surface the absent slide" >&2
+    echo "  on talk-30 for Tier-F review." >&2
+    # Emit an empty-slides fragment so merge_compose_fragments
+    # doesn't crash on a missing file when the user passes
+    # --deck-close-fragment-path; the merger's "splice if non-empty"
+    # logic handles the empty case.
+    cat > "$fragment_path" <<EOF
+{
+  "schema_version": "compose-fragment.v1",
+  "kind": "deck_close_set",
+  "mode": "$MODE",
+  "tier": "$TIER",
+  "slides": []
+}
+EOF
+    return 0
+  fi
+
+  echo "  deck_close signal extracted — composing slide" >&2
+
+  local user_prompt="OUT_PATH=$fragment_path
+PROJECT_DIR=$PROJECT_DIR
+SIGNAL_PATH=$signal_json
+PLAN_PATH=$PLAN_PATH
+THROUGHLINE_PATH=$THROUGHLINE_PATH
+SUBSTORY_PATH=$SUBSTORIES_PATH
+MODE=$MODE
+TIER=$TIER
+
+Run the deck_close stage. The signal file (SIGNAL_PATH, produced \
+by extract_deck_close.py) contains the curator-approved structured \
+fields (unified_point + key_takeaways + forward_call + data_source) \
+extracted from the throughline + per-substory Conclusion-for-next \
+fields + REPORT.md Future-directions section. Per D-086, compose \
+the slide content VERBATIM from the signal (light typography polish \
+allowed; no synthesis drift). Write a SINGLE deck_close slide as a \
+JSON fragment with kind='deck_close_set' to OUT_PATH."
+
+  invoke_claude_with_retry "$PROMPTS_DIR/deck_close.v1.md" \
+    "$user_prompt" "$fragment_path" "deck_close"
 }
 
 stage_intro() {
@@ -2559,6 +2656,7 @@ stage_merge_and_assemble() {
     --citation-pool-path "$CITATION_POOL_PATH" \
     --cross-tenant-fragment-path "$SLIDES_DIR/cross_tenant.json" \
     --qa-fragment-path "$SLIDES_DIR/qa_anticipated.json" \
+    --deck-close-fragment-path "$SLIDES_DIR/deck_close.json" \
     ${manifest_arg[@]+"${manifest_arg[@]}"} \
     --out "$spec_raw"
 
@@ -2974,10 +3072,14 @@ should_run() {
   # deck_outline, so its stage ordinals differ from the v0.3.x map. Pick
   # the ordinal map by --architecture-pipeline.
   local ordinals
+  # v0.7/D-086 Tier C.3: deck_close inserted after qa_prep (both
+  # are deck-level closers consumed at merge time; deck_close has
+  # to come after slide_compose so substory C-slot conclusions are
+  # readable). Stages from speaker_notes onward shift by 1.
   if [[ "$ARCH_PIPELINE" == "v0_4" ]]; then
-    ordinals="plan:1 throughline:2 phase0_tooling:3 curate_figures:4 citation_pool:5 cross_tenant:6 deck_outline:7 intro:8 slide_compose:9 qa_prep:10 speaker_notes:11 image_gen:12 merge:13 adversarial_review:14 revise_slides:15"
+    ordinals="plan:1 throughline:2 phase0_tooling:3 curate_figures:4 citation_pool:5 cross_tenant:6 deck_outline:7 intro:8 slide_compose:9 qa_prep:10 deck_close:11 speaker_notes:12 image_gen:13 merge:14 adversarial_review:15 revise_slides:16"
   else
-    ordinals="plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 speaker_notes:10 image_gen:11 merge:12 adversarial_review:13 revise_slides:14"
+    ordinals="plan:1 throughline:2 substory_design:3 curate_figures:4 citation_pool:5 cross_tenant:6 intro:7 slide_compose:8 qa_prep:9 deck_close:10 speaker_notes:11 image_gen:12 merge:13 adversarial_review:14 revise_slides:15"
   fi
   for o in $ordinals; do
     case "$o" in
@@ -3042,6 +3144,14 @@ if should_run slide_compose;    then stage_slide_compose   || { echo "FAIL at sl
 
 if should_run qa_prep;          then stage_qa_prep         || { echo "FAIL at qa_prep" >&2; exit 1; }
                                 else echo "[skip] qa_prep (resume from $RESUME_FROM)" >&2; fi
+
+# v0.7/D-086 Tier C.3: deck-spanning closing-synthesis slide.
+# Mode-gated to talk-30 STRONG inside stage_deck_close itself
+# (silent skip on sub-STRONG modes). Reads substory C-slots +
+# throughline + REPORT.md to produce the deck_close.json fragment
+# the merger splices between the final substory and cross_tenant.
+if should_run deck_close;       then stage_deck_close      || { echo "FAIL at deck_close" >&2; exit 1; }
+                                else echo "[skip] deck_close (resume from $RESUME_FROM)" >&2; fi
 
 # v0.4 M3 (D-033): the v0.4 composer (slide_compose.v2.md) authors
 # speaker notes inline — the separate speaker_notes stage is retired
