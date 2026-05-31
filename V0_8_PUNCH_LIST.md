@@ -148,7 +148,31 @@ result. Metric targets for v0.8:
   finds "result-from-later-section on intro slide" pattern.
   Target 0. v0.7 baseline: 1 per deck (slide 3 intro-pos1).
 
-## DQs to resolve at Tier 0 sign-off
+## DQs resolved at Tier 0 sign-off (2026-05-31)
+
+All five DQs resolved 2026-05-31. See DECISIONS.md D-093..D-097
+for the full rationale + alternatives considered. Summary:
+
+| DQ | Decision | Anchor |
+|---|---|---|
+| DQ1 (curator figure-floor) | Belt-and-suspenders: curate_figures agent nudge + new check_curator_figure_floor.py validator (cascade-integrated as tier-1 reader). Mirrors D-080 / D-085 / D-089 pattern. | D-093 |
+| DQ2 (deck_close data_source) | Speaker-notes promotion (renderer drops data_source from slide face + promotes to speaker_notes "Sources:" section). Schema preserved; composer-doc clarified. | D-094 |
+| DQ3 (substory_design v3.3) | Ship clean v3.3 overlay on v1 directly (NOT stacked on v3/v3.2) consolidating Q/A/R/C + transition_from_prior into one template with explicit "v3.3 supersedes" recency-bias mitigation. Retire v3.2 substory_design from default; slide_compose stays v3.2 (not vulnerable per Tier-0 root-cause subagent). | D-095 |
+| DQ4 (visual-QA modes) | Default-ON for talk-30 STRONG + talk-15 STRONG/BRIEF. New --no-visual-qa opt-out flag. lightning-5 + poster stay opt-in via --visual-qa. | D-096 |
+| DQ5 (AI-image content-grounding) | Prompt input only for v0.8 MVP: ai_image_prompt.v1.md gets new DECK_POSITION input + intro-slide spoiler rule + PA-9 anti-pattern. Post-image validator deferred to v0.8.1 if Tier-F shows prompt-side fix insufficient. | D-097 |
+
+**Root-cause investigation** (F3 prompt-layering bug) completed
+at Tier 0 via Explore subagent (2026-05-31). Finding: v3.2
+substory_design overlay's example block re-shows v3 fields but
+lacks v3's explicit "this template SUPERSEDES" language. LLMs
+weight prompt-tail heavily (recency bias); the v3.2 example
+became authoritative + fields-not-restated got dropped.
+slide_compose v3.2 doesn't have the same vulnerability (smoke
+harness LAYOUT_REQUIRED_FIELDS map enforces shape independent
+of prompt-tail). v3.3 substory_design only (not slide_compose).
+
+<details>
+<summary>Original DQ language (kept for historical reference)</summary>
 
 ### DQ1: F1 curator figure-floor — strict rule or advisory?
 
@@ -263,18 +287,20 @@ v0.8 fix is upstream prevention.
 
 **Resolves at Tier 0.**
 
+</details>
+
 ## Per-tier scope
 
 | Tier | Scope | Status |
 |---|---|---|
-| 0 — DQ1-DQ5 sign-off + v0.7-carry investigation | research + DECISIONS | ⬜ not started |
-| A — F1: curator figure-floor (prompt + validator + cascade integration) | curator stage | ⬜ not started |
-| B — F2: deck_close length + data_source shape fix (extractor + renderer + validator) | shape fix | ⬜ not started |
-| C — F3: substory_design v3.3 + smoke extension | prompt + smoke | ⬜ not started |
-| D — F4: visual-QA default-on for STRONG/BRIEF + --no-visual-qa flag | orchestrator | ⬜ not started |
-| E — F5: AI-image content-grounding (DECK_POSITION input + intro-slide rule) | prompt + (maybe) validator | ⬜ not started |
-| F — smoke harness extension for v3.3 (Tier-C dependency) | smoke tool | ⬜ not started |
-| G — live A/B re-run on ibd_phage_targeting (v3.3) | live (~$13) | ⬜ not started |
+| 0 — DQ1-DQ5 sign-off + F3 prompt-layering root-cause | research + DECISIONS | ✅ done 2026-05-31 (D-093..D-097 in DECISIONS.md; Adam-confirmed; F3 root cause = LLM recency-bias displacement on v3.2 substory_design example block; slide_compose v3.2 not vulnerable per subagent's LAYOUT_REQUIRED_FIELDS-based reasoning; v3.3 substory_design ONLY scope, not slide_compose). |
+| A — F1: curator figure-floor per D-093 (curate_figures agent nudge + new check_curator_figure_floor.py validator + cascade integration) | curator stage | ⬜ not started |
+| B — F2: deck_close data_source speaker-notes promotion per D-094 (_fill_deck_close renderer + deck_close.v1 composer doc) | renderer + composer-doc | ⬜ not started |
+| C — F3: clean v3.3 substory_design overlay per D-095 (substory_design.v3.3_overlay.md on v1 + orchestrator --prompts-version v3.3 + retire v3.2) | prompt + orchestrator | ⬜ not started |
+| D — F4: visual-QA default-on per D-096 (orchestrator mode-aware VISUAL_QA toggle + --no-visual-qa opt-out flag + --help doc) | orchestrator | ⬜ not started |
+| E — F5: AI-image content-grounding per D-097 (ai_image_prompt.v1.md DECK_POSITION input + intro-slide spoiler rule + PA-9 anti-pattern + orchestrator wiring) | prompt + orchestrator | ⬜ not started |
+| F — smoke harness extension for v3.3 substory_design field-presence assertions per D-095 (smoke_v3_prompt.py + new validate_substory_design_fields function) | smoke tool | ⬜ not started |
+| G — live A/B re-run on ibd_phage_targeting (v3.3 substory + v3.2 slide_compose) | live (~$13) | ⬜ not started |
 | H — live A/B re-run on functional_dark_matter (v3.3) | live (~$13) | ⬜ not started |
 | I — Adam reads decks + casts veto | review + DECISION | ⬜ not started |
 | J — docs (DECISIONS + RELEASE_NOTES + LAYOUT + SPEC per veto) | docs | ⬜ not started |

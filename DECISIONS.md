@@ -3196,3 +3196,436 @@ that worked mechanically but didn't address curator-stage
 gaps Adam reads as sub-arc-without-figures);
 [[project-presentation-maker-v0-7]] (the v0.7 retrospective
 auto-memory entry).
+
+---
+
+## D-093 — 2026-05-31 — v0.8 DQ1: curator figure-floor — belt-and-suspenders (prompt nudge + validator)
+
+**Context:** D-092 v0.7 Tier-I finding 1: Adam's "I am still
+surprised at how often a sub-arc has no figures." Mechanically
+the D-085 figure-relevance metric is correct (every available
+curated figure used, 0 `relevant_figure_not_used` findings on
+both v0.7 decks). But the curator-stage `curated_figures.md`
+shortlist is too narrow — some substories have 0 curated
+figures despite having candidate figures in their analyses'
+notebooks. The composer can't conjure figures the curator
+didn't surface; the validator gives empty-shortlist substories
+a free pass; Adam reads "STRONG-mode substory has no figure"
+and registers a real qualitative gap.
+
+**Decision (Adam Tier-0 DQ1 2026-05-31):** belt-and-suspenders
+matching the D-080 + D-085 + D-089 pattern v0.7 proved works.
+Two pieces:
+
+1. **Curator agent prompt nudge** (`tools/curate_figures.v1.md`
+   or successor — whatever the v0.7 curator agent is). New
+   rule: when a substory's analyses (per
+   `02_substories.md` Critical-analyses-covered) have ≥1 figure
+   candidate in their source notebooks, the curator MUST emit
+   ≥1 figure for that substory into `working/curated_figures.md`.
+   Soft preference; the prompt also notes "exclude figures
+   below quality threshold X" as a counter-incentive so the
+   curator doesn't over-emit weak figures.
+
+2. **New `tools/check_curator_figure_floor.py` validator**.
+   For each substory: count notebook-candidate figures
+   (figures in `figures/` directory whose NB-id prefix matches
+   the substory's analyses); count curated figures (entries in
+   `curated_figures.md` whose NB-id matches). If candidates > 0
+   AND curated == 0, emit P1 soft-warning
+   `substory_no_curated_figure_despite_candidates`.
+
+Cascade-integrated as a new tier-1 reader mirroring
+`_read_figure_provenance` from D-080 / D-091. The validator
+gives Adam the metric he was implicitly using during the
+v0.7 Tier-I read — "which substories had nothing to look at."
+
+**Rationale:** Adam DQ1 answer chose option (c) — belt-and-
+suspenders. The D-080 pattern (validator + prompt nudge) has
+worked across D-080 (v0.6), D-085 (v0.7-A.1), D-089 (v0.7-E.2)
+— consistent enough to make it the default for this class of
+"composer needs upstream-stage discipline" fix.
+
+**Alternatives considered:**
+
+- **(b) Hard rule, curator fails the stage on violation** —
+  rejected per Adam DQ1. Forces emission of weak figures that
+  Adam would reject anyway; over-strict for an advisory class.
+- **(a) Validator only** — rejected per Adam DQ1. Without
+  the prompt nudge, the curator has no upstream signal to
+  change behavior; the validator just keeps catching the same
+  drift cycle after cycle.
+
+**Open at Tier A implementation:** what's the threshold for
+"figure candidate exists in the substory's notebook"? Simple
+file-existence (any `.png` in `figures/NB##_*.png` whose NB-id
+matches), or are there other heuristics? Likely the former for
+MVP; refine at v0.8 Tier-F if too noisy.
+
+**Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ1 +
+Tier A; D-092 finding 1 (the v0.7 Tier-I observation this
+addresses); D-080 (the curator-stage-gate validator
+pattern this mirrors); D-089 (the parallel cross_tenant
+grounding-validator pattern).
+
+---
+
+## D-094 — 2026-05-31 — v0.8 DQ2: deck_close data_source — speaker-notes promotion
+
+**Context:** D-092 v0.7 Tier-I finding 3: fdm slide-32
+directions leak. Visual-QA caught with high confidence: the
+deck_close slide's `data_source` field
+("Substory conclusions: S1 (C-slot) + S2 (C-slot) + ...;
+narrative/00_throughline.md; REPORT.md §Future directions")
+rendered as visible on-slide body text instead of audit-trail
+footer. The renderer's `_fill_deck_close` draws it at
+font_size_pt=10 in the lower band BELOW the forward_call,
+where it competes for attention + reads as pipeline
+scaffolding (audience sees "C-slot" and "REPORT.md"
+citations on the closing slide).
+
+**Decision (Adam Tier-0 DQ2 2026-05-31):** **speaker-notes
+promotion.** Three changes:
+
+1. **`_fill_deck_close` renderer** (assemble_pptx.py): stops
+   drawing data_source on slide face. The lower band
+   (previously holding data_source at font 10) becomes
+   forward-call-only territory; data_source is removed from
+   the rendered slide entirely.
+
+2. **`_fill_deck_close` promotes data_source to speaker_notes**:
+   parallel to the existing speaker_notes_seed → speaker_notes
+   promotion pattern (used by cross_tenant.v1 + deck_close.v1
+   composers). The renderer appends data_source as a
+   "**Sources:**" section AFTER the speaker_notes_seed body.
+   Presenter sees the citation in notes; audit pipeline still
+   reads it; audience doesn't.
+
+3. **`deck_close.v1.md` composer doc updates**: clarify that
+   the `data_source` field's purpose is audit-trail metadata
+   (not audience-facing content), so composers don't try to
+   make it audience-readable. Reference the speaker-notes
+   promotion behavior so prompt-readers understand the
+   data flow.
+
+Schema preserved: `data_source` remains in the deck_close
+content schema as a required field per D-086. Validator
+behavior unchanged. The fix is renderer + composer-doc only.
+
+**Rationale:** Adam DQ2 answer chose (a) speaker-notes
+promotion. Minimally invasive — no schema churn, no slide_spec
+breaking change, parallels the existing speaker_notes_seed
+promotion pattern. Other deck-level slides (cross_tenant,
+acknowledgments) use the same promotion shape.
+
+**Alternatives considered:**
+
+- **(b) Drop from required content + slide-level metadata** —
+  rejected per Adam DQ2. Schema change for a renderer-only
+  problem; over-engineered.
+- **(c) Both promotion + slide-level metadata** — rejected
+  per Adam DQ2. Hybrid with same audience-facing outcome as
+  (a) but more moving parts.
+
+**Open at Tier B implementation:** if the deck_close's
+speaker_notes_seed is already populated by the composer +
+contains content, the promoted data_source appends after a
+section break. Test the renderer's notes-pane formatting
+handles the multi-section shape cleanly (existing speaker_notes
+plumbing already handles long notes via the rich-text speaker-
+notes API; this should "just work" but verify at Tier B).
+
+**Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ2 +
+Tier B; D-092 finding 3 (the v0.7 Tier-I observation this
+addresses); D-086 (the deck_close content schema preserved);
+the speaker_notes_seed promotion pattern in
+`merge_compose_fragments.py` for cross_tenant + deck_close
+slides.
+
+---
+
+## D-095 — 2026-05-31 — v0.8 DQ3: substory_design v3.3 — clean overlay retiring v3.2
+
+**Context:** D-092 v0.7 Tier-I finding 4: v3.2 substory_design
+overlay silently dropped both the v3 `Conclusion for next
+substory:` field AND its own `Transition from prior:` field
+in live runs. Live-recovered via extract_deck_close.py
+universal-punchline fallback (commit 1d90c63), but the
+prompt-layering bug remains real.
+
+**v0.8 Tier-0 root-cause investigation** (Explore subagent,
+2026-05-31): the v3.2 overlay's "Output format" template
+(substory_design.v3.2_overlay.md §"v3.2 Output format
+additions" ~lines 136-160) shows the per-substory shape
+including Transition + Question + Conclusion + Punchline,
+BUT lacks the v3 overlay's explicit "this template
+SUPERSEDES the v1 template" language (v3_overlay.md L21:
+*"the v1 template lacks the **Question:** and **Conclusion
+for next substory:** lines that this overlay's validators
+require ... When the v1 template and the v3 template
+conflict, use the **v3 template**"*). The LLM treats the
+v3.2 example as authoritative by recency bias (LLMs weight
+the tail of long system prompts heavily) and omits anything
+the v3 overlay required but the v3.2 example didn't
+explicitly restate.
+
+The v0.7 slide_compose v3.2 overlay does NOT have the same
+vulnerability: v3 per-layout schema is already enforced by
+`smoke_v3_prompt.py`'s `LAYOUT_REQUIRED_FIELDS` map — the
+smoke gate validates JSON-shape compliance independent of
+prompt-template recency bias. Only substory_design needs
+the v3.3 fix.
+
+**Decision (Adam Tier-0 DQ3 2026-05-31):** ship **clean
+v3.3 substory_design overlay** that consolidates v3 + v3.2
+contracts in a single template (no inheritance chain
+ambiguity). Specifics:
+
+1. **New `prompts/substory_design.v3.3_overlay.md`**: a clean
+   overlay on `substory_design.v1.md` (NOT stacked on v3 or
+   v3.2). Single complete per-substory template showing
+   Transition + Question + Conclusion-for-next + Punchline +
+   Critical-analyses + Cluster-rationale + Slide-budget +
+   Slide-kinds-anticipated as one unified block. Inviolable
+   rules section names ALL required fields explicitly + per
+   the recency-bias mitigation: a "v3.3 supersedes v1 / v3 /
+   v3.2 templates" clause at the top of the Output format
+   section.
+
+2. **Orchestrator** (`presentation_maker.sh`): `--prompts-version
+   v3.3` accepted. The v3.3 substory_design concat = cat
+   substory_design.v1.md + substory_design.v3.3_overlay.md
+   (NO v3 overlay, NO v3.2 overlay). slide_compose stack
+   unchanged from v3.2 (D-085 + D-086 + D-087 composer-side
+   contracts still work as designed — only substory_design
+   broke). So `v3.3` effective prompt stack is:
+   - substory_design = v1 + v3.3_overlay
+   - slide_compose = v2 + v3_overlay + v3.1_overlay + v3.2_overlay
+
+3. **v3.2 substory_design overlay retired** as default. Stays
+   available for regression-testing via `--prompts-version
+   v3.2` but unblessed for production. Tests preserved.
+
+4. **Smoke harness extension** (Tier F): `smoke_v3_prompt.py`
+   gains `validate_substory_design_fields()` that checks the
+   produced `02_substories.md` for required fields per substory:
+   - All substories: `**Question:**` present.
+   - Non-final substories: `**Conclusion for next substory:**`
+     present.
+   - Non-first substories: `**Transition from prior:**`
+     present.
+   Smoke FAILS the gate if any field is missing. The unit suite
+   can't catch this (emergent LLM behavior); the smoke is the
+   correct gate per the v0.6 Tier C / D-076 lesson.
+
+**Scope clarification** (Adam Tier-0 follow-up DQ): v0.8 ships
+v3.3 for substory_design ONLY; slide_compose stays v3.2. The
+subagent's risk assessment confirmed slide_compose v3.2 doesn't
+have the field-drop bug class. v0.9+ may consolidate slide_compose
+to v3.3 if a similar bug class surfaces, but not preemptively.
+
+**Rationale:** Adam DQ3 answer chose (b) clean v3.3 retiring
+v3.2. Cleaner mental model + smoke harness gets clean v3.3
+field-presence tests rather than v3.2-with-asterisks. The
+v3.2 → v3.3 transition mirrors v3 → v3.1 → v3.2 evolution
+(each version a clean overlay refinement).
+
+**Alternatives considered:**
+
+- **(a) Re-edit v3.2 overlay in place** — rejected per Adam
+  DQ3. v3.2 turned out broken; in-place edit may not fully
+  fix the recency-bias pattern; cleaner to ship v3.3 + retire
+  v3.2 from default.
+- **(c) v3.3 + v3.2 documented as deprecated** — rejected per
+  Adam DQ3. Hybrid adds complexity to the smoke gate (which
+  version smoke is valid for which invocation).
+
+**Open at Tier C implementation:** the v3.3 overlay structure
+will reference v3's D-071 Q/A/R/C contract + v3.2's D-087
+transition_from_prior field as *unified inviolable rules*, not
+as inherited-from-upstream. This requires re-stating ~150
+lines of v3 + v3.2 content into a single ~250-line v3.3
+overlay. Worth the duplication for the recency-bias
+mitigation.
+
+**Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ3 +
+Tier C + Tier F; D-092 finding 4 (the v0.7 Tier-I observation
+this addresses); D-071 (the v3 Q/A/R/C contract v3.3
+consolidates); D-087 (the v3.2 transition_from_prior contract
+v3.3 consolidates); D-076 (the smoke-gate decision Tier F
+extends for v3.3); D-075 (the concat-overlay pattern v3.3
+breaks WITH purpose — v3.3 is NOT a stack on v3.2; it's a
+clean v1+v3.3 overlay).
+
+---
+
+## D-096 — 2026-05-31 — v0.8 DQ4: visual-QA default-on for STRONG + talk-15 BRIEF
+
+**Context:** D-092 v0.7 Tier-I finding 5 + lesson 5: visual-QA
+caught the slide-32 data_source issue with high precision +
+low cost (~$1/deck). It caught a class of finding that costs
+Adam 30-60min to surface via qualitative read. visual_qa.py
+exists since M4a Tier C as opt-in via `--visual-qa`; v0.7
+Tier G/H did NOT use it, which is why slide-32 surfaced only
+at Adam's Tier-I read instead of mechanically.
+
+**Decision (Adam Tier-0 DQ4 2026-05-31):** flip
+`VISUAL_QA` default to ON for STRONG + talk-15 BRIEF modes.
+Specifics:
+
+1. **Orchestrator default change** (`presentation_maker.sh`):
+   in the default-init block (~line 174), change
+   `VISUAL_QA=0` to mode-aware logic:
+   ```bash
+   VISUAL_QA=0  # operator can flip via --visual-qa even on
+                # modes where the default is 0; this is just
+                # the default-init value.
+   ```
+   Then at MODE validation time (or just before
+   stage_visual_qa runs): if `VISUAL_QA == 0` AND mode is
+   `talk-30` OR (`talk-15` AND tier is `STRONG`/`BRIEF`),
+   set `VISUAL_QA=1` automatically.
+
+2. **New `--no-visual-qa` flag** so operators who want to skip
+   on STRONG/BRIEF runs have an explicit opt-out. Sets a
+   distinct `NO_VISUAL_QA=1` variable that overrides the
+   mode-default.
+
+3. **`--help` docstring updates**: document the new default
+   behavior + the opt-out flag. The existing `--visual-qa`
+   flag stays available for opting-in on modes where the
+   default is off (lightning-5, poster).
+
+4. **`stage_visual_qa` invocation**: cost ~$1/deck + ~30s
+   wall-clock; modest enough to default-on without operator
+   protest. Findings land in audit/visual_qa.{md,json}
+   (cascade Tier-1 reader already exists; no change needed).
+
+**Mode coverage** per Adam DQ4 answer (b) STRONG +
+talk-15 BRIEF:
+
+| Mode | Tier | Default visual-QA |
+|---|---|---|
+| talk-30 | STRONG | ON |
+| talk-30 | THIN/EXPLORATORY | OFF (operator opt-in) |
+| talk-15 | STRONG | ON |
+| talk-15 | BRIEF | ON |
+| talk-15 | THIN/EXPLORATORY | OFF |
+| talk-45 | any | OFF (uncommon mode; v0.9+ if needed) |
+| lightning-5 | any | OFF (rough-draft territory) |
+| poster-h / poster-v | any | OFF (different render pipeline) |
+
+**Rationale:** Adam DQ4 answer chose (b). Both STRONG and
+talk-15-BRIEF produce audience-facing decks where slide-face
+quality matters; lightning-5 is rough-draft; poster has
+different render pipeline. Cost ~$1/deck is acceptable for
+the catch-rate visual-QA provides.
+
+**Alternatives considered:**
+
+- **(a) STRONG mode only (talk-30)** — rejected per Adam DQ4.
+  talk-15 BRIEF operators would still need to opt in
+  explicitly; the catch-rate value applies to them too.
+- **(c) All modes including lightning-5 + poster** — rejected
+  per Adam DQ4. Overkill for lightning-5 (5-slide decks);
+  poster has a different render pipeline that visual_qa.py
+  may not handle cleanly.
+
+**Open at Tier D implementation:** the mode/tier auto-on logic
+needs to be at the RIGHT point in the orchestrator
+(after MODE + TIER validation but before stage_visual_qa
+gates on VISUAL_QA). Probably ~line 280-ish after the
+mode/tier case statements.
+
+**Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ4 +
+Tier D; D-092 finding 5 + lesson 5 (the v0.7 Tier-I
+observation this addresses); M4a Tier C (the original
+visual_qa.py opt-in decision this flips to default-on).
+
+---
+
+## D-097 — 2026-05-31 — v0.8 DQ5: AI-image content-grounding — prompt input only for MVP
+
+**Context:** D-092 v0.7 Tier-I finding 5 visual-QA pattern:
+intro slide AI images leak result statistics from later
+sections. Specifically slide-3 intro-pos1 on both v0.7 decks:
+the generated image embeds "~62%" annotation referencing a
+section-3 finding (lab-field concordance) before that finding
+is established. This is a spoiler pattern; the AI image
+prompt-author reads the slide's content but doesn't know the
+slide's POSITION in the deck arc.
+
+**Decision (Adam Tier-0 DQ5 2026-05-31):** **prompt input
+only for v0.8 MVP** (option (a)). Two changes:
+
+1. **New input to `ai_image_prompt.v1.md`**: `DECK_POSITION`
+   parameter passed by the orchestrator at image-gen time.
+   Values: `"intro"` (intro stage produces these slides;
+   slides whose substory_id is null/intro), `"body"` (slides
+   with a real substory_id S1..SN), `"closer"` (deck_close +
+   acknowledgments + references + qa_anticipated). Possibly
+   also `SUBSTORY_INDEX` (0-indexed integer) for finer-grained
+   decisions if needed at v0.8.1.
+
+2. **New rule in `ai_image_prompt.v1.md`**: for intro slides
+   (DECK_POSITION="intro"), MUST NOT include result-level
+   statistics from sections >1 (i.e., from any substory's
+   analyses). Intro images are framing-only — purpose is
+   visual hook for the deck's question, not spoiler of the
+   finding. Acceptable intro-image content: throughline
+   restatement, study design overview, scope visualization,
+   conceptual framework. Unacceptable: specific percentages,
+   p-values, AUCs, OR/HR from later substories.
+
+   New PA-9 anti-pattern: "Intro-slide spoiler — AI image
+   embeds a result-level statistic (percentage, p-value,
+   effect size, named outcome metric) drawn from a substory
+   later in the deck. The audience sees the answer before
+   the question. → Re-author the prompt without the
+   statistic; intro images frame the question, not state the
+   answer."
+
+3. **Orchestrator wiring** (presentation_maker.sh's
+   image_gen stage / ai_image_prompt invocation): pass
+   DECK_POSITION computed from the slide's substory_id
+   (intro / body / closer per the mapping above).
+
+**Tier-F escalation hook:** if v0.8 Tier-F read shows the
+prompt rule alone doesn't prevent spoiler leaks, escalate
+to (c) belt-and-suspenders at v0.8.1: new post-image
+validator inspects the rendered image for known-spoiler
+patterns (statistics from later substories appearing as
+labels in the image). For v0.8 MVP, the prompt rule is the
+upstream fix + the existing visual-QA pass (now default-on
+per D-096) catches what gets through.
+
+**Rationale:** Adam DQ5 answer chose (a) prompt input only.
+Cheaper. The v0.7 visual-QA already catches this class
+advisorily (slide-3 spoiler finding on BOTH decks); v0.8's
+job is upstream prevention. The post-image validator is
+v0.8.1 territory if prompt-side fix alone doesn't work.
+
+**Alternatives considered:**
+
+- **(b) Both prompt input + post-image validator** —
+  rejected per Adam DQ5. Adds moving parts; same upstream-
+  prevention story as (a) plus a downstream gate that
+  visual-QA already provides.
+- **(c) Post-image validator only** — rejected per Adam DQ5.
+  No prompt change means the prompt-author keeps producing
+  bad-shape requests; reject after $0.014/image already paid.
+  Wasteful.
+
+**Open at Tier E implementation:** the DECK_POSITION computation
+needs to handle edge cases — what about big_idea slides whose
+substory_id is null (deck-level openers)? Probably "intro"-treat
+them. What about deck_close slides explicitly? "closer"-treat
+them, but those are concept_illustration-ineligible anyway per
+D-088 + image_gen_decision's _STRUCTURAL_NO_IMAGE category
+(deck_close was added at v0.7-C.0). Edge cases resolve at Tier E.
+
+**Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ5 +
+Tier E; D-092 finding 5 visual-QA slide-3 pattern (the v0.7
+Tier-I observation this addresses); D-088 (the v0.7 image-gen
+scope expansion this is downstream of); D-008 / D-064 (the
+original concept_illustration semantics).
