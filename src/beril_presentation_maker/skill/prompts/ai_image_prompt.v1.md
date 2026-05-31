@@ -149,6 +149,25 @@ Field rules (validator-blocking):
 - `OUT_PATH` — absolute path for `{slide_id}_request.json`
 - `CHANNEL` — `"A"` or `"B"`
 - `SLIDE_ID_TARGET` — `S2-pos4` style identifier
+- `DECK_POSITION` — `"intro"` | `"body"` | `"closer"` (v0.8/D-097).
+  Computed by the orchestrator from `SLIDE_ID_TARGET`:
+  - `"intro"` when the slide has no substory_id (slide_id matches
+    `pos{N}`). These are the deck's opener slides — the audience
+    has not yet seen any substory's findings.
+  - `"body"` when the slide is substory-attributed (slide_id matches
+    `S{N}-pos{M}`). These slides are inside the arc; quantitative
+    content from the substory's own analyses is fine.
+  - `"closer"` when the slide is in the closing block (deck_close,
+    acknowledgments, references, qa_anticipated). Today these are
+    in `_STRUCTURAL_NO_IMAGE` and never reach ai_image_prompt; the
+    `"closer"` value is reserved for forward-compatibility.
+
+  **Load-bearing for intro slides**: see "Channel A authoring
+  discipline" §4 (intro-slide spoiler rule) + Anti-pattern PA-9.
+  When `DECK_POSITION="intro"`, the image MUST NOT include
+  result-level statistics (specific percentages, p-values, effect
+  sizes, named outcome metrics) from later substories' analyses.
+  Intro images frame the question; they do not state the answer.
 - `STUB_PATH` — absolute path to the slide stub from slide_compose
   (Channel A) OR the placeholder slide created in response to a
   user request (Channel B)
@@ -315,6 +334,69 @@ criterion (per D-088). The judge approves only when it can
 envision concrete technical elements; the prompt-author's job
 is to deliver them.
 
+### 4. Intro-slide spoiler rule (v0.8/D-097)
+
+When `DECK_POSITION="intro"` (slide_id has no substory_id
+prefix — `pos{N}` shape), the audience has not yet seen any
+substory's findings. Intro slides set up the deck's question;
+they do not state the answer. The image MUST NOT include
+**result-level statistics** from later substories' analyses:
+
+- Specific percentages (e.g., "~62% concordance", "94.7%
+  enrichment")
+- p-values, q-values, FDR thresholds
+- Effect sizes (odds ratios, hazard ratios, fold-changes,
+  AUCs)
+- Named outcome metrics ("Tier-1 phage feasibility",
+  "lab-field concordance") that pre-state a downstream finding
+
+**Acceptable intro-image content:**
+
+- Throughline restatement (the deck's central question, framed
+  visually).
+- Study design overview (cohort structure, data sources,
+  methodology at a high level — without per-cohort outcomes).
+- Scope visualization (the problem space the talk addresses).
+- Conceptual framework (e.g., "ecological stratification +
+  pathobiont consortia + phage targeting" as a triangular
+  schematic — names the conceptual axes, no numeric findings).
+- Method/instrument diagrams that don't reveal outcomes.
+
+**Unacceptable intro-image content (spoiler class):**
+
+- Bar charts, scatter plots, heatmaps with axis values drawn
+  from substory analyses.
+- Labeled metrics ("62%", "p<0.001", "OR 3.4") embedded as
+  annotation text or chart labels.
+- Result summary tables.
+- Mechanism diagrams whose labels assume a downstream finding
+  ("Confirmed pathway X → Y → Z" before substory S2 has
+  established X→Y).
+
+This rule is downstream of the "no quantitative content"
+floor that already lives in the default negative_prompt
+(§"Schema / output format"), but stronger: even text-only
+result statistics (without chart axes) violate the spoiler
+rule on intro slides. The rule is intro-specific because body
+slides legitimately need to anchor their own substory's
+findings.
+
+**Live failure that motivated this rule:** v0.7 Tier-I read
+2026-05-31 on both ibd + fdm decks. Slide-3 (intro-pos1) on
+each generated an image embedding a result statistic
+("~62%") that referenced a section-3 finding (lab-field
+concordance) — the audience would see "62%" on the third
+slide of the deck, before any of the analyses that produce
+it. Visual-QA caught it advisorily; D-097 fixes upstream by
+making the prompt-author aware of the slide's POSITION in
+the deck arc.
+
+When `DECK_POSITION="body"` or `"closer"`, this rule does NOT
+apply — body slides legitimately need substory-specific
+quantitative anchors per the technical-specificity discipline
+(§3-bis); closer slides are deck-level synthesis (currently
+unreachable from this prompt anyway).
+
 ## Channel B authoring discipline (user-initiated)
 
 When the user explicitly requested an image:
@@ -380,6 +462,25 @@ are still observed.
   tie the image to the substory's `Critical analyses covered:`
   vocabulary (named methods, named mechanisms, named molecular
   structures). See "Channel A authoring discipline" §3-bis.
+- **PA-9 (v0.8/D-097): intro-slide spoiler.** An intro slide
+  (`DECK_POSITION="intro"`; slide_id has no substory prefix —
+  matches `pos{N}`) whose AI image embeds a result-level
+  statistic (specific percentage, p-value, effect size, named
+  outcome metric) drawn from a substory later in the deck. The
+  audience sees the answer before the question. Live failure
+  that motivated this rule: v0.7 Tier-I read 2026-05-31 on both
+  ibd + fdm decks — slide-3 (intro-pos1) embedded "~62%"
+  referencing a section-3 lab-field-concordance finding before
+  any analysis had established it. Fix: re-author the prompt
+  without the statistic; intro images frame the question, not
+  state the answer. Acceptable intro content: throughline
+  restatement, study design overview, scope visualization,
+  conceptual framework, method/instrument diagrams without
+  outcomes. Unacceptable: any chart/label/annotation drawing
+  from substory analyses. See "Channel A authoring discipline"
+  §4 (intro-slide spoiler rule) for full content boundaries.
+  Body slides (`DECK_POSITION="body"`) are exempt — they need
+  substory-specific anchors per §3-bis.
 
 ## Self-review pass
 
@@ -410,6 +511,22 @@ Run before the `Write` step.
     `USER_PROMPT_TEXT`, not retyped.
 11. **Style-tier mismatch.** EXPLORATORY tier with
     `style: "metaphor"` that overstates confidence.
+12. **Intro-slide spoiler (v0.8/D-097; PA-9).** When
+    `DECK_POSITION="intro"`, scan the `image_prompt` for
+    result-level statistics drawn from substory analyses:
+    - Specific percentages (`62%`, `94.7%`, `~25%`)
+    - p-values, q-values, FDR (`p<0.001`, `q=0.05`)
+    - Effect sizes (`OR 3.4`, `HR=2.1`, `AUC 0.87`,
+      `fold-change`)
+    - Named outcome metrics from a downstream substory
+      (e.g., "Tier-1 phage feasibility", "lab-field
+      concordance") that pre-state a finding the audience
+      hasn't seen yet.
+    If any of these are in the prompt or named in the
+    negative_prompt's "named labels" allowlist, re-author
+    the image_prompt without them. Intro images frame the
+    question; body images anchor the substory's answer.
+    Skip this check when `DECK_POSITION != "intro"`.
 
 ### Anti-example pairs (validator-blocking)
 

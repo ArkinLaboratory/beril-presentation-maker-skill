@@ -3786,8 +3786,108 @@ them, but those are concept_illustration-ineligible anyway per
 D-088 + image_gen_decision's _STRUCTURAL_NO_IMAGE category
 (deck_close was added at v0.7-C.0). Edge cases resolve at Tier E.
 
+**Tier-E landing (2026-05-31):** all four pieces shipped. The
+edge-case resolution turned out simpler than the spec
+anticipated:
+
+  1. **slide_id format is the authoritative position signal.**
+     The orchestrator's `_build_slide_id()` in
+     `image_gen_decision.py` already encodes the
+     intro-vs-substory distinction via the format itself:
+     `pos{N}` (no prefix) → intro; `S{N}-pos{M}` → body.
+     The Tier-E orchestrator wiring uses a single bash regex
+     `^pos[0-9]+$` to detect intro; everything else defaults
+     to body. This is robust to layout choice — a big_idea
+     opener at the deck level (no substory_id) gets `pos1`-
+     style slide_id from the merger, so it's classified
+     "intro" automatically. Body big_idea (inside a substory
+     arc) gets `S{N}-pos{M}` and is classified "body".
+
+  2. **"closer" is reserved but unreachable.** deck_close +
+     acks + references + qa_anticipated are all in
+     `_STRUCTURAL_NO_IMAGE` per image_gen_decision.py; they
+     never reach stage_image_gen's ai_image_prompt invocation.
+     The `"closer"` value is documented in ai_image_prompt.v1
+     §Inputs for forward-compat, but no orchestrator code
+     emits it today. If a future closer-class layout becomes
+     image-eligible, the slide_id detector here needs
+     extending.
+
+  3. **Default-is-body is the safer fallback.** A
+     misclassified slide gets "body" treatment (no spoiler
+     restriction), which is identical to v0.7's no-enforcement
+     default. The opposite default ("intro") would falsely
+     block body slides from showing legitimate quantitative
+     anchors per the technical-specificity discipline (§3-bis).
+
+FOUR CHANGES:
+
+  1. **Orchestrator `presentation_maker.sh` stage_image_gen** —
+     new local `deck_position` variable computed via bash
+     regex on `slide_id`. Default "body"; flipped to "intro"
+     when slide_id matches `^pos[0-9]+$`. Forwarded to
+     ai_image_prompt.v1 via `DECK_POSITION=$deck_position` in
+     the user_prompt. The user_prompt also inlines a
+     load-bearing reminder about §4 + PA-9 so the prompt-
+     author has context even without re-reading the full prompt.
+
+  2. **`ai_image_prompt.v1.md §Inputs`** — added DECK_POSITION
+     to the input list with all three values
+     (intro/body/closer) + the slide_id-format mapping +
+     cross-reference to §4 + PA-9.
+
+  3. **`ai_image_prompt.v1.md` Channel A discipline §4
+     "Intro-slide spoiler rule (v0.8/D-097)"** — full content
+     boundary: explicit acceptable list (throughline
+     restatement, study design overview, scope visualization,
+     conceptual framework, method/instrument diagrams without
+     outcomes) + explicit unacceptable list (chart axes, bar
+     charts, labeled metrics, p-values, effect sizes,
+     downstream-finding mechanism diagrams). Cites the v0.7
+     Tier-I live failure (slide-3 ~62% leak on both decks)
+     for motivation. Exempts body slides (§3-bis discipline
+     applies) and closer slides (currently unreachable).
+
+  4. **`ai_image_prompt.v1.md` Anti-patterns + Self-review** —
+     new PA-9 (intro-slide spoiler) with the same content
+     boundary + v0.7-failure citation; new self-review
+     check #12 with concrete examples of the spoiler class
+     (specific percentages, p-values, effect sizes, named
+     outcome metrics). Skip-when-not-intro guard included.
+
+**Tier-F escalation hook preserved:** if v0.8 Tier-I read
+shows the prompt-rule alone doesn't catch all spoiler leaks,
+escalate to (c) belt-and-suspenders at v0.8.1 per D-097
+escalation plan: post-image validator inspects rendered
+images for known-spoiler patterns. For v0.8 MVP, the prompt
+rule + the now-default-on visual-QA (D-096) are the upstream
+fix.
+
+**Test coverage (Tier E):** 20 new unit tests in
+`test_orchestrator_deck_position.py`:
+
+  - Source-level pins (5): orchestrator wiring (D-097 marker,
+    regex, DECK_POSITION default), DECK_POSITION forwarded
+    to ai_image_prompt user_prompt, inline-explains the
+    spoiler rule, ai_image_prompt §Inputs documents
+    DECK_POSITION + values, §4 section exists with
+    acceptable/unacceptable lists, PA-9 anti-pattern present,
+    self-review check #12 present.
+  - Runtime parametrized over 12 slide_id formats: intro
+    (pos1/pos2/pos10/pos99), body (S1-pos1/S1-pos4/S2-pos1/
+    S12-pos7), edge cases (intro-pos1/S1_pos1/position1/
+    pos1-extra all classified as body — safer-default
+    discipline).
+  - Default-is-body pin: enforces the assignment ORDER (body
+    default BEFORE the regex check) per the safer-fallback
+    rationale.
+
+Suite total: 1740 → 1760.
+
 **Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ5 +
 Tier E; D-092 finding 5 visual-QA slide-3 pattern (the v0.7
 Tier-I observation this addresses); D-088 (the v0.7 image-gen
 scope expansion this is downstream of); D-008 / D-064 (the
-original concept_illustration semantics).
+original concept_illustration semantics); D-096 (the now-
+default-on visual-QA that provides the safety net if the
+prompt rule alone is insufficient).

@@ -2598,9 +2598,27 @@ stage_image_gen() {
       if [[ -n "$IMAGE_STYLE" ]]; then
         style_directive="STYLE_HINT=$IMAGE_STYLE"$'\n'
       fi
+
+      # v0.8/D-097: compute DECK_POSITION from slide_id format.
+      # ai_image_prompt.v1 uses this to enforce intro-slide spoiler
+      # rule (no result-level statistics on intro images). Slide-id
+      # conventions per _build_slide_id() in image_gen_decision.py:
+      #   "pos{N}"          → intro slides (no substory_id)
+      #   "S{N}-pos{M}"     → body slides (substory-attributed)
+      #   closer slides (deck_close, acks, refs, qa_anticipated)
+      #     are in _STRUCTURAL_NO_IMAGE — never reach this stage.
+      # If a future closer-class slide becomes image-eligible, the
+      # SUBSTORY_ID-prefix detector here needs extending; for now
+      # binary intro|body covers everything that gets here.
+      local deck_position="body"
+      if [[ "$slide_id" =~ ^pos[0-9]+$ ]]; then
+        deck_position="intro"
+      fi
+
       local user_prompt="OUT_PATH=$request_path
 CHANNEL=A
 SLIDE_ID_TARGET=$slide_id
+DECK_POSITION=$deck_position
 STUB_PATH=$stub_path
 USER_PROMPT_TEXT=
 ${style_directive}THROUGHLINE_PATH=$THROUGHLINE_PATH
@@ -2613,7 +2631,14 @@ Run ai_image_prompt.v1 for slide $slide_id (Channel A — LLM-initiated).
 Read STUB_PATH for slide content; read THROUGHLINE_PATH and SUBSTORY_PATH
 for context; emit a model-ready image-request.v1 JSON to OUT_PATH.
 slide_id_target MUST exactly equal $slide_id; the orchestrator verifies
-this on write."
+this on write.
+
+DECK_POSITION=$deck_position — see ai_image_prompt.v1 §'Inputs the
+user prompt will pass' + §'Anti-pattern PA-9' (v0.8/D-097): when
+DECK_POSITION=\"intro\", the image MUST NOT include result-level
+statistics from later substories (percentages, p-values, effect
+sizes, named outcome metrics). Intro images frame the question;
+they don't state the answer."
 
       if ! invoke_claude_with_retry "$PROMPTS_DIR/ai_image_prompt.v1.md" \
           "$user_prompt" "$request_path" "ai_image_prompt-$slide_id"; then
