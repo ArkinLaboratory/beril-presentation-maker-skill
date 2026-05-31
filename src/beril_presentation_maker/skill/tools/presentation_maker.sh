@@ -85,7 +85,7 @@
 #                            cborg | google_ai_studio. Default: precedence —
 #                            GOOGLE_AI_STUDIO_API_KEY env present → AI Studio;
 #                            else CBORG_API_KEY → CBORG; else fail.
-#   --prompts-version <v>    v1 | v2 | v3 | v3.1 | v3.2. Default: v2. Selects
+#   --prompts-version <v>    v1 | v2 | v3 | v3.1 | v3.2 | v3.3. Default: v2. Selects
 #                            prompt files for substory_design + slide_compose:
 #                              v1 → substory_design.v1.md + slide_compose.v1.md
 #                                   (v0.3.x; pre-M3 sequential composer)
@@ -115,10 +115,22 @@
 #                                   + D-087 transition_from_prior field on
 #                                   substory_design — Tier B; slides +
 #                                   substory_design BOTH carry v3.2 overlays).
+#                              v3.3 → substory_design.v1.md ++ substory_design.v3.3_overlay.md
+#                                   (clean overlay on v1, NOT stacked on v3/v3.2 —
+#                                   consolidates Q/A/R/C + transition_from_prior
+#                                   into one unified template per D-095 / v0.8
+#                                   Tier C to fix the v3.2 prompt-layering
+#                                   recency-bias field-drop bug)
+#                                   slide_compose.v2.md ++ slide_compose.v3_overlay.md
+#                                   ++ slide_compose.v3.1_overlay.md
+#                                   ++ slide_compose.v3.2_overlay.md
+#                                   (slide_compose stack UNCHANGED from v3.2 —
+#                                   D-095 scope clarification: slide_compose not
+#                                   vulnerable to the same bug class).
 #                            Independent axis from --architecture-pipeline.
 #                            Default v2 per D-074 until v0.5/v0.6 cut-over
 #                            A/B passes.
-#                            v3 + v3.1 + v3.2 require a fresh smoke-pass
+#                            v3 + v3.1 + v3.2 + v3.3 require a fresh smoke-pass
 #                            record per D-076; see --force-v3-smoke-stale.
 #   --force-v3-smoke-stale   Bypass the D-076 smoke-pass gate. Use ONLY
 #                            when you intentionally want to run v3 without
@@ -545,7 +557,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
 
-for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md substory_design.v3.2_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md slide_compose.v3.1_overlay.md slide_compose.v3.2_overlay.md intro.v1.md; do
+for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md substory_design.v3.2_overlay.md substory_design.v3.3_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md slide_compose.v3.1_overlay.md slide_compose.v3.2_overlay.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
     echo "Error: prompt missing at $PROMPTS_DIR/$f" >&2
     exit 1
@@ -557,9 +569,9 @@ done
 # v3.2 stacks the figure-relevance refinement + arc-transition + deck_close
 # overlay on top (D-085/D-086/D-087).
 case "$PROMPTS_VERSION" in
-  v1|v2|v3|v3.1|v3.2) ;;
+  v1|v2|v3|v3.1|v3.2|v3.3) ;;
   *)
-    echo "Error: --prompts-version must be v1|v2|v3|v3.1|v3.2, got: $PROMPTS_VERSION" >&2
+    echo "Error: --prompts-version must be v1|v2|v3|v3.1|v3.2|v3.3, got: $PROMPTS_VERSION" >&2
     exit 2
     ;;
 esac
@@ -577,7 +589,7 @@ esac
 # v0.7/D-085: v3.2 further stacks the figure-relevance refinement +
 # deck_close overlay; same sha-changes-on-stack-extension pattern.
 case "$PROMPTS_VERSION" in
-  v3|v3.1|v3.2) _v3_family=1 ;;
+  v3|v3.1|v3.2|v3.3) _v3_family=1 ;;
   *)            _v3_family=0 ;;
 esac
 if [[ "$_v3_family" == "1" && "$FORCE_V3_SMOKE_STALE" != "1" ]]; then
@@ -634,6 +646,16 @@ SLIDE_COMPOSE_V3_2_CONCAT_PATH=""
 # concat = cat v1 + v3_overlay + v3.2_overlay (stacked on the v3
 # substory_design contract).
 SUBSTORY_DESIGN_V3_2_CONCAT_PATH=""
+# v0.8/D-095 Tier C: v3.3 substory_design is a CLEAN overlay on v1
+# (NOT stacked on v3 or v3.2 overlays). Consolidates Q/A/R/C +
+# transition_from_prior into one unified template with explicit
+# supersedes-clause to mitigate the v3.2 prompt-layering recency-
+# bias field-drop bug live-discovered at v0.7 Tier G. v3.3
+# substory_design concat = cat v1 + v3.3_overlay (2 sources, NOT
+# 3). slide_compose stack unchanged from v3.2 — slide_compose not
+# vulnerable to the same bug class (smoke harness LAYOUT_REQUIRED_FIELDS
+# map enforces shape independent of prompt-tail bias).
+SUBSTORY_DESIGN_V3_3_CONCAT_PATH=""
 
 _substory_design_prompt_path() {
   # v0.6/D-080: v3.1 reuses the v3 substory_design concat
@@ -641,19 +663,28 @@ _substory_design_prompt_path() {
   # gets the figure-utilization overlay).
   # v0.7/D-087 Tier B: v3.2 has its OWN substory_design concat
   # (the v3.2 overlay adds transition_from_prior emission).
+  # v0.8/D-095 Tier C: v3.3 has its OWN clean substory_design concat
+  # (cat v1 + v3.3_overlay, NOT stacked on v3 / v3.2).
   case "$PROMPTS_VERSION" in
     v1|v2)    echo "$PROMPTS_DIR/substory_design.v1.md" ;;
     v3|v3.1)  echo "$SUBSTORY_DESIGN_V3_CONCAT_PATH" ;;
     v3.2)     echo "$SUBSTORY_DESIGN_V3_2_CONCAT_PATH" ;;
+    v3.3)     echo "$SUBSTORY_DESIGN_V3_3_CONCAT_PATH" ;;
   esac
 }
 _slide_compose_prompt_path() {
+  # v0.8/D-095 Tier C: v3.3 slide_compose stack UNCHANGED from v3.2.
+  # The v3.2 → v3.3 transition affects substory_design ONLY; slide_compose
+  # not vulnerable to the same prompt-layering bug class per the
+  # D-095 subagent investigation (smoke harness LAYOUT_REQUIRED_FIELDS
+  # map enforces shape independent of prompt-tail recency bias).
   case "$PROMPTS_VERSION" in
     v1)   echo "$PROMPTS_DIR/slide_compose.v1.md" ;;
     v2)   echo "$PROMPTS_DIR/slide_compose.v2.md" ;;
     v3)   echo "$SLIDE_COMPOSE_V3_CONCAT_PATH" ;;
     v3.1) echo "$SLIDE_COMPOSE_V3_1_CONCAT_PATH" ;;
     v3.2) echo "$SLIDE_COMPOSE_V3_2_CONCAT_PATH" ;;
+    v3.3) echo "$SLIDE_COMPOSE_V3_2_CONCAT_PATH" ;;
   esac
 }
 
@@ -675,34 +706,44 @@ _slide_compose_prompt_path() {
 # at exit is intentional so a debug-after-fail can inspect what
 # prompt the LLM actually saw).
 build_v3_concat_prompts() {
-  # v0.6/D-080 + v0.7/D-085: this helper serves v3 + v3.1 + v3.2.
+  # v0.6/D-080 + v0.7/D-085 + v0.8/D-095: this helper serves
+  # v3 / v3.1 / v3.2 / v3.3.
   # v3:   cat v2.md + v3_overlay.md → slide_compose.v3.concat.md
   # v3.1: cat v2.md + v3_overlay.md + v3.1_overlay.md
   #       → slide_compose.v3.1.concat.md
   # v3.2: cat v2.md + v3_overlay.md + v3.1_overlay.md + v3.2_overlay.md
   #       → slide_compose.v3.2.concat.md
-  # substory_design.v3.concat.md is built unconditionally for all
-  # three (v3.1 + v3.2 Tier A reuse v3 substory_design; v3.2 Tier B
-  # / D-087 will add a substory_design v3.2 overlay).
+  # v3.3: slide_compose stack UNCHANGED from v3.2 (per D-095 scope —
+  #       slide_compose not vulnerable to the v3.2 substory_design
+  #       prompt-layering recency-bias bug class).
+  # substory_design.v3.concat.md = cat v1 + v3_overlay (always built
+  #       when in v3-family).
+  # substory_design.v3.2.concat.md = cat v1 + v3_overlay + v3.2_overlay
+  #       (built when v3.2).
+  # substory_design.v3.3.concat.md = cat v1 + v3.3_overlay
+  #       (CLEAN, NOT stacked on v3 / v3.2 — per D-095 the v3.3 overlay
+  #       consolidates the v3 + v3.2 contracts into one unified
+  #       template that mitigates the recency-bias displacement bug
+  #       v3.2 substory_design exhibited live).
   case "$PROMPTS_VERSION" in
-    v3|v3.1|v3.2) ;;
+    v3|v3.1|v3.2|v3.3) ;;
     *) return 0 ;;
   esac
 
   local concat_dir="$AUDIT_DIR/_prompts"
   mkdir -p "$concat_dir"
 
-  # --- slide_compose v3 concat (always built; v3.1 / v3.2 stack on this) ---
+  # --- slide_compose v3 concat (always built; v3.1 / v3.2 / v3.3 stack on this) ---
   local slide_v2="$PROMPTS_DIR/slide_compose.v2.md"
   local slide_v3_overlay="$PROMPTS_DIR/slide_compose.v3_overlay.md"
   SLIDE_COMPOSE_V3_CONCAT_PATH="$concat_dir/slide_compose.v3.concat.md"
   cat "$slide_v2" "$slide_v3_overlay" > "$SLIDE_COMPOSE_V3_CONCAT_PATH"
 
   # --- slide_compose v3.1 concat (stacked overlay; built only when needed) ---
-  # Built when PROMPTS_VERSION is v3.1 or v3.2 — v3.2 stacks on
-  # v3.1, so v3.2 invocations also need the v3.1 substrate concat
+  # Built for v3.1 / v3.2 / v3.3 — all stack on the v3.1 substrate
   # for any tooling that wants to inspect the intermediate stack.
-  if [[ "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+  if [[ "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" \
+        || "$PROMPTS_VERSION" == "v3.3" ]]; then
     local slide_v3_1_overlay="$PROMPTS_DIR/slide_compose.v3.1_overlay.md"
     SLIDE_COMPOSE_V3_1_CONCAT_PATH="$concat_dir/slide_compose.v3.1.concat.md"
     cat "$slide_v2" "$slide_v3_overlay" "$slide_v3_1_overlay" \
@@ -710,7 +751,9 @@ build_v3_concat_prompts() {
   fi
 
   # --- slide_compose v3.2 concat (stacked overlay; built only when needed) ---
-  if [[ "$PROMPTS_VERSION" == "v3.2" ]]; then
+  # v3.3 also builds + uses this concat (slide_compose stack unchanged
+  # from v3.2 per D-095 scope clarification).
+  if [[ "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
     local slide_v3_2_overlay="$PROMPTS_DIR/slide_compose.v3.2_overlay.md"
     SLIDE_COMPOSE_V3_2_CONCAT_PATH="$concat_dir/slide_compose.v3.2.concat.md"
     cat "$slide_v2" "$slide_v3_overlay" "$slide_v3_1_overlay" "$slide_v3_2_overlay" \
@@ -729,7 +772,9 @@ build_v3_concat_prompts() {
   # --- substory_design v3.2 concat (stacked overlay; built only when needed) ---
   # v0.7/D-087 Tier B: v3.2 substory_design adds transition_from_prior
   # emission. Stacked order: v1 body + v3 overlay + v3.2 overlay
-  # (overlay-last attention rule per D-075).
+  # (overlay-last attention rule per D-075). NOTE: v0.7 Tier-I found
+  # this stack drops fields live due to recency-bias displacement;
+  # v3.3 (below) consolidates into a clean overlay.
   if [[ "$PROMPTS_VERSION" == "v3.2" ]]; then
     local substory_v3_2_overlay="$PROMPTS_DIR/substory_design.v3.2_overlay.md"
     SUBSTORY_DESIGN_V3_2_CONCAT_PATH="$concat_dir/substory_design.v3.2.concat.md"
@@ -737,13 +782,27 @@ build_v3_concat_prompts() {
       > "$SUBSTORY_DESIGN_V3_2_CONCAT_PATH"
   fi
 
+  # --- substory_design v3.3 concat (CLEAN overlay; built only when needed) ---
+  # v0.8/D-095 Tier C: v3.3 is a CLEAN overlay on v1 (NOT stacked on
+  # v3 or v3.2). Consolidates the v3 Q/A/R/C contract (D-071) +
+  # v3.2 transition_from_prior field (D-087) into one unified
+  # template with explicit "v3.3 supersedes" recency-bias mitigation.
+  # Concat order: v1 body + v3.3 overlay (2 sources, NOT 3).
+  if [[ "$PROMPTS_VERSION" == "v3.3" ]]; then
+    local substory_v3_3_overlay="$PROMPTS_DIR/substory_design.v3.3_overlay.md"
+    SUBSTORY_DESIGN_V3_3_CONCAT_PATH="$concat_dir/substory_design.v3.3.concat.md"
+    cat "$substory_v1" "$substory_v3_3_overlay" \
+      > "$SUBSTORY_DESIGN_V3_3_CONCAT_PATH"
+  fi
+
   echo "[orchestrator] v$PROMPTS_VERSION concat prompts:" >&2
   case "$PROMPTS_VERSION" in
-    v3.2) echo "  slide_compose:   $SLIDE_COMPOSE_V3_2_CONCAT_PATH" >&2 ;;
-    v3.1) echo "  slide_compose:   $SLIDE_COMPOSE_V3_1_CONCAT_PATH" >&2 ;;
-    *)    echo "  slide_compose:   $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2 ;;
+    v3.2|v3.3) echo "  slide_compose:   $SLIDE_COMPOSE_V3_2_CONCAT_PATH" >&2 ;;
+    v3.1)      echo "  slide_compose:   $SLIDE_COMPOSE_V3_1_CONCAT_PATH" >&2 ;;
+    *)         echo "  slide_compose:   $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2 ;;
   esac
   case "$PROMPTS_VERSION" in
+    v3.3) echo "  substory_design: $SUBSTORY_DESIGN_V3_3_CONCAT_PATH" >&2 ;;
     v3.2) echo "  substory_design: $SUBSTORY_DESIGN_V3_2_CONCAT_PATH" >&2 ;;
     *)    echo "  substory_design: $SUBSTORY_DESIGN_V3_CONCAT_PATH" >&2 ;;
   esac
@@ -1906,7 +1965,7 @@ _compose_one_substory() {
 
   # v0.5/D-071: per-substory Question + Conclusion (v3 prompts only).
   local sub_question="" sub_conclusion=""
-  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
     sub_question=$(_m3_section_line "$_M3_BRIEF_QUESTIONS" "$sid")
     sub_conclusion=$(_m3_section_line "$_M3_BRIEF_CONCLUSIONS" "$sid")
   fi
@@ -1932,7 +1991,7 @@ DECK_ARC=$_M3_BRIEF_ARC"
   # v0.5/D-071 + D-072: append v3-only inputs. v1/v2 prompts don't
   # reference these fields, so injecting them would just bloat the
   # user prompt without effect; gate on PROMPTS_VERSION=v3.
-  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
     user_prompt="${user_prompt}
 SUBSTORY_QUESTION=$sub_question
 SUBSTORY_CONCLUSION=$sub_conclusion
@@ -1966,7 +2025,7 @@ _slide_compose_v0_3() {
   # v0.5/D-071 + D-072: pre-extract Q/Conclusion + allowlist once for
   # the whole loop (v3 prompts only); reused per-substory below.
   local _v3_questions="" _v3_conclusions="" _v3_allowlist=""
-  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
     _v3_questions="$(_m3_outline_field "$substories" questions)"
     _v3_conclusions="$(_m3_outline_field "$substories" conclusions)"
     local _allowlist_path="$PROJECT_DIR/references/register_allowlist.md"
@@ -1983,7 +2042,7 @@ _slide_compose_v0_3() {
 
     # v0.5/D-071: per-substory Question + Conclusion (v3 prompts only).
     local sub_question="" sub_conclusion=""
-    if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+    if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
       sub_question=$(_m3_section_line "$_v3_questions" "$sid")
       sub_conclusion=$(_m3_section_line "$_v3_conclusions" "$sid")
     fi
@@ -2002,7 +2061,7 @@ PRIOR_SUBSTORY_OUTPUTS=$prior_outputs"
 
     # v0.5/D-071 + D-072: append v3-only inputs (gate on
     # PROMPTS_VERSION=v3; v1/v2 prompts don't reference these).
-    if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+    if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
       user_prompt="${user_prompt}
 SUBSTORY_QUESTION=$sub_question
 SUBSTORY_CONCLUSION=$sub_conclusion
@@ -2062,7 +2121,7 @@ _slide_compose_v0_4() {
   _M3_BRIEF_QUESTIONS=""
   _M3_BRIEF_CONCLUSIONS=""
   _M3_ALLOWLIST_TERMS=""
-  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" ]]; then
+  if [[ "$PROMPTS_VERSION" == "v3" || "$PROMPTS_VERSION" == "v3.1" || "$PROMPTS_VERSION" == "v3.2" || "$PROMPTS_VERSION" == "v3.3" ]]; then
     _M3_BRIEF_QUESTIONS="$(_m3_outline_field "$substories" questions)"
     _M3_BRIEF_CONCLUSIONS="$(_m3_outline_field "$substories" conclusions)"
     # Load per-project register allowlist (D-072) if present.
