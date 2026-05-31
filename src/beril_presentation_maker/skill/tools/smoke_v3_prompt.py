@@ -78,19 +78,103 @@ SMOKE_FRESHNESS_DAYS = 7
 # Where the pass/fail records live. Per D-076 this is at the skill
 # repo root (not a per-project audit dir) — the smoke is
 # prompt-level, not project-level.
-SKILL_REPO_ROOT = Path(__file__).resolve().parents[4]
+#
+# v0.8 Tier-G fix: auto-detect dev vs install layout. The script
+# ships in TWO contexts with different on-disk shapes:
+#
+#   DEV LAYOUT:
+#     <repo_root>/
+#       src/beril_presentation_maker/skill/tools/smoke_v3_prompt.py
+#       src/beril_presentation_maker/skill/prompts/*.md
+#       tests/fixtures/smoke_v3/
+#       audit/   (← pass record lands here)
+#
+#   INSTALLED LAYOUT (after `install-skill .`):
+#     <beril_root>/.claude/skills/beril-presentation-maker/
+#       tools/smoke_v3_prompt.py
+#       prompts/*.md
+#       audit/   (← pass record SHOULD land here)
+#       (no tests/fixtures — `install-skill` doesn't ship them;
+#        smoke can only run from the dev repo today, v0.8.1 fix
+#        will ship fixtures via `_SHIPPED_SUBDIRS`)
+#
+# Auto-detection: walk up from __file__ until we find a directory
+# containing either `src/beril_presentation_maker/skill/` (dev) OR
+# `SKILL.md` (installed-skill root + dev-skill root both have this).
+# Then resolve PROMPTS_DIR, FIXTURE_DIR, SMOKE_DIR relative to that.
+# Falls back to the legacy parents[4] dev-layout assumption if no
+# marker is found (preserves existing test-suite behavior in the
+# dev repo).
+
+
+def _resolve_skill_repo_root(start: Path) -> tuple[Path, str]:
+    """Walk upward from `start` looking for a layout marker that
+    identifies whether we're in the DEV layout or the INSTALLED
+    layout. Returns (repo_root, layout_label).
+
+    Detection rules (first match wins):
+      1. If we find a parent dir containing
+         `src/beril_presentation_maker/skill/tools/`, that's the
+         DEV repo root. Layout = "dev".
+      2. If we find a parent dir whose name is the installed-skill
+         dir (`beril-presentation-maker`) AND contains a `tools/`
+         subdir AND a sibling `audit/` IS allowed, that's the
+         INSTALLED layout. The skill dir itself IS the root.
+         Layout = "installed".
+      3. Fallback: parents[4] of start (the legacy dev-layout
+         assumption). Layout = "fallback".
+    """
+    # Rule 1: dev layout — look upward for src/...skill/tools/
+    for ancestor in [start, *start.parents]:
+        candidate_skill = (ancestor / "src" / "beril_presentation_maker"
+                           / "skill" / "tools")
+        if candidate_skill.is_dir():
+            return ancestor, "dev"
+    # Rule 2: installed layout — the script's parents[1] is the
+    # skill dir itself (.../tools/smoke_v3_prompt.py → parents[1] is
+    # .../beril-presentation-maker/). Detect via name + tools/ sibling.
+    if (len(start.parents) >= 2
+            and start.parents[0].name == "tools"
+            and start.parents[1].name == "beril-presentation-maker"):
+        return start.parents[1], "installed"
+    # Rule 3: fallback to legacy parents[4]
+    return start.parents[4], "fallback"
+
+
+_SCRIPT_PATH = Path(__file__).resolve()
+SKILL_REPO_ROOT, _LAYOUT = _resolve_skill_repo_root(_SCRIPT_PATH)
+
+
+def _resolve_prompts_dir(root: Path, layout: str) -> Path:
+    """PROMPTS_DIR location depends on layout. Dev: nested under
+    src/...skill/prompts/. Installed: prompts/ is direct child of
+    the skill dir."""
+    if layout == "installed":
+        return root / "prompts"
+    return root / "src" / "beril_presentation_maker" / "skill" / "prompts"
+
+
+def _resolve_fixture_dir(root: Path, layout: str) -> Path:
+    """Fixtures live under tests/fixtures/ in dev. Not shipped in
+    install today (v0.8.1 fix). For installed layout we return the
+    expected path — the smoke will fail loudly with a clear error
+    pointing operators to run from the dev repo until v0.8.1."""
+    if layout == "installed":
+        return root / "tests" / "fixtures" / "smoke_v3"
+    return root / "tests" / "fixtures" / "smoke_v3"
+
+
 SMOKE_DIR = SKILL_REPO_ROOT / "audit"
 PASS_RECORD = SMOKE_DIR / "v3_smoke_pass.json"
 FAIL_RECORD = SMOKE_DIR / "v3_smoke_fail.json"
 
 # Fixture location.
-FIXTURE_DIR = SKILL_REPO_ROOT / "tests" / "fixtures" / "smoke_v3"
+FIXTURE_DIR = _resolve_fixture_dir(SKILL_REPO_ROOT, _LAYOUT)
 
 # Prompt sources (the v1/v2 body + v3 overlay files that get
 # concatenated). Mirrors `build_v3_concat_prompts` in
 # `presentation_maker.sh`.
-PROMPTS_DIR = (SKILL_REPO_ROOT / "src" / "beril_presentation_maker"
-               / "skill" / "prompts")
+PROMPTS_DIR = _resolve_prompts_dir(SKILL_REPO_ROOT, _LAYOUT)
 SLIDE_V2 = PROMPTS_DIR / "slide_compose.v2.md"
 SLIDE_OVERLAY = PROMPTS_DIR / "slide_compose.v3_overlay.md"
 SUBSTORY_V1 = PROMPTS_DIR / "substory_design.v1.md"

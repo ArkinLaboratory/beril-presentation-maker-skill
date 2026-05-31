@@ -518,6 +518,90 @@ def test_run_smoke_v3_2_validation_passes(tmp_path, monkeypatch):
                         version="v3.2")
 
 
+# ===========================================================================
+# v0.8 Tier G — SKILL_REPO_ROOT auto-detect (dev vs installed layout)
+# ===========================================================================
+#
+# v0.8 Tier-G live discovery: the legacy `parents[4]` SKILL_REPO_ROOT
+# assumption fails when the script runs from the installed shallow
+# layout ($BERIL_ROOT/.claude/skills/beril-presentation-maker/tools/).
+# The patched resolver walks upward looking for layout markers:
+#   - dev: a src/beril_presentation_maker/skill/tools/ ancestor
+#   - installed: parents[1] is `beril-presentation-maker` with a
+#     tools/ subdir
+#   - fallback: parents[4] (preserves legacy behavior)
+
+
+def test_resolve_skill_repo_root_dev_layout(tmp_path):
+    """Synthetic dev layout: nested src/.../skill/tools/ tree. The
+    resolver should find the dev root and label it 'dev'."""
+    dev_root = tmp_path / "fake_dev_repo"
+    tools_dir = (dev_root / "src" / "beril_presentation_maker"
+                 / "skill" / "tools")
+    tools_dir.mkdir(parents=True)
+    script = tools_dir / "smoke_v3_prompt.py"
+    script.touch()
+    root, layout = smoke._resolve_skill_repo_root(script.resolve())
+    assert layout == "dev"
+    assert root == dev_root.resolve()
+
+
+def test_resolve_skill_repo_root_installed_layout(tmp_path):
+    """Synthetic installed layout: skill dir named
+    `beril-presentation-maker` with a tools/ subdir. The resolver
+    should detect the installed root by name + tools/ sibling."""
+    skill_dir = (tmp_path / "fake_beril_root" / ".claude" / "skills"
+                 / "beril-presentation-maker")
+    tools_dir = skill_dir / "tools"
+    tools_dir.mkdir(parents=True)
+    script = tools_dir / "smoke_v3_prompt.py"
+    script.touch()
+    root, layout = smoke._resolve_skill_repo_root(script.resolve())
+    assert layout == "installed"
+    assert root == skill_dir.resolve()
+
+
+def test_resolve_skill_repo_root_fallback(tmp_path):
+    """No marker found → fallback to parents[4]. Preserves legacy
+    behavior for any layout the resolver doesn't recognize (e.g., a
+    weird CI environment)."""
+    # Make a 5-deep path with no markers
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+    deep.mkdir(parents=True)
+    script = deep / "smoke_v3_prompt.py"
+    script.touch()
+    root, layout = smoke._resolve_skill_repo_root(script.resolve())
+    assert layout == "fallback"
+    # parents[4] of e/smoke.py is `a` (e=0, d=1, c=2, b=3, a=4)
+    assert root == tmp_path.resolve() / "a"
+
+
+def test_resolve_prompts_dir_installed_vs_dev(tmp_path):
+    """_resolve_prompts_dir places prompts under root/ on installed,
+    under nested src/... on dev."""
+    fake_root = tmp_path / "root"
+    fake_root.mkdir()
+    inst = smoke._resolve_prompts_dir(fake_root, "installed")
+    assert inst == fake_root / "prompts"
+    dev = smoke._resolve_prompts_dir(fake_root, "dev")
+    assert dev == fake_root / "src" / "beril_presentation_maker" \
+        / "skill" / "prompts"
+    fb = smoke._resolve_prompts_dir(fake_root, "fallback")
+    # Fallback uses dev-shaped path (preserves legacy behavior)
+    assert fb == fake_root / "src" / "beril_presentation_maker" \
+        / "skill" / "prompts"
+
+
+def test_module_level_layout_pinned_to_dev_in_dev_repo():
+    """In THIS test run (executed from the dev repo), the module's
+    auto-detected _LAYOUT must be 'dev'. Pin so a future refactor
+    that breaks the dev-layout detection breaks a test, not a live
+    smoke run that operators rely on."""
+    assert smoke._LAYOUT == "dev", (
+        f"running from dev repo; expected _LAYOUT='dev'; got "
+        f"{smoke._LAYOUT!r}. SKILL_REPO_ROOT resolver may be broken.")
+
+
 def test_build_concat_variadic_four_sources(tmp_path):
     """build_concat with 4 sources = v3.2 slide_compose chain.
     Bytes in concat order: v2, v3-overlay, v3.1-overlay, v3.2-overlay."""
