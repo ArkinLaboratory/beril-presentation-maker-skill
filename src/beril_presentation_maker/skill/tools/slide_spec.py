@@ -501,7 +501,27 @@ DATA_FIGURE_CAPTION_MAX_CHARS = 280
 BIG_NUMBER_SUBTITLE_MAX_CHARS = 80          # ~one short sentence
 WORKFLOW_STEP_CAPTION_MAX_CHARS = 70        # per step (3 steps)
 QA_ANSWER_SUMMARY_MAX_CHARS = 600           # one glance; depth lives in answer_detail
+QA_ANSWER_SUMMARY_HARD_MAX_CHARS = 1100     # projection-legibility cliff (v0.8 Tier G.2)
 DIAGRAM_NODE_LABEL_MAX_CHARS = 40           # short phrase, not a sentence
+
+# v0.8 Tier G.2 rationale for QA_ANSWER_SUMMARY_HARD_MAX_CHARS:
+#   The renderer's _fill_qa_anticipated adaptive autofit ladder
+#   (assemble_pptx.py ~line 1681) maps body_chars → font_scale:
+#     ≤700   → 100% (full size; legible at any projection)
+#     ≤1100  →  90% (still legible)
+#     ≤1500  →  80% (small but legible)
+#     ≤2000  →  70% (borderline)
+#     >2000  →  60% (projection-illegible)
+#   v0.7 ibd_phage_targeting draft_8 (Tier G live discovery) produced
+#   answer_summary at 1013-1325 chars across 3 slides. The renderer
+#   dutifully shrank to 70-80% and visual-QA flagged all three as
+#   illegible_scale (mis-attributing to answer_detail in the process).
+#   The 600-char advisory cap was being routinely ignored by the
+#   composer because nothing failed; nothing acted on the advisory.
+#   The 1100-char hard cap is at the 90%→80% break: above it the
+#   text is reliably hard to read on a typical projector. This is
+#   the projection-illegibility cliff, set as a hard error so the
+#   composer must comply.
 
 
 def _check_advisory_max_chars(content: dict, key: str, path: str,
@@ -876,6 +896,27 @@ def _check_qa_anticipated(content: dict, path: str) -> list[ValidatorIssue]:
         "(notes pane)",
         iss,
     )
+    # v0.8 Tier G.2 HARD cap: above 1100 chars the renderer's
+    # shrink-to-fit ladder drops below 80% scale → projection-
+    # illegible. Live evidence from draft_8 ibd_phage_targeting:
+    # slides 25/26/27 produced answer_summary at 1013-1325 chars;
+    # visual-QA flagged all three illegible_scale (and mis-attributed
+    # the cause to answer_detail leaking onto the face, which it
+    # isn't — answer_detail is correctly routed to notes). The
+    # advisory cap above was being ignored cycle after cycle because
+    # nothing failed on it; the hard cap forces composer compliance.
+    val = content.get("answer_summary")
+    if isinstance(val, str) and len(val) > QA_ANSWER_SUMMARY_HARD_MAX_CHARS:
+        iss.append(ValidatorIssue(
+            f"{path}.answer_summary",
+            f"{len(val)} chars exceeds projection-legibility cliff "
+            f"({QA_ANSWER_SUMMARY_HARD_MAX_CHARS} chars; renderer "
+            f"shrink-to-fit drops below 80% scale and the result is "
+            f"projection-illegible). Move depth to answer_detail "
+            f"(routed to speaker notes) and keep answer_summary as "
+            f"the glanceable one-line answer the audience reads.",
+            severity="error",
+        ))
     return iss
 
 

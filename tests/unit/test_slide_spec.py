@@ -876,9 +876,16 @@ def test_workflow_step_caption_advisory_cap_emits_soft_warning(ss):
 
 
 def test_qa_answer_summary_advisory_cap_emits_soft_warning(ss):
-    """400-char advisory cap on qa_anticipated.answer_summary (depth
-    belongs in answer_detail, routed to notes pane per M3 E-5)."""
+    """600-char advisory cap on qa_anticipated.answer_summary (depth
+    belongs in answer_detail, routed to notes pane per M3 E-5).
+
+    Below the v0.8 Tier-G.2 HARD cap (1100 chars) but above the
+    advisory cap (600 chars): emits soft-warning ONLY, no error.
+    Renderer's shrink-to-fit absorbs cleanly in the 600-1100 range.
+    """
     long_ans = "x" * (ss.QA_ANSWER_SUMMARY_MAX_CHARS + 50)
+    # Sanity: this length must be in the soft-only band
+    assert len(long_ans) < ss.QA_ANSWER_SUMMARY_HARD_MAX_CHARS
     slide = {
         "id": 1, "substory_id": None, "layout": "qa_anticipated",
         "content": {
@@ -893,6 +900,77 @@ def test_qa_answer_summary_advisory_cap_emits_soft_warning(ss):
     assert errors == [], f"expected no errors, got {errors}"
     assert any("answer_summary" in i.path and "advisory cap" in i.message
                for i in soft), soft
+
+
+def test_qa_answer_summary_hard_cap_emits_error(ss):
+    """v0.8 Tier G.2 HARD cap: above 1100 chars the renderer's
+    shrink-to-fit drops below 80% scale → projection-illegible.
+    Composer must comply; validator fails the spec.
+
+    Live evidence: draft_8 ibd_phage_targeting slides 25/26/27
+    produced answer_summary at 1013/1141/1325 chars; visual-QA
+    flagged all three illegible_scale. The advisory was being
+    ignored cycle after cycle because nothing failed. Hard cap
+    forces compliance."""
+    over_hard = "y" * (ss.QA_ANSWER_SUMMARY_HARD_MAX_CHARS + 50)
+    slide = {
+        "id": 1, "substory_id": None, "layout": "qa_anticipated",
+        "content": {
+            "question": "q?",
+            "answer_summary": over_hard,
+            "evidence_pointer": "Substory 1",
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    errors = [i for i in issues if i.severity == "error"]
+    assert any(
+        "answer_summary" in i.path
+        and "projection-legibility cliff" in i.message
+        for i in errors), (
+        f"expected hard-cap error citing the projection-legibility "
+        f"cliff; got errors: {[(i.path, i.message[:80]) for i in errors]}")
+
+
+def test_qa_answer_summary_at_hard_cap_boundary_passes(ss):
+    """Exactly at the 1100-char hard cap → no error (cap is
+    inclusive: > triggers, == passes). Pin the boundary so a
+    future change to `> hard_max` vs `>= hard_max` breaks a test."""
+    at_boundary = "z" * ss.QA_ANSWER_SUMMARY_HARD_MAX_CHARS
+    slide = {
+        "id": 1, "substory_id": None, "layout": "qa_anticipated",
+        "content": {
+            "question": "q?",
+            "answer_summary": at_boundary,
+            "evidence_pointer": "Substory 1",
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    errors = [i for i in issues if i.severity == "error"]
+    cliff_errors = [e for e in errors
+                    if "projection-legibility cliff" in e.message]
+    assert cliff_errors == [], (
+        f"length exactly == hard cap must NOT trigger the cliff "
+        f"error; got: {[(e.path, e.message[:80]) for e in cliff_errors]}")
+
+
+def test_qa_answer_summary_well_under_caps_clean(ss):
+    """Realistic-length answer_summary (~400 chars) emits no
+    soft-warning AND no error. Pin so the validator only fires when
+    something's actually wrong."""
+    realistic = "x" * 400
+    slide = {
+        "id": 1, "substory_id": None, "layout": "qa_anticipated",
+        "content": {
+            "question": "q?",
+            "answer_summary": realistic,
+            "evidence_pointer": "Substory 1",
+        },
+    }
+    issues = ss.validate_slide_spec(_spec_with_one_slide(ss, slide))
+    qa_issues = [i for i in issues if "answer_summary" in i.path]
+    assert qa_issues == [], (
+        f"realistic-length answer_summary should produce no issues; "
+        f"got: {qa_issues}")
 
 
 def test_diagram_node_label_advisory_cap_emits_soft_warning(ss):

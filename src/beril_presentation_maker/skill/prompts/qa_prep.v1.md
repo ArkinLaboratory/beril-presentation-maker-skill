@@ -95,12 +95,21 @@ Field rules:
 - **`question` is in audience voice.** Open with what the audience
   would actually ask ("How do you know…", "What about…", "Did you
   control for…"). Not your meta-frame ("A common question is…").
-- **`answer_summary` ≤600 characters advisory (≈100 words)** — it
-  appears on the slide and must be readable at a glance. M3 E-5
-  routes `answer_detail` to the speaker-notes pane; depth lives
-  there, not on the slide face. The validator emits a soft-warning
-  above 600 chars; the renderer's adaptive autofit absorbs longer
-  but the slide reads tightest at the cap.
+- **`answer_summary` ≤600 characters advisory, ≤1100 chars HARD
+  (≈100 words advisory / ≈200 words hard cap)** — it appears on
+  the slide and must be readable at a glance. M3 E-5 routes
+  `answer_detail` to the speaker-notes pane; depth lives there,
+  not on the slide face. The validator emits a soft-warning above
+  600 chars (renderer's adaptive autofit absorbs cleanly to ~1100
+  chars) and a HARD ERROR above 1100 chars per v0.8 Tier G.2
+  (above 1100 the renderer's shrink-to-fit drops below 80% scale
+  and the result is projection-illegible). Live failure that
+  motivated the hard cap: v0.8 Tier G ibd_phage_targeting draft_8
+  slides 25/26/27 — answer_summary at 1013/1141/1325 chars,
+  visual-QA flagged all three illegible_scale. If you find
+  yourself wanting more than 1100 chars in answer_summary, that
+  content belongs in `answer_detail` for the speaker — keep the
+  on-slide line tight enough to read at a glance.
 - **`answer_detail` is for the speaker**, not the slide. It expands
   with the deeper-dive content the speaker uses to handle follow-ups.
 - **`weakness_target` must reference a real substory + analysis.**
