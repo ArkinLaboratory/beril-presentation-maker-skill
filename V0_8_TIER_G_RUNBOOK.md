@@ -12,11 +12,12 @@ The Tier A/B/C/D/E/F commits added new tools (`check_curator_figure_floor.py`, `
 
 ```bash
 cd $BERIL_ROOT
-pipx install --force \
-  git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git \
+pipx install --force git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git \
   && beril-presentation-maker --version \
   && beril-presentation-maker install-skill .
 ```
+
+> **Note:** the URL above is the full literal — `git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git`. Don't substitute `...` placeholders; pip treats them literally and fails with `fatal: no path specified`. If you don't have SSH set up with GitHub, use HTTPS instead: `git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git` (you'll be prompted for credentials).
 
 Verify the install caught all v0.8 files:
 
