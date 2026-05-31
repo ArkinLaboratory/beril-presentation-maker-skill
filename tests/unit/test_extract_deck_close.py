@@ -297,6 +297,35 @@ def test_final_substory_uses_punchline_when_no_conclusion(edc, tmp_path):
     assert report.key_takeaways == ["C1.", "P2 final punchline."]
 
 
+def test_any_substory_missing_conclusion_falls_back_to_punchline(edc, tmp_path):
+    """v0.7 Tier G live-discovered: v3.2 substory_design overlays
+    sometimes drop the `Conclusion for next substory:` field from
+    non-final substories despite the v3 contract requiring it. The
+    extractor's recovery (Tier G in-flight fix): fall back to
+    Punchline for ANY substory missing Conclusion, not just the
+    final one. Prevents the "1 takeaway from 4-substory deck"
+    failure mode that crashed Tier G ibd at validation time."""
+    draft_dir = _make_draft(tmp_path)
+    _write_throughline_v06(draft_dir, "TL.")
+    _write_substories(draft_dir, [
+        # 4 substories, NONE have Conclusion-for-next
+        ("S1", "", "", "S1 punchline."),
+        ("S2", "", "", "S2 punchline."),
+        ("S3", "", "", "S3 punchline."),
+        ("S4", "", "", "S4 punchline."),
+    ])
+    _write_report(draft_dir.parent.parent, "# R\n")
+    report = edc.extract_deck_close(draft_dir)
+    # All 4 substories should contribute their punchline as a takeaway
+    # (capped at 5 by D-086 schema, so all 4 land here).
+    assert report.key_takeaways == [
+        "S1 punchline.", "S2 punchline.",
+        "S3 punchline.", "S4 punchline.",
+    ]
+    # And no_signal_fallback stays False — we extracted takeaways.
+    assert report.no_signal_fallback is False
+
+
 # ---------------------------------------------------------------------------
 # REPORT forward_call parser
 # ---------------------------------------------------------------------------

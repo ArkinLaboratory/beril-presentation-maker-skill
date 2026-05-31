@@ -420,16 +420,30 @@ def extract_deck_close(
     # unified_point ← throughline
     report.unified_point = parse_throughline(throughline_path)
 
-    # key_takeaways ← per-substory Conclusion-for-next + final punchline
+    # key_takeaways ← per-substory Conclusion-for-next + universal
+    # punchline fallback.
+    #
+    # v0.7 Tier G live-discovered bug: v3.2 substory_design overlays
+    # don't always emit `Conclusion for next substory:` on
+    # non-final substories (the v3 contract requires it, but v3.2's
+    # overlay layering apparently displaces some prompt instructions
+    # for that field). The prompt contract drift is a v0.8 follow-up;
+    # the extractor's job is to be robust to the actual on-disk
+    # shape.
+    #
+    # Recovery: fall back to Punchline for ANY substory missing
+    # Conclusion-for-next (not just the final). This matches what
+    # the live curator produces in v0.7 and prevents the
+    # "1 takeaway from a 4-substory deck" failure mode that
+    # crashed Tier G ibd at validation time
+    # (key_takeaways must have 3-5 items per D-086 schema).
     records = parse_substory_records(substories_path)
     takeaways: list[str] = []
     for i, rec in enumerate(records):
-        is_final = (i == len(records) - 1)
         if rec.conclusion_for_next:
             takeaways.append(rec.conclusion_for_next)
-        elif is_final and rec.punchline:
-            # Final substory has no Conclusion-for-next (no next) —
-            # use its punchline as the takeaway anchor.
+        elif rec.punchline:
+            # Universal punchline fallback (was: final-only at Tier C.2).
             takeaways.append(rec.punchline)
     # Cap at 5 per D-086 / Tier C.0 schema. If a curator emits 6+
     # substories (talk-45 territory), the composer picks; here we
