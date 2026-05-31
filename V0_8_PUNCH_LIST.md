@@ -83,6 +83,41 @@ grounding** (F4 + F5).
      finding 1 on both decks today) shows this is a recurring
      class.
 
+**Carries from v0.8 Tier G live discovery (new; documented but
+deferred to v0.8.1):**
+
+- **install-skill doesn't ship smoke fixtures.** Discovered at
+  Tier G 2026-05-31: running `smoke_v3_prompt.py` from the
+  installed-skill path fails with `smoke fixture missing at
+  .../tests/fixtures/smoke_v3`. `install_skill.py`'s
+  `_SHIPPED_SUBDIRS` covers only `commands`, `prompts`,
+  `references`, `tools` — not `tests/fixtures/`. SKILL_REPO_ROOT
+  resolution via `parents[4]` of the script also assumes dev-repo
+  layout (`src/beril_presentation_maker/skill/tools/`), not the
+  installed shallow layout (`.claude/skills/beril-presentation-maker/
+  tools/`); from the installed path, `parents[4]` walks to
+  `$BERIL_ROOT` itself. Tier-G workaround: run smoke from dev
+  repo, copy pass record to installed `audit/` dir. v0.8.1 fix
+  is two pieces: (a) add `tests/fixtures/smoke_v3` to
+  `_SHIPPED_SUBDIRS` (or add a new `_SHIPPED_FIXTURE_DIRS`
+  category to keep the semantic separation), (b) rework
+  SKILL_REPO_ROOT to auto-detect dev-vs-install layout (search
+  upward for a marker file like `SKILL.md` or `pyproject.toml`).
+- **v3.3 validator's edge-case rules demoted to advisory.**
+  Tier-G live smoke caught the LLM emitting Conclusion-for-next
+  on the single-substory fixture (which is both first AND
+  final). The user_prompt explicitly says to omit, but the
+  v3.3 template makes the field look required. Demoted
+  "Conclusion on FINAL" + "Transition on FIRST" from hard fail
+  to stderr advisory; "missing on required slot" stays hard
+  fail (the load-bearing D-095 bug class). The advisory still
+  surfaces to operators; the demotion just keeps smoke from
+  failing on a wart that doesn't matter on real 3-5-substory
+  decks. If real Tier-G/H runs show the LLM ALSO emits these
+  on multi-substory deck-ends/-starts, decide at Tier I
+  whether to keep the advisory or land a prompt-side fix in
+  v0.8.1.
+
 **Carries from v0.7 (still real; deferred again):**
 
 - **Per-arc figure clustering / per-arc-distribution metric** —

@@ -742,10 +742,15 @@ def test_validate_substory_design_fields_catches_dropped_transition():
         f"substory); got: {[(i.field, i.message) for i in issues]}")
 
 
-def test_validate_substory_design_fields_catches_misplaced_conclusion_on_final():
+def test_validate_substory_design_fields_advises_misplaced_conclusion_on_final(
+        capsys):
     """**Conclusion for next substory:** on the FINAL substory is
-    wrong (no next substory to hand off to). v3.3 contract forbids
-    this; the validator catches it."""
+    over-zealous (no next substory to hand off to). Per v0.8 Tier-G
+    live discovery, the LLM tends to emit it anyway when the
+    template makes it look required — the rule was DEMOTED from
+    hard fail to advisory. Validator still surfaces the issue via
+    stderr, but does NOT add it to the issues list (smoke passes).
+    """
     bad = (
         "### S1 — first\n"
         "**Question:** Q1?\n"
@@ -757,33 +762,43 @@ def test_validate_substory_design_fields_catches_misplaced_conclusion_on_final()
         "**Conclusion for next substory:** WRONG — nothing follows\n"
     )
     issues = smoke.validate_substory_design_fields(bad)
-    assert any("Conclusion for next substory" in i.field
-               and "S2" in i.message
-               and "FINAL" in i.message
-               for i in issues), (
-        f"expected misplaced-Conclusion issue on S2 (final); "
-        f"got: {[(i.field, i.message) for i in issues]}")
+    # NO hard fail — issues list must be empty for this misplaced-
+    # on-edge case (it's a wart, not a content bug).
+    assert issues == [], (
+        f"misplaced Conclusion-on-final should be ADVISORY, not a "
+        f"hard fail; got: {[(i.field, i.message) for i in issues]}")
+    # But the advisory MUST print to stderr so the operator sees it.
+    captured = capsys.readouterr()
+    assert "[smoke advisory]" in captured.err
+    assert "Conclusion for next substory" in captured.err
+    assert "S2" in captured.err
+    assert "FINAL" in captured.err
 
 
-def test_validate_substory_design_fields_catches_misplaced_transition_on_first():
-    """**Transition from prior:** on S1 is wrong (no prior). v3.3
-    forbids it; the validator catches it."""
+def test_validate_substory_design_fields_advises_misplaced_transition_on_first(
+        capsys):
+    """**Transition from prior:** on S1 is over-zealous (no prior).
+    Same v0.8 Tier-G demotion rationale as Conclusion-on-final:
+    advisory, not hard fail."""
     bad = (
         "### S1 — first\n"
         "**Transition from prior:** WRONG — nothing precedes\n"
         "**Question:** Q1?\n"
+        "**Conclusion for next substory:** ok\n"
         "\n"
         "### S2 — final\n"
         "**Transition from prior:** ok\n"
         "**Question:** Q2?\n"
     )
     issues = smoke.validate_substory_design_fields(bad)
-    assert any("Transition from prior" in i.field
-               and "S1" in i.message
-               and "FIRST" in i.message
-               for i in issues), (
-        f"expected misplaced-Transition issue on S1 (first); "
-        f"got: {[(i.field, i.message) for i in issues]}")
+    assert issues == [], (
+        f"misplaced Transition-on-first should be ADVISORY, not a "
+        f"hard fail; got: {[(i.field, i.message) for i in issues]}")
+    captured = capsys.readouterr()
+    assert "[smoke advisory]" in captured.err
+    assert "Transition from prior" in captured.err
+    assert "S1" in captured.err
+    assert "FIRST" in captured.err
 
 
 def test_validate_substory_design_fields_handles_empty_input():

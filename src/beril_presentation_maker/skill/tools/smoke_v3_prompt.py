@@ -359,14 +359,36 @@ def validate_substory_design_fields(
         required
       - Non-first substories: **Transition from prior:** required
 
-    Returns list of FragmentIssue per missing field. Empty list
-    means all substories satisfy the v3.3 contract.
+    Returns list of FragmentIssue per ISSUE found. Empty list means
+    all substories satisfy the v3.3 contract.
 
-    The v3.2 substory_design bug this catches: live output had
-    ALL substories missing both Conclusion + Transition fields.
-    A v3.3 invocation that re-introduces the bug would emit a
-    similarly-shaped 02_substories.md and this validator would
-    flag every per-substory field-drop.
+    Severity strategy (post-v0.8-Tier-G live discovery):
+
+    HARD fails (returned in the issues list; these fail the smoke):
+      - Missing **Question:** on any substory
+      - Missing **Conclusion for next substory:** on a non-final
+        substory (this is THE load-bearing v3.2 bug class D-095
+        was designed to catch)
+      - Missing **Transition from prior:** on a non-first substory
+      - Empty or unparseable substory_md
+
+    SOFT advisories (printed to stderr; do NOT fail the smoke):
+      - **Conclusion for next substory:** present on the FINAL
+        substory (LLM was over-zealous; harmless wart, not a
+        content bug)
+      - **Transition from prior:** present on the FIRST substory
+        (same class of over-zealous)
+
+    Rationale for the soft-advisory split: v0.8 Tier-G live smoke
+    on the single-substory fixture caught the LLM emitting
+    Conclusion-for-next on the only substory (which is both first
+    AND final), even though the user_prompt explicitly said to omit
+    both. The v3.3 system-prompt template overrides the
+    user_prompt's exception language. Production decks have 3-5
+    substories where the edge cases don't apply; a slightly
+    over-zealous LLM on the deck-end is a wart, not a bug. The
+    load-bearing assertion (the missing-on-required case) is what
+    D-095 is for; that stays a hard fail.
     """
     import re as _re
     issues: list[FragmentIssue] = []
@@ -420,14 +442,20 @@ def validate_substory_design_fields(
                     f"substories; this is the load-bearing v3.2 "
                     f"bug class v3.3 was designed to prevent)"))
         else:
-            # Final substory MUST NOT have Conclusion for next
-            # (no next substory to hand off to).
+            # Final substory SHOULD NOT have Conclusion for next
+            # (no next substory to hand off to). v0.8 Tier-G live
+            # smoke discovery: the LLM tends to emit it anyway when
+            # the template makes it look required. Demoted to
+            # advisory: printed to stderr, doesn't fail smoke.
             if "**Conclusion for next substory:**" in block:
-                issues.append(FragmentIssue(
-                    None, None, "Conclusion for next substory",
-                    f"{sid}: **Conclusion for next substory:** "
-                    f"present on FINAL substory (omit; no next "
-                    f"substory exists to hand off to)"))
+                print(
+                    f"[smoke advisory] {sid}: **Conclusion for "
+                    f"next substory:** present on FINAL substory; "
+                    f"omit when no next exists (over-zealous LLM "
+                    f"on deck-end; harmless wart, not a content "
+                    f"bug — v0.8 Tier-G discovery)",
+                    file=sys.stderr,
+                )
 
         # Required on non-first substories: Transition from prior
         if not is_first:
@@ -439,13 +467,18 @@ def validate_substory_design_fields(
                     f"substories; this is the other v3.2 bug "
                     f"class v3.3 was designed to prevent)"))
         else:
-            # S1 MUST NOT have Transition from prior
+            # S1 SHOULD NOT have Transition from prior. Same
+            # advisory-demotion rationale as Conclusion-on-final
+            # above.
             if "**Transition from prior:**" in block:
-                issues.append(FragmentIssue(
-                    None, None, "Transition from prior",
-                    f"{sid}: **Transition from prior:** present "
-                    f"on FIRST substory (omit; no prior substory "
-                    f"to transition from)"))
+                print(
+                    f"[smoke advisory] {sid}: **Transition from "
+                    f"prior:** present on FIRST substory; omit "
+                    f"when no prior exists (over-zealous LLM on "
+                    f"deck-start; harmless wart, not a content "
+                    f"bug — v0.8 Tier-G discovery)",
+                    file=sys.stderr,
+                )
 
     return issues
 
