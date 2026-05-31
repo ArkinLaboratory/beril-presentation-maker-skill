@@ -118,6 +118,24 @@ deferred to v0.8.1):**
   whether to keep the advisory or land a prompt-side fix in
   v0.8.1.
 
+- **`beril-presentation-maker draft` Python wrapper silently
+  drops `--prompts-version`.** Discovered at Tier G 2026-05-31
+  when an agent invoked the skill via the documented
+  slash-command path: `draft.py`'s argv allowlist doesn't
+  include `--prompts-version`, so passing it through the
+  Python wrapper produces an argparse error OR (worse) a
+  silent v2 default if the wrapper silently drops it. The
+  agent had to fall back to invoking the byte-identical shell
+  orchestrator directly (`bash .claude/skills/.../presentation_maker.sh
+  --prompts-version v3.3 ...`) to honor the flag. Any future
+  v0.8 caller following the documented path gets a silent v2
+  downgrade. v0.8.1 fix: extend the Python wrapper's allowlist
+  to forward `--prompts-version` + `--force-v3-smoke-stale` to
+  the shell orchestrator (also any other shell-orchestrator-
+  only flags worth surfacing to operators). Until then, the
+  Tier-G runbook's invocation example uses the shell-direct
+  path so this gap is bypassed.
+
 **Carries from v0.7 (still real; deferred again):**
 
 - **Per-arc figure clustering / per-arc-distribution metric** —
