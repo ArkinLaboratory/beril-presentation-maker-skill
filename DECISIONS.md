@@ -3632,10 +3632,77 @@ needs to be at the RIGHT point in the orchestrator
 gates on VISUAL_QA). Probably ~line 280-ish after the
 mode/tier case statements.
 
+**Tier-D landing (2026-05-31):** all four pieces shipped; one
+spec-vs-code divergence resolved in-session.
+
+  1. **`presentation_maker.sh` default-init block** — added
+     `NO_VISUAL_QA=0` alongside the existing `VISUAL_QA=0`.
+     Comment header updated to describe the new auto-on flow
+     + the two override flags.
+
+  2. **`--no-visual-qa` CLI flag** — added to the argument
+     parser case alongside `--visual-qa`. Sets `NO_VISUAL_QA=1`
+     (distinct variable from `VISUAL_QA` so the two interact
+     cleanly per D-096 spec).
+
+  3. **Mode-aware auto-on block** placed immediately AFTER the
+     `case "$TIER" in` validation, before any stage runs. Logic:
+     ```bash
+     if [[ "$VISUAL_QA" -eq 0 && "$NO_VISUAL_QA" -eq 0 ]]; then
+       if [[ "$TIER" == "STRONG" ]] \
+           && [[ "$MODE" == "talk-30" || "$MODE" == "talk-15" ]]; then
+         VISUAL_QA=1
+         echo "[v0.8/D-096] visual-QA auto-on for $MODE $TIER..." >&2
+       fi
+     fi
+     ```
+     Stderr announcement names the flag (`--no-visual-qa`) so
+     operators know how to opt out next time.
+
+  4. **`--help` docs** — both `--visual-qa` and `--no-visual-qa`
+     entries cite D-096 + the auto-on behavior so operators
+     reading the existing v0.4 docs aren't misled.
+
+**Spec-vs-code divergence resolved in-session:** D-096's
+mode-coverage table referenced `talk-15 BRIEF` as a default-ON
+combination, but the orchestrator's TIER validator only accepts
+`STRONG|THIN|EXPLORATORY` (BRIEF was never added as a tier).
+Adam DQ at Tier-D-start chose: treat BRIEF as a stale spec note;
+auto-on fires when `TIER=STRONG AND MODE in {talk-30, talk-15}`.
+If BRIEF is added as a real tier in v0.9+, the auto-on guard
+needs the second clause appended:
+`[[ "$MODE" == "talk-15" && "$TIER" == "BRIEF" ]]`.
+The Tier-D test suite has explicit BRIEF-tier-excluded parametrize
+coverage so this assumption is audit-trail visible.
+
+**Test coverage (Tier D):** 23 new unit tests in
+`test_orchestrator_visual_qa_default.py`:
+
+  - Source-level pins (5): --no-visual-qa flag presence,
+    NO_VISUAL_QA + VISUAL_QA default-init values, auto-on
+    block position-after-TIER-validation, auto-on guard
+    references (STRONG + talk-30 + talk-15; explicitly NOT
+    talk-45 + lightning-5), NO_VISUAL_QA respect.
+  - Help-text pins (2): --no-visual-qa documented + D-096
+    cited; existing --visual-qa --help mentions auto-on.
+  - Runtime parametrized table coverage (10): full D-096
+    mode/tier matrix with expected VISUAL_QA value per cell.
+  - Operator-override runtime tests (6): --visual-qa forces
+    ON for excluded modes, --no-visual-qa suppresses for
+    STRONG audience modes, --no-visual-qa is a no-op for
+    already-OFF modes, auto-on doesn't re-trigger when
+    VISUAL_QA already 1, auto-on emits stderr announcement
+    when triggered.
+
+Suite total: 1717 → 1740.
+
 **Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ4 +
 Tier D; D-092 finding 5 + lesson 5 (the v0.7 Tier-I
 observation this addresses); M4a Tier C (the original
-visual_qa.py opt-in decision this flips to default-on).
+visual_qa.py opt-in decision this flips to default-on);
+D-094 (the fdm slide-32 leak class that visual-QA caught with
+high confidence on Adam's qualitative read — the bug-class
+motivation for auto-on).
 
 ---
 

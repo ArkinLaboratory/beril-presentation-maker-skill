@@ -142,8 +142,21 @@
 #                            render-quality defects (overflow, overlap,
 #                            footer collisions, illegible scale, headline↔body
 #                            mismatch). Advisory (rc=0). Adds ~$0.6-0.8 +
-#                            ~30s per run for a talk-30 deck. Off by default
-#                            (requires LibreOffice + Poppler on host).
+#                            ~30s per run for a talk-30 deck.
+#                            v0.8/D-096: AUTO-ON for STRONG tier on
+#                            talk-30/talk-15 modes (audience-facing). This
+#                            flag forces ON for any mode/tier; use
+#                            --no-visual-qa to suppress the auto-on for a
+#                            STRONG-mode iteration where you want to skip
+#                            the cost.
+#                            Requires LibreOffice + Poppler on host.
+#   --no-visual-qa           v0.8/D-096: suppress the mode-aware auto-on
+#                            visual-QA default. Use when you want to skip
+#                            visual-QA on a STRONG talk-30/talk-15 run
+#                            (e.g., iteration mode where ~$1/deck is too
+#                            costly). Has no effect on modes where the
+#                            default is already OFF (lightning-5, poster,
+#                            talk-45, any non-STRONG tier).
 #   --no-review-cascade      Skip the tiered review cascade (v0.4 M4b). The
 #                            cascade AUTO-RUNS by default — it wraps
 #                            Tier 1 (P1-P10 + advisory checks + opt-in
@@ -231,10 +244,20 @@ PROMPTS_VERSION="v2"
 # in the operator-knows-what-they're-doing case (logged loudly).
 FORCE_V3_SMOKE_STALE=0
 
-# v0.4 M4a Tier C — opt-in visual-QA pass (DQ1 — Adam 2026-05-23).
-# Off by default; vision-LLM call + LibreOffice render adds cost per
-# run, so opt-in until M4b's cascade exists (which may absorb it).
+# v0.4 M4a Tier C — visual-QA pass (DQ1 — Adam 2026-05-23).
+# v0.8/D-096: mode-aware default. Initialized 0 here; auto-flipped
+# to 1 after MODE+TIER validation when the run is talk-30 STRONG or
+# talk-15 STRONG (the audience-facing modes where the v0.7 Tier-I
+# read showed visual-QA catches load-bearing render bugs that
+# Adam-reads cost 30-60min to find — e.g., the fdm slide-32
+# directions-leak D-094 fixed). Operator overrides:
+#   --visual-qa     forces ON on any mode/tier
+#   --no-visual-qa  forces OFF even on STRONG audience modes
+# The NO_VISUAL_QA flag is sticky — it suppresses the auto-on
+# default but DOESN'T conflict with an explicit --visual-qa on the
+# same command line (last-flag-wins via flag order).
 VISUAL_QA=0
+NO_VISUAL_QA=0
 
 # v0.4 M4b Tier A — tiered review cascade (DQ1 — Adam 2026-05-24).
 # Auto-runs by default; opt out via --no-review-cascade. Produces
@@ -463,8 +486,12 @@ while [[ $# -gt 0 ]]; do
     # you intentionally want to run v3 without a fresh smoke
     # (e.g., emergency re-runs). Logged loudly to stderr.
     --force-v3-smoke-stale)  FORCE_V3_SMOKE_STALE=1; shift ;;
-    # v0.4 M4a Tier C — opt-in visual-QA pass (DQ1)
+    # v0.4 M4a Tier C — visual-QA pass (DQ1)
+    # v0.8/D-096: --visual-qa forces ON; --no-visual-qa forces OFF
+    # (suppresses the mode-aware auto-on default for STRONG
+    # talk-30/talk-15).
     --visual-qa)         VISUAL_QA=1; shift ;;
+    --no-visual-qa)      NO_VISUAL_QA=1; shift ;;
     # v0.4 M4b Tier A — review cascade is auto-run; opt out with this flag
     --no-review-cascade) NO_REVIEW_CASCADE=1; shift ;;
     --help)              usage ;;
@@ -494,6 +521,24 @@ case "$TIER" in
   STRONG|THIN|EXPLORATORY) ;;
   *) echo "Error: invalid --tier '$TIER'" >&2; exit 1 ;;
 esac
+
+# v0.8/D-096 — mode-aware visual-QA auto-on. Flip VISUAL_QA from 0
+# to 1 when this is an audience-facing run (STRONG tier + talk-30 or
+# talk-15 mode) AND the operator hasn't explicitly opted out via
+# --no-visual-qa. The v0.7 Tier-I read showed visual-QA catches
+# load-bearing render bugs (fdm slide-32 directions-leak; D-094)
+# that Adam-reads cost 30-60min to surface; cost is ~$1 + ~30s/deck.
+# Lightning-5 (rough draft) + poster (different render pipeline) +
+# talk-45 stay opt-in per D-096 mode-coverage table.
+if [[ "$VISUAL_QA" -eq 0 && "$NO_VISUAL_QA" -eq 0 ]]; then
+  if [[ "$TIER" == "STRONG" ]] \
+      && [[ "$MODE" == "talk-30" || "$MODE" == "talk-15" ]]; then
+    VISUAL_QA=1
+    echo "[v0.8/D-096] visual-QA auto-on for ${MODE} ${TIER} " \
+         "(audience-facing mode; ~\$1 + ~30s/deck; --no-visual-qa " \
+         "to opt out)" >&2
+  fi
+fi
 
 # v0.4 M2: which clustering stage runs at the substory slot.
 # v0_3 (default) → stage_substory_design; v0_4 → stage_deck_outline
