@@ -2937,3 +2937,262 @@ template lesson this audit operationalizes); D-089 (the localized
 fix the audit narrowed scope to); D-086 (the deck_close layout
 design that incorporates the audit's preventive-pattern
 guidance).
+
+---
+
+## D-092 — 2026-05-31 — v0.7 Tier-I Adam-veto: DON'T SHIP; five carry items open v0.8
+
+**Context:** v0.7 (v3.2 prompts + 5 new contracts D-085..D-089)
+Tier G + H live A/B completed 2026-05-31 on both projects with
+in-flight bug recoveries:
+
+- ibd_phage_targeting/talks/draft_7: 33 slides; 2 AI images
+  (intro-pos0 big_idea + intro-pos1 claim_evidence) after
+  Tier-I-fix-1 judge-prompt softening; 0
+  `relevant_figure_not_used` findings; 100% figure utilization;
+  4 cross_tenant_grounding omissions (amplicon/ec/go + HMP); 0
+  cascade findings; 11 visual-QA findings.
+- functional_dark_matter/talks/draft_7: 39 slides; 5 AI images
+  (intro-pos0/1 + S1-pos4 + S2-pos4 + S5-pos7) after Tier-I-fix;
+  0 `relevant_figure_not_used`; 100% figure utilization; 1
+  `data_figure_path_not_in_curated_inventory` on S1 (composer
+  hallucinated a non-curated figure path); 2 cross_tenant
+  grounding omissions (ec/go short-name pattern); 0 cascade
+  findings; 13 visual-QA findings.
+
+All v0.7 mechanical targets MET on a per-decision basis:
+
+- D-085 (figure-relevance): 0 unused-relevant-figure findings on
+  both decks (was 3 on ibd v0.6 S4).
+- D-086 (deck_close): present on both decks (was absent on both
+  v0.6).
+- D-087 (substory_design transition_from_prior): substory_design
+  v3.2 overlay deployed but composer didn't emit the field
+  in live runs (see "open issues" below).
+- D-088 (image-gen scope to claim_evidence): 5/8 approvals
+  spanned claim_evidence slides on fdm; 1/2 on ibd. v0.6
+  baseline = 0 claim_evidence approvals on either deck.
+- D-089 (cross_tenant grounding): extractor extends all three
+  new fields (reference_databases + external_cohorts +
+  notebook_count); composer enumerates structured signal
+  verbatim (the v0.6 slide-27 "31 notebooks, 8 K-BERDL DBs"
+  failure mode is mechanically prevented now).
+
+**Decision (Adam Tier-I veto 2026-05-31):** DON'T SHIP as v0.7.0.
+Four consecutive Adam-veto-over-mechanical-result cycles now
+(D-066 M6 mechanical-FAIL + don't-ship; D-079 v0.5.1 mechanical-
+PASS + don't-ship; D-084 v0.6 mechanical-PASS + don't-ship; v0.7
+now mechanical-PASS + don't-ship per this decision).
+
+### The five Tier-I findings
+
+1. **Sub-arcs with no figures.** Adam's Tier-I read: "I am still
+   surprised at how often a sub-arc has no figures." The v0.7
+   D-085 figure-relevance metric (100% utilization, 0
+   relevant_figure_not_used findings) is structurally correct —
+   the validator says "every available curated figure for a
+   substory's analyses got used." But the curator-stage
+   `curated_figures.md` shortlist is too narrow: it lists ~7
+   figures per project across 4-5 substories, leaving some
+   substories with zero curated figures available. The composer
+   can't conjure figures the curator didn't surface; the
+   validator gives those substories a free pass; Adam reads
+   "this STRONG-mode substory has no figure" and registers a
+   real qualitative gap. v0.8 fix surface: curator-stage figure
+   floor (each substory MUST have ≥1 curated figure if any
+   candidate exists in its notebooks).
+
+2. **AI images dropped entirely on first Tier-G run.** Adam's
+   Tier-I read: "We seem to have dropped images." Mechanically
+   confirmed: judge approved 0/30 ibd + 0/36 fdm candidates on
+   the first run. Root cause: the D-088 technical-specificity
+   criterion language was TOO strict — "Approve ONLY if you can
+   describe concrete, technically-specific elements... labeled
+   diagram panels matching named mechanisms, schematic
+   representations of the slide's specific methods" demanded
+   Nature-figure-quality visualization at judge time, before the
+   prompt-author had even started thinking about the image. Even
+   the v0.6 big_idea opens (which Adam saw + complained about at
+   D-084 finding 4) would fail this bar. **Tier-I-fix-1
+   (in-session):** relaxed prompt to "Approve if you can describe
+   at least one domain-anchored visual element... a named
+   mechanism, a recognized molecular structure, a method-shape
+   the audience would recognize" + "Reject ONLY when the
+   most-charitable image you can envision would still be a pure
+   abstraction." Re-ran image_gen only against existing draft_7
+   specs; ibd got 2 approvals, fdm got 5. Decks now have visible
+   AI images. Spend ~$0.50 in Tier-I-fix-1.
+
+3. **fdm slide-32 directions leak.** Adam's Tier-I read: "Slide 32
+   in fdm seems to have some 'directions' leak on to the slide."
+   Visual-QA caught it with high-confidence: the deck_close
+   slide's `data_source` field
+   ("Substory conclusions: S1 (C-slot) + S2 (C-slot) + ...;
+   narrative/00_throughline.md; REPORT.md §Future directions")
+   is rendered as visible on-slide body text instead of as a
+   subdued audit-trail footer. The renderer's `_fill_deck_close`
+   draws it at font_size_pt=10 in the lower band BELOW the
+   forward_call, where it competes for attention + reads as
+   pipeline scaffolding (the audience sees "C-slot" and "REPORT.md"
+   citations on the closing slide). Also adjacent: the
+   `forward_call` itself is too long (4 sentences pulled
+   verbatim from REPORT bullets when the extractor's narrow trim
+   should have happened). Two separate fixes for v0.8.
+
+4. **v3.2 substory_design dropped Conclusion-for-next-substory +
+   Transition-from-prior fields.** Live-discovered Tier G bug:
+   the v3.2 substory_design overlay (D-087) was supposed to ADD
+   the transition_from_prior field while preserving the v3
+   `Conclusion for next substory:` field. Both got silently
+   dropped in live output despite both overlays being in the
+   concat stack. Live-recovered by extracting universal-punchline
+   fallback in extract_deck_close.py (Tier G commit 1d90c63),
+   but the prompt-layering bug remains real: D-087's
+   `transition_from_prior` feature (the v3.2 arc-bridge data)
+   doesn't actually flow to slide_compose either. v0.8
+   prompt-engineering investigation needed.
+
+5. **Visual-QA findings on both decks.** Newly run as part of
+   Tier I (--visual-qa was opt-in M4a; not run during Tier G/H).
+   - ibd: 11 warnings across 33 slides (~$0.92). Notable: slide 3
+     AI image leaks "~62%" annotation referencing a section-3
+     finding before it's been established (image-gen spoiler).
+   - fdm: 13 warnings across 38 slides (~$1.33). Notable: slide-32
+     data_source rendering (per finding 3 above); slide-3 same
+     image-leak pattern as ibd.
+   - Visual-QA was correctly opt-in per M4a Tier C — but not
+     running it during Tier G/H meant Adam saw these issues in
+     the Tier-I read rather than mechanically. v0.8 question:
+     should --visual-qa become default-on for STRONG-mode runs?
+
+### What ships on main from v0.7 work
+
+All commits remain on main:
+
+- `e2efb88` Tier 0 (D-085..D-091; DQ sign-off + C1 + C2)
+- `03dcb58` Tier A (slide_compose.v3.2_overlay + --prompts-version v3.2)
+- `d679ea6` Tier A.1 (relevant_figure_not_used finding; D-085)
+- `ae05b07` Tier A.2 (resumable cascade + checkpoint; D-090)
+- `bf8c0b0` Tier B (substory_design.v3.2_overlay; D-087)
+- `be87b63` Tier C.0+C.1 (deck_close validator + renderer; D-086)
+- `525e972` Tier C.2 (extract_deck_close.py)
+- `7357eb2` Tier C.3 (deck_close composer + stage + merger)
+- `f8f3819` Tier D (image-gen scope expansion; D-088)
+- `140d2bc` Tier E (cross_tenant grounding; D-089)
+- `2aeb944` Tier F (smoke harness for v3.2)
+- `1d90c63` Tier G/H (live A/B + extractor robustness fix)
+- `1000cef` Tier I-fix (D-088 judge softening)
+- (this commit) Tier I closeout (D-092 + paperwork)
+
+Tests: 1521 (v0.6 end) → 1644 (v0.7 end). Suite green.
+
+No `v0.7.0` git tag (per veto). v3.2 prompts available via
+`--prompts-version v3.2` (gated on fresh smoke-pass per D-076);
+v3.2 smoke-pass record fresh as of 2026-05-31. v0.6 baseline
+(--prompts-version v2 default) preserved.
+
+### Cross-cutting lessons (carry to v0.8 design)
+
+**Lesson 1: Tier-E/F/I qualitative-read pattern is THE quality
+gate.** This is the 4th consecutive cycle where mechanical
+metrics show "v(N) fixed v(N-1) findings" + Adam's read finds
+new gaps. The pattern is robust precisely because metrics
+ALWAYS lag qualitative read. Continue to budget Tier-F-or-I
+reads as Adam-time + pre-plan the next-cycle punch list to
+absorb the findings. Don't try to design the perfect pre-veto
+metric set.
+
+**Lesson 2: Composer-side narrow-trim contracts need stricter
+enforcement than D-086's "≤2 sentences, narrow trim allowed."**
+The fdm slide-32 forward_call (4 sentences from REPORT bullets,
+verbatim) violates the spirit of D-086's "1-2 sentence forward-
+looking actionable statement" but the composer interpreted "use
+verbatim" as overriding the length constraint. v0.8 may need
+explicit composer-side length enforcement at extraction time
+(extractor truncates to N sentences max) or at validator time
+(slide_spec.py validates field length).
+
+**Lesson 3: data_source / audit-trail fields shouldn't render
+on the slide face.** D-086 schema includes `data_source` as a
+required content field. The renderer treats it as on-slide text
+(below forward_call). That's wrong shape: data_source is an
+audit-trail citation — it belongs in `speaker_notes` for the
+presenter + audit pipeline, NOT on the slide face. v0.8: either
+(a) move data_source to slide-level speaker_notes treatment in
+renderer, OR (b) drop data_source from required-content fields
++ store as a separate slide-level metadata field that the
+validator audits but the renderer never draws.
+
+**Lesson 4: Prompt-layering conflicts in concat overlays are
+not detectable without live runs.** The v3.2 substory_design
+overlay (D-087) was designed to ADD transition_from_prior +
+preserve v3 Conclusion-for-next. In live runs the v3.2 layer
+silently dropped both fields. The 1644-test unit suite can't
+catch this class of bug because it's an emergent property of
+the LLM's response to the concatenated prompt. v0.8: extend the
+smoke harness to assert specific fields appear in the
+substory_design output (currently smoke only validates
+slide_compose).
+
+**Lesson 5: Visual-QA should probably be default-on for
+STRONG-mode runs.** Visual-QA caught the slide-32 issue with
+high precision + low cost (~$1 per deck) — exactly the class
+of finding qualitative-read costs Adam 30-60 min to surface.
+v0.8 question: flip --visual-qa default to ON for talk-30 STRONG
+runs (1-line orchestrator change). Cost is modest (~$1) +
+findings surface mechanically rather than via Adam-read.
+
+### v0.8 opens with
+
+The five Tier-I findings + the four cross-cutting lessons all
+go into V0_8_PUNCH_LIST.md (drafted alongside this veto). The
+load-bearing v0.8 carries are:
+
+- **F1: Curator figure-floor** (Lesson-laden; Adam-flagged) —
+  curator stage must surface ≥1 figure candidate per substory
+  if any exists in its notebooks. Probably extends
+  `curate_figures.v1.md` + adds a per-substory floor validator.
+- **F2: D-086 length + slide-content shape fix** — forward_call
+  truncation in extractor + data_source removed from slide-face
+  rendering (Lessons 2 + 3 combined).
+- **F3: v3.2 substory_design prompt-layering investigation** —
+  the field-drop bug; needs prompt-engineering plus
+  smoke-harness extension (Lesson 4).
+- **F4: Visual-QA default-on for STRONG mode** (Lesson 5).
+- **F5: AI image content-grounding (slide 3 spoiler class)** —
+  image-gen prompt template should know "what's been established
+  by this slide vs what comes later in the deck." Currently the
+  prompt-author reads the slide's content but not the deck's
+  POSITION/ARC. Slide-3 AI images can leak section-7 findings
+  because the prompt-author doesn't know the section ordering.
+
+**Alternatives considered:**
+
+- **(a) Ship as v0.7.0** — rejected; same Adam-veto-final
+  principle that produced D-066, D-079, D-084. Mechanical green
+  does not override qualitative read.
+- **(b) Burn another cycle on Tier-I fixes (forward_call trim,
+  data_source-to-notes, prompt-layering)** — rejected; the
+  in-session Tier-I-fix on D-088 already addressed the biggest
+  blocker (no-images). The remaining issues are all v0.8-shaped
+  (each needs design work, not just a tweak). v0.7's contribution
+  is now well-defined; piling more session fixes on dilutes the
+  clean handoff.
+- **(c) Defer all five findings to v0.8 unconditionally** —
+  partially adopted; that IS the v0.8 punch list opener. But the
+  Tier-I-fix-1 image-gen judge softening commit (1000cef) had to
+  land in-session because shipping decks-with-zero-images would
+  have been a misleading "Tier H complete" claim. The narrow
+  in-session fix was correct; broader fixes wait.
+
+**Related:** [V0_7_PUNCH_LIST.md](V0_7_PUNCH_LIST.md) Tier I;
+V0_8_PUNCH_LIST.md (drafted alongside this veto); D-079
+(v0.5.1 precedent veto); D-084 (v0.6 precedent veto); D-088
+(the image-gen contract Tier-I-fix-1 relaxed); D-086 (the
+deck_close contract slide-32 + forward_call-length issues
+trace to); D-087 (the substory_design contract that
+prompt-layering broke); D-085 (the figure-relevance contract
+that worked mechanically but didn't address curator-stage
+gaps Adam reads as sub-arc-without-figures);
+[[project-presentation-maker-v0-7]] (the v0.7 retrospective
+auto-memory entry).
