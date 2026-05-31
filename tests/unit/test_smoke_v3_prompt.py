@@ -394,16 +394,16 @@ def test_build_concat_variadic_three_sources(tmp_path):
 
 def test_run_smoke_rejects_invalid_version(tmp_path):
     """run_smoke must validate the version arg and raise ValueError
-    on a string that's not 'v3', 'v3.1', or 'v3.2'."""
+    on a string that's not 'v3', 'v3.1', 'v3.2', or 'v3.3'."""
     import pytest as _pytest
-    with _pytest.raises(ValueError, match="v3.*v3.1.*v3.2"):
+    with _pytest.raises(ValueError, match="v3.*v3.1.*v3.2.*v3.3"):
         smoke.run_smoke(fragment_only=True, keep_tmpdir=False,
                         version="v4")
 
 
 def test_cli_version_flag_documented():
-    """`--help` lists the --version flag + all three choices so
-    operators discover the v3.1/v3.2 paths."""
+    """`--help` lists the --version flag + all four choices so
+    operators discover the v3.1/v3.2/v3.3 paths."""
     import subprocess as _sp
     result = _sp.run(
         [sys.executable, str(smoke.SKILL_REPO_ROOT / "src"
@@ -416,22 +416,32 @@ def test_cli_version_flag_documented():
     assert "--version" in help_text
     assert "v3.1" in help_text
     assert "v3.2" in help_text
+    assert "v3.3" in help_text
     # Default explicitly named so operators know what they get
     assert "default" in help_text.lower()
 
 
-def test_cli_default_version_is_v3_2():
-    """Per v0.7 Tier F: default --version is v3.2 (validates the
-    full v0.7 stack; a v3.2 smoke implicitly covers v3 + v3.1).
-    Pin so a future default change is intentional."""
+def test_cli_default_version_is_v3_3():
+    """Per v0.8 Tier F (D-095): default --version is v3.3 (the
+    v0.8 default; runs the clean-overlay substory_design that
+    fixes the v3.2 recency-bias field-drop bug). Pin so a future
+    default change is intentional."""
     src = (smoke.SKILL_REPO_ROOT / "src" / "beril_presentation_maker"
            / "skill" / "tools" / "smoke_v3_prompt.py").read_text(
                encoding="utf-8")
-    # The default v3.2 must appear in the --version flag definition.
-    assert ('choices=["v3", "v3.1", "v3.2"], default="v3.2"' in src), (
-        "expected `choices=[\"v3\", \"v3.1\", \"v3.2\"], "
-        "default=\"v3.2\"` in smoke source; if this changed "
-        "intentionally, update the test + V0_7 docs.")
+    # The default v3.3 must appear in the --version flag definition.
+    # Use a regex tolerant of formatting (single-line vs broken
+    # across two physical lines).
+    import re as _re
+    pat = _re.compile(
+        r'choices=\["v3",\s*"v3\.1",\s*"v3\.2",\s*"v3\.3"\]\s*,\s*'
+        r'default="v3\.3"',
+        _re.DOTALL,
+    )
+    assert pat.search(src), (
+        "expected `choices=[\"v3\", \"v3.1\", \"v3.2\", \"v3.3\"], "
+        "default=\"v3.3\"` in smoke source; if this changed "
+        "intentionally, update the test + V0_8 docs.")
 
 
 
@@ -530,3 +540,275 @@ def test_build_concat_variadic_four_sources(tmp_path):
     assert a_pos < b_pos < c_pos < d_pos, (
         f"4-source build_concat order wrong: a={a_pos}, b={b_pos}, "
         f"c={c_pos}, d={d_pos}; expected strictly ascending")
+
+
+# ===========================================================================
+# v0.8 Tier F — --version v3.3 + validate_substory_design_fields (D-095)
+# ===========================================================================
+#
+# v3.3 substory_design is a CLEAN overlay on v1 (NOT stacked on v3
+# or v3.2). It consolidates v3 Q/A/R/C + v3.2 transition_from_prior
+# into one unified template with explicit supersede-clauses, to fix
+# the v3.2 recency-bias displacement bug live-discovered in v0.7
+# Tier G where LLMs treated v3.2's example as authoritative and
+# dropped v3-required fields (Conclusion-for-next, Transition-from-
+# prior).
+#
+# slide_compose stack is UNCHANGED from v3.2 (D-095 scope decision).
+#
+# The load-bearing piece is validate_substory_design_fields(), a
+# smoke-time backstop that parses the produced 02_substories.md
+# and asserts the v3.3 fields appear per-substory. The unit suite
+# can't catch this — it's emergent LLM behavior — but this smoke
+# validator can.
+
+
+def test_v3_3_overlay_file_exists_on_disk():
+    """v3.3 substory_design overlay must ship with the skill
+    (per Tier C, commit c83db0f). slide_compose has no v3.3
+    overlay (D-095 scopes v3.3 to substory_design only)."""
+    assert smoke.SUBSTORY_OVERLAY_V3_3.is_file(), (
+        f"substory_design v3.3 overlay missing at "
+        f"{smoke.SUBSTORY_OVERLAY_V3_3}")
+
+
+def test_compute_prompt_sha_includes_v3_3_substory_overlay(
+        tmp_path, monkeypatch):
+    """compute_prompt_sha must include the v3.3 substory_design
+    overlay in the sha computation — so a v3.2 pass record can't
+    satisfy a v3.3 gate (the sha would differ). This forces a
+    re-smoke when operators switch from v3.2 to v3.3."""
+    sha = smoke.compute_prompt_sha()
+    assert len(sha) == 64
+    fake_overlay = tmp_path / "fake_substory_v3_3_overlay.md"
+    fake_overlay.write_text("UNIQUE_TEST_MARKER_v3_3_substory\n",
+                             encoding="utf-8")
+    monkeypatch.setattr(smoke, "SUBSTORY_OVERLAY_V3_3", fake_overlay)
+    new_sha = smoke.compute_prompt_sha()
+    assert new_sha != sha, (
+        "compute_prompt_sha must change when v3.3 substory overlay "
+        "content changes; a v3.2 pass record would otherwise "
+        "satisfy a v3.3 gate")
+
+
+def test_run_smoke_v3_3_validation_passes(tmp_path, monkeypatch):
+    """run_smoke must accept version='v3.3' (the v0.8 default)
+    without raising ValueError on the validation step.
+
+    Same monkeypatch-the-fixture-away strategy as the v3.2 test:
+    if version validation rejected 'v3.3', ValueError would raise
+    FIRST and the FileNotFoundError would never fire."""
+    import pytest as _pytest
+    monkeypatch.setattr(smoke, "FIXTURE_DIR", tmp_path / "no_such_fixture")
+    with _pytest.raises(FileNotFoundError, match="fixture missing"):
+        smoke.run_smoke(fragment_only=True, keep_tmpdir=False,
+                        version="v3.3")
+
+
+# --- validate_substory_design_fields() tests --------------------------------
+
+
+def _v3_3_valid_single_substory_md() -> str:
+    """Smoke-fixture-shaped output (1 substory): Question present;
+    Conclusion-for-next + Transition-from-prior BOTH omitted (only
+    substory is also the final + first, so neither field applies)."""
+    return (
+        "# Substories — smoke_v3_fixture\n"
+        "\n"
+        "### S1 — Which cluster carries the enrichment?\n"
+        "\n"
+        "**Question:** Which of the three clusters carries the "
+        "biomarker-X enrichment?\n"
+        "\n"
+        "**Punchline:** Cluster B (n=42) is significantly enriched.\n"
+        "\n"
+        "**Analyses cited:** A001, A002\n"
+        "\n"
+        "**Cluster rationale:** single cluster fixture.\n"
+        "\n"
+        "**Slide budget:** 4\n"
+    )
+
+
+def _v3_3_valid_multi_substory_md() -> str:
+    """3-substory output: S1 has Question + Conclusion; S2 has
+    Question + Transition + Conclusion; S3 has Question + Transition
+    (final, no Conclusion). All v3.3 contracts satisfied."""
+    return (
+        "# Substories — multi\n"
+        "\n"
+        "### S1 — First arc\n"
+        "**Question:** Q1?\n"
+        "**Punchline:** P1.\n"
+        "**Conclusion for next substory:** This sets up S2's frame.\n"
+        "\n"
+        "### S2 — Middle arc\n"
+        "**Transition from prior:** S1 established X; now we ask Y.\n"
+        "**Question:** Q2?\n"
+        "**Punchline:** P2.\n"
+        "**Conclusion for next substory:** This sets up S3's frame.\n"
+        "\n"
+        "### S3 — Final arc\n"
+        "**Transition from prior:** S2 showed Y; now we close.\n"
+        "**Question:** Q3?\n"
+        "**Punchline:** P3.\n"
+    )
+
+
+def test_validate_substory_design_fields_passes_on_single_substory():
+    """Smoke-fixture-shaped single substory: Question only;
+    Conclusion + Transition both correctly omitted. No issues."""
+    issues = smoke.validate_substory_design_fields(
+        _v3_3_valid_single_substory_md())
+    assert issues == [], (
+        f"single-substory v3.3-valid output should produce no "
+        f"issues; got: {[i.message for i in issues]}")
+
+
+def test_validate_substory_design_fields_passes_on_multi_substory():
+    """3-substory output with all fields correctly placed: S1 has
+    Conclusion (not Transition); S3 has Transition (not Conclusion);
+    S2 has both. All v3.3 contracts satisfied; no issues."""
+    issues = smoke.validate_substory_design_fields(
+        _v3_3_valid_multi_substory_md())
+    assert issues == [], (
+        f"multi-substory v3.3-valid output should produce no "
+        f"issues; got: {[i.message for i in issues]}")
+
+
+def test_validate_substory_design_fields_catches_missing_question():
+    """If a substory drops the **Question:** field, the validator
+    flags it. Question is required on every substory."""
+    bad = (
+        "### S1 — first\n"
+        "**Punchline:** missing Question field above.\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("Question" in i.field and "S1" in i.message
+               for i in issues), (
+        f"expected Question-missing issue on S1; got: "
+        f"{[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_catches_dropped_conclusion():
+    """THE BUG v3.3 WAS DESIGNED TO PREVENT: non-final substory
+    drops **Conclusion for next substory:**. v3.2 produced output
+    that dropped this field on every substory. v3.3 + this
+    validator catches the regression."""
+    bad = (
+        "### S1 — first of three\n"
+        "**Question:** Q1?\n"
+        "**Punchline:** P1.\n"
+        "\n"  # Missing Conclusion for next substory — THE BUG
+        "### S2 — middle\n"
+        "**Transition from prior:** ok\n"
+        "**Question:** Q2?\n"
+        "**Conclusion for next substory:** ok\n"
+        "\n"
+        "### S3 — final\n"
+        "**Transition from prior:** ok\n"
+        "**Question:** Q3?\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("Conclusion for next substory" in i.field
+               and "S1" in i.message
+               for i in issues), (
+        f"expected Conclusion-missing issue on S1 (non-final "
+        f"substory); got: {[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_catches_dropped_transition():
+    """v3.3 also requires **Transition from prior:** on every
+    non-first substory. v3.2 dropped this too — same recency-bias
+    bug class."""
+    bad = (
+        "### S1 — first\n"
+        "**Question:** Q1?\n"
+        "**Conclusion for next substory:** ok\n"
+        "\n"
+        "### S2 — middle\n"
+        "**Question:** Q2?\n"  # Missing Transition from prior — BUG
+        "**Conclusion for next substory:** ok\n"
+        "\n"
+        "### S3 — final\n"
+        "**Transition from prior:** ok\n"
+        "**Question:** Q3?\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("Transition from prior" in i.field
+               and "S2" in i.message
+               for i in issues), (
+        f"expected Transition-missing issue on S2 (non-first "
+        f"substory); got: {[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_catches_misplaced_conclusion_on_final():
+    """**Conclusion for next substory:** on the FINAL substory is
+    wrong (no next substory to hand off to). v3.3 contract forbids
+    this; the validator catches it."""
+    bad = (
+        "### S1 — first\n"
+        "**Question:** Q1?\n"
+        "**Conclusion for next substory:** ok\n"
+        "\n"
+        "### S2 — final\n"
+        "**Transition from prior:** ok\n"
+        "**Question:** Q2?\n"
+        "**Conclusion for next substory:** WRONG — nothing follows\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("Conclusion for next substory" in i.field
+               and "S2" in i.message
+               and "FINAL" in i.message
+               for i in issues), (
+        f"expected misplaced-Conclusion issue on S2 (final); "
+        f"got: {[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_catches_misplaced_transition_on_first():
+    """**Transition from prior:** on S1 is wrong (no prior). v3.3
+    forbids it; the validator catches it."""
+    bad = (
+        "### S1 — first\n"
+        "**Transition from prior:** WRONG — nothing precedes\n"
+        "**Question:** Q1?\n"
+        "\n"
+        "### S2 — final\n"
+        "**Transition from prior:** ok\n"
+        "**Question:** Q2?\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("Transition from prior" in i.field
+               and "S1" in i.message
+               and "FIRST" in i.message
+               for i in issues), (
+        f"expected misplaced-Transition issue on S1 (first); "
+        f"got: {[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_handles_empty_input():
+    """Empty input is a smoke failure: substory_design stage
+    produced no output. Validator must flag rather than silently
+    pass (which would let a broken pipeline through)."""
+    issues = smoke.validate_substory_design_fields("")
+    assert any("empty" in i.message.lower()
+               for i in issues), (
+        f"expected empty-output issue; got: "
+        f"{[(i.field, i.message) for i in issues]}")
+
+
+def test_validate_substory_design_fields_handles_missing_headers():
+    """If the output has no ### S{N} headers, the markdown is
+    malformed — flag rather than silently pass."""
+    bad = (
+        "# Substories\n"
+        "\n"
+        "Lorem ipsum but no substory headers.\n"
+        "**Question:** Q?\n"
+    )
+    issues = smoke.validate_substory_design_fields(bad)
+    assert any("substory_headers" in i.field
+               or "no ### S" in i.message
+               for i in issues), (
+        f"expected malformed-markdown issue; got: "
+        f"{[(i.field, i.message) for i in issues]}")

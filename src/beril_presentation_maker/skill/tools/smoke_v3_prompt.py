@@ -121,30 +121,47 @@ SLIDE_OVERLAY_V3_1 = PROMPTS_DIR / "slide_compose.v3.1_overlay.md"
 SLIDE_OVERLAY_V3_2 = PROMPTS_DIR / "slide_compose.v3.2_overlay.md"
 SUBSTORY_OVERLAY_V3_2 = PROMPTS_DIR / "substory_design.v3.2_overlay.md"
 
+# v0.8/D-095: v3.3 substory_design is a CLEAN overlay on v1 (NOT
+# stacked on v3 or v3.2). Designed to fix the v3.2 prompt-layering
+# recency-bias field-drop bug live-discovered at v0.7 Tier G.
+# Consolidates v3 Q/A/R/C + v3.2 transition_from_prior into ONE
+# unified template with explicit "v3.3 supersedes" mitigation.
+# slide_compose stack UNCHANGED from v3.2 per D-095 scope.
+# Including the v3.3 overlay in the prompt-sha forces a re-smoke
+# when a v3.x earlier pass record exists + a v3.3 invocation is
+# attempted (same sha-invalidation discipline as prior versions).
+SUBSTORY_OVERLAY_V3_3 = PROMPTS_DIR / "substory_design.v3.3_overlay.md"
+
 
 # ---------------------------------------------------------------------------
 # Prompt-body sha
 # ---------------------------------------------------------------------------
 
 def compute_prompt_sha() -> str:
-    """SHA-256 of all prompt source files (v1/v2 + v3 overlay + v3.1
-    overlay + v3.2 overlays for both substory_design and
-    slide_compose). Captures the exact prompt content the smoke
-    validated against. Used by the orchestrator's gate-check to
-    detect prompt drift after a pass.
+    """SHA-256 of all prompt source files (v1/v2 + v3/v3.1/v3.2/v3.3
+    overlays for both substory_design and slide_compose). Captures
+    the exact prompt content the smoke validated against. Used by
+    the orchestrator's gate-check to detect prompt drift after a
+    pass.
 
     Order: substory_v1, substory_overlay (v3), substory_overlay_v3.2,
-    slide_v2, slide_overlay (v3), slide_overlay_v3.1,
-    slide_overlay_v3.2 — alphabetical-by-stage + within-stage-by-
-    version for stability.
+    substory_overlay_v3.3, slide_v2, slide_overlay (v3),
+    slide_overlay_v3.1, slide_overlay_v3.2 — alphabetical-by-stage +
+    within-stage-by-version for stability.
 
-    v0.7/D-085 et al.: including v3.2 overlays in the sha forces a
-    re-smoke when a v3 or v3.1 pass record exists and a v3.2
+    v0.7/D-085 et al.: including later overlays in the sha forces a
+    re-smoke when an earlier pass record exists and a later-version
     invocation is attempted. Same sha-invalidation discipline as
     v0.6 used for v3.1.
+
+    v0.8/D-095: v3.3 substory_design overlay added to sha source
+    list. A v3.2 pass record will sha-invalidate on a v3.3
+    invocation, forcing operators to re-run smoke for the v3.3
+    contract.
     """
     h = hashlib.sha256()
     for path in (SUBSTORY_V1, SUBSTORY_OVERLAY, SUBSTORY_OVERLAY_V3_2,
+                 SUBSTORY_OVERLAY_V3_3,
                  SLIDE_V2, SLIDE_OVERLAY, SLIDE_OVERLAY_V3_1,
                  SLIDE_OVERLAY_V3_2):
         if not path.is_file():
@@ -304,6 +321,136 @@ def validate_fragment(data: dict) -> list[FragmentIssue]:
 
 
 # ---------------------------------------------------------------------------
+# v0.8/D-095 — substory_design field-presence validator
+# ---------------------------------------------------------------------------
+#
+# The v3.2 substory_design overlay had a recency-bias displacement
+# bug: live ibd v0.7 runs produced 4-substory output with ZERO
+# Conclusion-for-next-substory + ZERO Transition-from-prior fields,
+# despite both contracts being in the concatenated prompt. The unit
+# suite couldn't catch this — it's emergent LLM behavior the static
+# tests don't see.
+#
+# v3.3 fixes the prompt structurally (clean overlay on v1
+# consolidating the contracts). This validator is the smoke-time
+# backstop: it parses the produced `02_substories.md` markdown and
+# asserts the required fields appear per substory, per the
+# field-requirements table in substory_design.v3.3_overlay.md:
+#
+#   - Every substory: **Question:** present
+#   - Non-final substories: **Conclusion for next substory:** present
+#   - Non-first substories: **Transition from prior:** present
+#
+# If any required field is absent on a substory where it applies,
+# the smoke FAILS. The orchestrator's D-076 gate refuses the v3.3
+# invocation until a fresh smoke pass is recorded.
+
+
+def validate_substory_design_fields(
+    substories_md_text: str,
+) -> list[FragmentIssue]:
+    """Validate that substory_design output (parsed from
+    02_substories.md markdown) contains v3.3 required fields per
+    substory.
+
+    Per substory_design.v3.3_overlay.md field-requirements table:
+      - All substories: **Question:** required
+      - Non-final substories: **Conclusion for next substory:**
+        required
+      - Non-first substories: **Transition from prior:** required
+
+    Returns list of FragmentIssue per missing field. Empty list
+    means all substories satisfy the v3.3 contract.
+
+    The v3.2 substory_design bug this catches: live output had
+    ALL substories missing both Conclusion + Transition fields.
+    A v3.3 invocation that re-introduces the bug would emit a
+    similarly-shaped 02_substories.md and this validator would
+    flag every per-substory field-drop.
+    """
+    import re as _re
+    issues: list[FragmentIssue] = []
+
+    if not substories_md_text:
+        issues.append(FragmentIssue(
+            None, None, "substories_md",
+            "substories markdown is empty — substory_design stage "
+            "produced no output"))
+        return issues
+
+    # Find all substory headers (### S1, ### S2, etc.). Each
+    # header marks the start of a substory's field block.
+    header_pattern = _re.compile(
+        r"^###\s+(S\d+)\s*[—\-]", _re.MULTILINE)
+    headers = list(header_pattern.finditer(substories_md_text))
+
+    if not headers:
+        issues.append(FragmentIssue(
+            None, None, "substory_headers",
+            "no ### S{N} substory headers found in output — "
+            "substory_design stage produced malformed markdown"))
+        return issues
+
+    n_substories = len(headers)
+    for i, header in enumerate(headers):
+        sid = header.group(1)
+        is_first = (i == 0)
+        is_final = (i == n_substories - 1)
+        # Slice this substory's block: from this header to the
+        # next header (or end of text on the final substory).
+        start = header.end()
+        end = headers[i + 1].start() if i + 1 < n_substories \
+            else len(substories_md_text)
+        block = substories_md_text[start:end]
+
+        # Required on ALL substories: Question
+        if "**Question:**" not in block:
+            issues.append(FragmentIssue(
+                None, None, "Question",
+                f"{sid}: missing v3.3 **Question:** field "
+                f"(required on every substory)"))
+
+        # Required on non-final substories: Conclusion for next
+        if not is_final:
+            if "**Conclusion for next substory:**" not in block:
+                issues.append(FragmentIssue(
+                    None, None, "Conclusion for next substory",
+                    f"{sid}: missing v3.3 **Conclusion for next "
+                    f"substory:** field (required on non-final "
+                    f"substories; this is the load-bearing v3.2 "
+                    f"bug class v3.3 was designed to prevent)"))
+        else:
+            # Final substory MUST NOT have Conclusion for next
+            # (no next substory to hand off to).
+            if "**Conclusion for next substory:**" in block:
+                issues.append(FragmentIssue(
+                    None, None, "Conclusion for next substory",
+                    f"{sid}: **Conclusion for next substory:** "
+                    f"present on FINAL substory (omit; no next "
+                    f"substory exists to hand off to)"))
+
+        # Required on non-first substories: Transition from prior
+        if not is_first:
+            if "**Transition from prior:**" not in block:
+                issues.append(FragmentIssue(
+                    None, None, "Transition from prior",
+                    f"{sid}: missing v3.3 **Transition from "
+                    f"prior:** field (required on non-first "
+                    f"substories; this is the other v3.2 bug "
+                    f"class v3.3 was designed to prevent)"))
+        else:
+            # S1 MUST NOT have Transition from prior
+            if "**Transition from prior:**" in block:
+                issues.append(FragmentIssue(
+                    None, None, "Transition from prior",
+                    f"{sid}: **Transition from prior:** present "
+                    f"on FIRST substory (omit; no prior substory "
+                    f"to transition from)"))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # LLM invocation
 # ---------------------------------------------------------------------------
 
@@ -353,7 +500,7 @@ def invoke_claude(system_prompt_path: Path, user_prompt: str,
 
 def run_smoke(fragment_only: bool, keep_tmpdir: bool,
               timeout_s: int = 600,
-              version: str = "v3.2",
+              version: str = "v3.3",
               ) -> tuple[bool, list[FragmentIssue], dict]:
     """Run the smoke. Returns (passed, issues, evidence-dict).
 
@@ -364,16 +511,25 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
     keep_tmpdir=True leaves the per-run temp dir around for
     inspection on failure.
 
-    version: "v3", "v3.1", or "v3.2". Selects the stacked concat
-    the smoke composes against. Default "v3.2" (v0.7 — validates
-    the full v3.2 stack: slide_compose v2 + v3 + v3.1 + v3.2
-    overlays; substory_design v1 + v3 + v3.2 overlays). Use "v3"
-    or "v3.1" explicitly to regression-check earlier contracts in
+    version: "v3", "v3.1", "v3.2", or "v3.3". Selects the stacked
+    concat the smoke composes against. Default "v3.3" (v0.8 —
+    validates: slide_compose stack UNCHANGED from v3.2 (v2 + v3 +
+    v3.1 + v3.2 overlays); substory_design is the CLEAN v3.3
+    overlay on v1 (NOT stacked on v3 or v3.2, per D-095 — fixes
+    the v3.2 recency-bias displacement bug). Use "v3", "v3.1", or
+    "v3.2" explicitly to regression-check earlier contracts in
     isolation.
+
+    When version="v3.3" and not fragment_only, an extra
+    validate_substory_design_fields() pass runs on the produced
+    02_substories.md to assert Question / Conclusion-for-next /
+    Transition-from-prior fields appear per substory — the
+    load-bearing piece that would have caught the v3.2 field-drop
+    bug live (per D-095).
     """
-    if version not in ("v3", "v3.1", "v3.2"):
+    if version not in ("v3", "v3.1", "v3.2", "v3.3"):
         raise ValueError(
-            f"version must be 'v3', 'v3.1', or 'v3.2'; "
+            f"version must be 'v3', 'v3.1', 'v3.2', or 'v3.3'; "
             f"got: {version!r}")
     if not FIXTURE_DIR.is_dir():
         raise FileNotFoundError(
@@ -389,33 +545,54 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
     try:
         # Concat the prompts inside the tmpdir (mirrors what
         # `build_v3_concat_prompts` does at orchestrator start).
-        # v3:   cat v2.md + v3_overlay.md
-        # v3.1: cat v2.md + v3_overlay.md + v3.1_overlay.md
-        # v3.2: cat v2.md + v3_overlay.md + v3.1_overlay.md
-        #             + v3.2_overlay.md (slide_compose)
-        #       cat v1.md + v3_overlay.md + v3.2_overlay.md (substory_design)
+        #
+        # slide_compose stacking (v3.3 keeps the v3.2 stack — D-095
+        # scopes v3.3 to substory_design only):
+        #   v3:   cat v2.md + v3_overlay.md
+        #   v3.1: cat v2.md + v3_overlay.md + v3.1_overlay.md
+        #   v3.2: cat v2.md + v3_overlay.md + v3.1_overlay.md
+        #               + v3.2_overlay.md
+        #   v3.3: SAME as v3.2 (slide_compose UNCHANGED)
+        #
+        # substory_design stacking (v3.3 BREAKS the chain — clean
+        # overlay on v1, per D-095, to fix v3.2 field-drop bug):
+        #   v3:   cat v1.md + v3_overlay.md
+        #   v3.1: cat v1.md + v3_overlay.md (unchanged from v3)
+        #   v3.2: cat v1.md + v3_overlay.md + v3.2_overlay.md
+        #   v3.3: cat v1.md + v3.3_overlay.md (CLEAN; NOT stacked)
         concat_dir = tmpdir / "_prompts"
         concat_dir.mkdir()
-        slide_concat = concat_dir / f"slide_compose.{version}.concat.md"
+        # slide_compose: v3.3 reuses v3.2's concat (same stack).
+        slide_concat_version = "v3.2" if version == "v3.3" else version
+        slide_concat = (
+            concat_dir / f"slide_compose.{slide_concat_version}.concat.md")
         slide_sources = [SLIDE_V2, SLIDE_OVERLAY]
-        if version in ("v3.1", "v3.2"):
+        if version in ("v3.1", "v3.2", "v3.3"):
             slide_sources.append(SLIDE_OVERLAY_V3_1)
-        if version == "v3.2":
+        if version in ("v3.2", "v3.3"):
             slide_sources.append(SLIDE_OVERLAY_V3_2)
         build_concat(*slide_sources, out=slide_concat)
         # substory_design: v3 + v3.1 share the v1+v3 chain; v3.2
-        # stacks the new substory overlay (D-087's transition_from_prior
-        # field). Distinct concat path for v3.2 so any future v3.x
-        # substory_design changes get isolated concat files.
-        substory_concat_name = (
-            "substory_design.v3.2.concat.md"
-            if version == "v3.2"
-            else "substory_design.v3.concat.md"
-        )
+        # stacks the new substory overlay (D-087's
+        # transition_from_prior field); v3.3 BREAKS the chain — it
+        # is a clean v1+v3.3_overlay concat (NOT stacked on v3 or
+        # v3.2), per D-095. Distinct concat path per version so
+        # each isolates cleanly.
+        if version == "v3.3":
+            substory_concat_name = "substory_design.v3.3.concat.md"
+        elif version == "v3.2":
+            substory_concat_name = "substory_design.v3.2.concat.md"
+        else:
+            substory_concat_name = "substory_design.v3.concat.md"
         substory_concat = concat_dir / substory_concat_name
-        substory_sources = [SUBSTORY_V1, SUBSTORY_OVERLAY]
-        if version == "v3.2":
-            substory_sources.append(SUBSTORY_OVERLAY_V3_2)
+        if version == "v3.3":
+            # CLEAN overlay: v1 + v3.3 ONLY. No v3 or v3.2 overlay
+            # in the chain — that's the whole point of D-095.
+            substory_sources = [SUBSTORY_V1, SUBSTORY_OVERLAY_V3_3]
+        else:
+            substory_sources = [SUBSTORY_V1, SUBSTORY_OVERLAY]
+            if version == "v3.2":
+                substory_sources.append(SUBSTORY_OVERLAY_V3_2)
         build_concat(*substory_sources, out=substory_concat)
 
         # Stage the fixture into tmpdir. The smoke composes against
@@ -427,6 +604,12 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
         substories_path = smoke_dir / "narrative" / "02_substories.md"
         if not fragment_only:
             substory_out = smoke_dir / "narrative" / "02_substories.smoke.md"
+            # Single-substory smoke: the fixture has one finding
+            # cluster, so the produced output is ONE substory only.
+            # This means Conclusion-for-next + Transition-from-prior
+            # are BOTH omitted (final and first apply on the only
+            # substory). validate_substory_design_fields() handles
+            # that case — it only checks fields where they apply.
             user_prompt = (
                 f"You are composing the substory list for a SMOKE TEST.\n"
                 f"Read the throughline at: "
@@ -439,10 +622,12 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
                 f"minimal — there's only one finding cluster).\n"
                 f"Write the output via the Write tool to:\n"
                 f"  {substory_out}\n"
-                f"Follow the v3 contract: Question + (Conclusion for "
-                f"next substory omitted for the final/only substory) "
-                f"+ Punchline + analyses + cluster rationale + slide "
-                f"budget."
+                f"Follow the contract in the system prompt: Question "
+                f"(required on every substory) + Punchline + "
+                f"analyses + cluster rationale + slide budget. "
+                f"Conclusion-for-next-substory and "
+                f"Transition-from-prior are BOTH omitted on this "
+                f"single-substory smoke (no next; no prior)."
             )
             rc, _, stderr = invoke_claude(
                 substory_concat, user_prompt, substory_out,
@@ -457,6 +642,21 @@ def run_smoke(fragment_only: bool, keep_tmpdir: bool,
             substories_path = substory_out
 
         evidence["substories_path"] = str(substories_path)
+
+        # --- v0.8/D-095: substory_design field-presence check ---
+        # Only meaningful on v3.3 (the version designed to fix the
+        # v3.2 field-drop bug). On v3/v3.1 the produced output may
+        # legitimately omit these fields (they weren't required by
+        # those contracts). Skip on fragment_only — there's no
+        # produced substory_design output to validate; the fixture
+        # is canned and known-good.
+        if version == "v3.3" and not fragment_only:
+            substory_text = substories_path.read_text(encoding="utf-8")
+            sd_issues = validate_substory_design_fields(substory_text)
+            evidence["substory_design_field_issues"] = [
+                i.to_dict() for i in sd_issues]
+            if sd_issues:
+                return False, sd_issues, evidence
 
         # --- Stage 2: slide_compose ---
         fragment_out = (smoke_dir / "working" / "03_slides"
@@ -611,15 +811,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Gate-check only; do NOT invoke the LLM. Returns rc=0 "
              "if a fresh pass record exists, rc=1 otherwise.")
     ap.add_argument(
-        "--version", choices=["v3", "v3.1", "v3.2"], default="v3.2",
+        "--version", choices=["v3", "v3.1", "v3.2", "v3.3"],
+        default="v3.3",
         help="Which stacked concat to compose against. "
              "v3 = cat v2.md + v3_overlay.md. "
              "v3.1 = cat v2.md + v3_overlay.md + v3.1_overlay.md. "
-             "v3.2 (default; v0.7) = cat v2.md + v3_overlay.md + "
+             "v3.2 (v0.7) = cat v2.md + v3_overlay.md + "
              "v3.1_overlay.md + v3.2_overlay.md (slide_compose); "
              "+ cat substory_design v1 + v3_overlay + v3.2_overlay "
-             "(substory_design). A v3.2 smoke implicitly validates "
-             "the v3 + v3.1 chains too.")
+             "(substory_design). "
+             "v3.3 (default; v0.8) = slide_compose stack UNCHANGED "
+             "from v3.2; substory_design is CLEAN v1 + "
+             "v3.3_overlay (NOT stacked on v3 or v3.2 — D-095 "
+             "fixes the v3.2 recency-bias field-drop bug). v3.3 "
+             "additionally runs validate_substory_design_fields() "
+             "on the produced 02_substories.md output.")
     args = ap.parse_args(argv)
 
     if args.check_recent:
