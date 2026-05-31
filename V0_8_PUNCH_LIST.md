@@ -118,6 +118,23 @@ deferred to v0.8.1):**
   whether to keep the advisory or land a prompt-side fix in
   v0.8.1.
 
+- **Visual-QA prompt over-confident on cause attribution.**
+  Tier-G live discovery: visual-QA on draft_8 slides 25/26/27
+  correctly flagged `illegible_scale` but mis-attributed the
+  cause to "the full answer_detail text block is rendered
+  visibly on the slide at approximately 6-7pt scale." Direct
+  pptx inspection confirmed answer_detail is in speaker_notes
+  (renderer working correctly); the illegible text on the slide
+  face was answer_SUMMARY (1013-1325 chars at 70-80% autofit
+  scale). v0.8 Tier G.2 hardened the answer_summary cap to fix
+  the underlying length problem; v0.8.1 follow-up: tune
+  visual-QA prompt to either (a) report symptom only without
+  speculative attribution, or (b) actually inspect speaker_notes
+  before attributing slide-face content to a notes-routed field.
+  The symptom-only path is cheaper and matches visual-QA's
+  actual epistemic position (it sees rendered PNGs, not the
+  field-routing logic).
+
 - **`beril-presentation-maker draft` Python wrapper silently
   drops `--prompts-version`.** Discovered at Tier G 2026-05-31
   when an agent invoked the skill via the documented
