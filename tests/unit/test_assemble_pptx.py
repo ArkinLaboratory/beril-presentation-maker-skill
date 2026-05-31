@@ -1371,3 +1371,131 @@ def test_big_idea_supporting_graphic_still_wins_over_image_path(ss, asm, tmp_pat
     pic_count = sum(1 for shp in slide.shapes
                     if shp.shape_type == 13)
     assert pic_count >= 1
+
+
+# ===========================================================================
+# v0.8 Tier B — _fill_deck_close removes data_source from slide face (D-094)
+# ===========================================================================
+#
+# Pre-D-094 the renderer drew content.data_source as a font-10 footer
+# textbox at y=4.52 on the slide. v0.7 Tier-I (fdm slide-32) caught
+# this as "directions leak" — internal scaffolding ("C-slot", "REPORT.md")
+# visible to the audience. D-094 moves the citation to speaker_notes
+# (via the merger's promotion); the renderer no longer draws it.
+#
+# These tests pin the renderer behavior. The merger-side data_source →
+# notes promotion is covered in test_stage_deck_close.py.
+
+
+@requires_master
+def test_deck_close_does_not_render_data_source_on_slide_face(
+        ss, asm, tmp_path):
+    """Per D-094: _fill_deck_close must NOT draw content.data_source
+    on the slide face. The data_source field is audit-trail metadata;
+    the merger promotes it to speaker_notes. Pin by asserting no
+    shape on the slide contains the (recognizably-internal)
+    data_source text."""
+    deck_close_content = {
+        "unified_point": "The deck's overall takeaway.",
+        "key_takeaways": [
+            "Arc 1 takeaway.",
+            "Arc 2 takeaway.",
+            "Arc 3 takeaway.",
+        ],
+        "forward_call": "Next experiment.",
+        # Internal-scaffolding-flavored data_source (the v0.7 fdm
+        # slide-32 leak class — "C-slot" + "REPORT.md §X").
+        "data_source": "S1 C-slot + S2 C-slot + REPORT §UNIQUE-CITATION-MARKER",
+    }
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                         "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "schema_version": "compose-fragment.v1",
+            "id": 1,
+            "position": 1,
+            "layout": "deck_close",
+            "substory_id": None,
+            "content": deck_close_content,
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    prs = Presentation(out)
+    rendered = prs.slides[0]
+    # Collect all visible text across all shapes on the slide face.
+    on_slide_text_parts: list[str] = []
+    for shape in rendered.shapes:
+        if shape.has_text_frame:
+            on_slide_text_parts.append(shape.text_frame.text or "")
+    on_slide_text = "\n".join(on_slide_text_parts)
+    # Two pin assertions:
+    # (1) The UNIQUE marker token from data_source is NOT on the slide.
+    assert "UNIQUE-CITATION-MARKER" not in on_slide_text, (
+        f"v0.8/D-094: data_source must NOT be drawn on the slide face; "
+        f"found 'UNIQUE-CITATION-MARKER' in:\n{on_slide_text}")
+    # (2) The "C-slot" internal-scaffolding token is NOT on the slide
+    #     (the v0.7 leak symptom).
+    assert "C-slot" not in on_slide_text, (
+        f"v0.8/D-094: data_source's internal-scaffolding tokens must "
+        f"NOT leak to the slide face; found 'C-slot' in:\n{on_slide_text}")
+
+
+@requires_master
+def test_deck_close_still_renders_unified_point_and_forward_call(
+        ss, asm, tmp_path):
+    """Regression guard: D-094 removed ONLY data_source from the slide
+    face. The unified_point (title), key_takeaways (bullets), and
+    forward_call (lower-band textbox) MUST still render."""
+    spec = {
+        "schema_version": ss.SCHEMA_VERSION,
+        "project_id": "x",
+        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
+        "throughline": {"id": "TL1", "punchline": "x",
+                         "tier_evidence": "STRONG"},
+        "substories": [],
+        "slides": [{
+            "schema_version": "compose-fragment.v1",
+            "id": 1,
+            "position": 1,
+            "layout": "deck_close",
+            "substory_id": None,
+            "content": {
+                "unified_point": "UP-MARKER",
+                "key_takeaways": [
+                    "KT1-MARKER", "KT2-MARKER", "KT3-MARKER"],
+                "forward_call": "FC-MARKER",
+                "data_source": "DS-MARKER",
+            },
+        }],
+    }
+    spec_path = tmp_path / "slide_spec.json"
+    spec_path.write_text(json.dumps(spec))
+    out = tmp_path / "slides.pptx"
+    asm.assemble(spec_path, out)
+
+    from pptx import Presentation
+    prs = Presentation(out)
+    rendered = prs.slides[0]
+    on_slide_text_parts: list[str] = []
+    for shape in rendered.shapes:
+        if shape.has_text_frame:
+            on_slide_text_parts.append(shape.text_frame.text or "")
+    on_slide_text = "\n".join(on_slide_text_parts)
+    # Audience-facing markers must still appear
+    assert "UP-MARKER" in on_slide_text, "unified_point must render"
+    assert "KT1-MARKER" in on_slide_text, "key_takeaways must render"
+    assert "KT2-MARKER" in on_slide_text
+    assert "KT3-MARKER" in on_slide_text
+    assert "FC-MARKER" in on_slide_text, "forward_call must render"
+    # data_source must NOT render
+    assert "DS-MARKER" not in on_slide_text, (
+        "v0.8/D-094: data_source must NOT render on slide face")

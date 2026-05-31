@@ -477,7 +477,12 @@ def test_merger_deck_close_content_preserved_verbatim(tmp_path):
 def test_merger_promotes_speaker_notes_seed_to_speaker_notes(tmp_path):
     """speaker_notes_seed → speaker_notes promotion (parallel to
     cross_tenant's pattern; the speaker_notes stage runs only on
-    substory slides, so deck-level slides need direct promotion)."""
+    substory slides, so deck-level slides need direct promotion).
+
+    v0.8/D-094: speaker_notes now also includes a **Sources:**
+    appendix appended from content.data_source. The seed text
+    appears first; the Sources appendix follows after a blank line.
+    """
     outdir = tmp_path / "draft_1"
     outdir.mkdir()
     (outdir / "03_slides").mkdir()
@@ -488,10 +493,19 @@ def test_merger_promotes_speaker_notes_seed_to_speaker_notes(tmp_path):
     assert result.returncode == 0, result.stderr
     spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
     dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
-    assert dc_slide["speaker_notes"] == \
-        "Speaker note expanding the forward_call."
+    # v0.8/D-094 shape: seed body + blank line + **Sources:** appendix
+    notes = dc_slide["speaker_notes"]
+    assert notes.startswith("Speaker note expanding the forward_call."), (
+        f"speaker_notes must start with the seed body verbatim; got: "
+        f"{notes!r}")
+    assert "**Sources:** S1 C-slot + S2 C-slot + REPORT §X." in notes, (
+        f"v0.8/D-094: speaker_notes must contain the **Sources:** "
+        f"appendix derived from content.data_source; got: {notes!r}")
     # speaker_notes_seed should be stripped
     assert "speaker_notes_seed" not in dc_slide
+    # content.data_source preserved (schema-stable per D-094)
+    assert dc_slide["content"]["data_source"] == \
+        "S1 C-slot + S2 C-slot + REPORT §X."
 
 
 def test_merger_splices_no_slide_on_empty_fragment(tmp_path):
@@ -576,3 +590,190 @@ def test_merger_position_field_continues_through_deck_close(tmp_path):
         assert s.get("position") == idx, (
             f"slide at idx {idx} (layout={s.get('layout')}) "
             f"has position={s.get('position')!r}; expected {idx}")
+
+
+# ===========================================================================
+# v0.8 Tier B — data_source → speaker_notes promotion (D-094)
+# ===========================================================================
+#
+# v0.7 Tier-I finding 3 (fdm slide-32 "directions leak"): the
+# deck_close renderer drew content.data_source as a font-10 footer
+# band on the slide face, exposing internal scaffolding ("C-slot",
+# "REPORT.md §X") to the audience.
+#
+# D-094 fix: the merger promotes data_source into speaker_notes as a
+# **Sources:** appendix (appended after any speaker_notes_seed body).
+# The renderer no longer draws data_source on the slide face; schema
+# preserved per D-086.
+#
+# These tests pin the data_source promotion shape so a future merger
+# refactor that drops the appendix breaks a test, not the audit-trail
+# contract.
+
+
+def _make_deck_close_fragment_no_seed():
+    """deck_close fragment with content.data_source but NO
+    speaker_notes_seed. Tests that the merger still emits **Sources:**
+    notes when only data_source is present."""
+    return {
+        "schema_version": "compose-fragment.v1",
+        "kind": "deck_close_set",
+        "mode": "talk-30",
+        "tier": "STRONG",
+        "slides": [
+            {
+                "position": 0,
+                "layout": "deck_close",
+                "content": {
+                    "unified_point": "Overall takeaway.",
+                    "key_takeaways": [
+                        "Arc 1 takeaway.",
+                        "Arc 2 takeaway.",
+                        "Arc 3 takeaway.",
+                    ],
+                    "forward_call": "Next step.",
+                    "data_source": "S1 C-slot + REPORT §Y.",
+                },
+                # No speaker_notes_seed field at all
+            },
+        ],
+    }
+
+
+def _make_deck_close_fragment_empty_data_source():
+    """deck_close fragment with seed but empty data_source.
+    Edge case: validator may not have run yet (cascade is advisory);
+    merger should produce notes from the seed alone, not crash."""
+    frag = _make_deck_close_fragment()
+    frag["slides"][0]["content"]["data_source"] = ""
+    return frag
+
+
+def test_merger_d094_promotes_data_source_to_speaker_notes_sources_appendix(
+        tmp_path):
+    """When BOTH speaker_notes_seed and content.data_source are
+    present, speaker_notes contains seed + blank line + **Sources:**
+    appendix. Pin the exact concatenation shape."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(_make_deck_close_fragment()),
+                       encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    assert result.returncode == 0, result.stderr
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    expected = (
+        "Speaker note expanding the forward_call.\n\n"
+        "**Sources:** S1 C-slot + S2 C-slot + REPORT §X."
+    )
+    assert dc_slide["speaker_notes"] == expected, (
+        f"v0.8/D-094: speaker_notes must be 'seed\\n\\n**Sources:** "
+        f"<data_source>'; got: {dc_slide['speaker_notes']!r}")
+
+
+def test_merger_d094_promotes_data_source_only_when_seed_missing(tmp_path):
+    """When speaker_notes_seed is absent but content.data_source is
+    present, speaker_notes = '**Sources:** <data_source>' alone
+    (no leading blank line, no orphan content)."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(_make_deck_close_fragment_no_seed()),
+                       encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    assert result.returncode == 0, result.stderr
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    assert dc_slide["speaker_notes"] == "**Sources:** S1 C-slot + REPORT §Y.", (
+        f"v0.8/D-094: with no seed but a data_source, speaker_notes "
+        f"must be the Sources appendix alone; got: "
+        f"{dc_slide['speaker_notes']!r}")
+
+
+def test_merger_d094_keeps_seed_only_when_data_source_empty(tmp_path):
+    """Edge case: validator hasn't enforced data_source yet (cascade
+    is advisory). Empty data_source → speaker_notes is the seed
+    alone, no orphan **Sources:** line."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(_make_deck_close_fragment_empty_data_source()),
+                       encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    assert result.returncode == 0, result.stderr
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    assert dc_slide["speaker_notes"] == (
+        "Speaker note expanding the forward_call."), (
+        f"empty data_source must NOT emit an orphan **Sources:** line; "
+        f"got: {dc_slide['speaker_notes']!r}")
+    assert "Sources" not in dc_slide["speaker_notes"]
+
+
+def test_merger_d094_data_source_preserved_in_content(tmp_path):
+    """Schema-stable per D-094: content.data_source remains present on
+    the merged slide for audit-trail consumers (validator,
+    cascade reader, downstream tools). The promotion is ADDITIVE to
+    speaker_notes; it doesn't strip data_source from content."""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(_make_deck_close_fragment()),
+                       encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    # content.data_source preserved verbatim
+    assert dc_slide["content"]["data_source"] == \
+        "S1 C-slot + S2 C-slot + REPORT §X.", (
+        "D-094 promotion must NOT remove data_source from content; "
+        "schema preserved per D-086.")
+
+
+def test_merger_d094_no_speaker_notes_when_both_missing(tmp_path):
+    """If both speaker_notes_seed AND data_source are absent/empty,
+    no speaker_notes field is created. Defensive: keeps the schema
+    minimal when there's nothing to promote."""
+    frag = _make_deck_close_fragment_no_seed()
+    frag["slides"][0]["content"]["data_source"] = ""
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(frag), encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    assert result.returncode == 0, result.stderr
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    assert "speaker_notes" not in dc_slide or not dc_slide["speaker_notes"], (
+        "no seed and no data_source → no speaker_notes; got: "
+        f"{dc_slide.get('speaker_notes')!r}")
+
+
+def test_merger_d094_does_not_overwrite_existing_speaker_notes(tmp_path):
+    """If the fragment already provides a full speaker_notes field
+    (rare; the v1 contract uses speaker_notes_seed instead), the
+    merger must NOT clobber it with seed+data_source. The
+    'speaker_notes not in cleaned' guard preserves authored notes."""
+    frag = _make_deck_close_fragment()
+    # Composer authored speaker_notes directly (unusual; the v1
+    # contract prefers speaker_notes_seed, but the merger must be
+    # defensive against this shape).
+    frag["slides"][0]["speaker_notes"] = "AUTHORED-NOTES-WIN"
+    outdir = tmp_path / "draft_1"
+    outdir.mkdir()
+    (outdir / "03_slides").mkdir()
+    dc_path = outdir / "03_slides" / "deck_close.json"
+    dc_path.write_text(json.dumps(frag), encoding="utf-8")
+    result = _run_merger(outdir, deck_close_path=dc_path)
+    assert result.returncode == 0, result.stderr
+    spec = json.loads((outdir / "slide_spec.json").read_text(encoding="utf-8"))
+    dc_slide = next(s for s in spec["slides"] if s["layout"] == "deck_close")
+    assert dc_slide["speaker_notes"] == "AUTHORED-NOTES-WIN", (
+        "explicit speaker_notes must NOT be overwritten by the "
+        "seed→notes + data_source promotion")

@@ -112,6 +112,26 @@ Required `content` fields (per D-086):
   substories + REPORT sections that ground the synthesis. From
   signal `data_source` verbatim.
 
+  **v0.8/D-094 — AUDIT-TRAIL ONLY, NOT AUDIENCE-FACING.** The
+  `data_source` field is audit-trail metadata; it is NEVER drawn
+  on the slide face. The merger
+  (`tools/merge_compose_fragments.py`) promotes it into the
+  slide's `speaker_notes` as a `**Sources:**` appendix, appended
+  after any `speaker_notes_seed` content (parallel to how
+  `speaker_notes_seed` itself is promoted). The presenter sees
+  the citation in their speaker notes; the audit pipeline still
+  reads `content.data_source` from the JSON; the audience never
+  sees it. Composers MUST NOT shape `data_source` for audience
+  readability (no rephrasing to be presentable, no removal of
+  internal vocabulary like "C-slot"); preserve the signal's
+  audit-trail provenance verbatim.
+
+  Before D-094 (v0.6–v0.7): the renderer drew `data_source` as a
+  font-10 footer band at y=4.52 on the slide. v0.7 Tier-I read
+  caught this as "directions leak" — internal scaffolding leaked
+  to the audience. v0.8/D-094 reclassifies the field's render
+  surface (face → notes); the schema is preserved.
+
 Slide-level fields (alongside `layout` + `content`):
 
 - `position` — integer 0 (this is a single-slide fragment).

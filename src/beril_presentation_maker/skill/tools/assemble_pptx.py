@@ -1700,40 +1700,55 @@ def _fill_qa_anticipated(slide, content, draft_dir, warnings):
 def _fill_deck_close(slide, content, draft_dir, warnings):
     """v0.7/D-086 closing-synthesis slide.
 
-    Layout geometry:
+    Layout geometry (v0.8/D-094 — data_source promoted to notes):
     - Title placeholder: `unified_point` (the deck's overall takeaway).
     - Body placeholder: `key_takeaways` (3-5 bullets, one per arc).
     - Forward-call textbox below the body: the actionable "what next"
       statement. Composer-authored from `forward_call`; this is the
       load-bearing forward-looking line for the audience.
-    - Footer band at FOOTER_SAFE_BOTTOM: `data_source` citation
-      (subdued; the audience reads the takeaways, the data_source is
-      for the audit trail).
+    - (REMOVED in v0.8/D-094) data_source footer band. The
+      `data_source` field is audit-trail metadata, not audience-facing
+      content. The merger (merge_compose_fragments.py) promotes
+      `content.data_source` into `speaker_notes` as a `**Sources:**`
+      appendix after the seed body. Schema preserved per D-086:
+      content.data_source remains required; validator unchanged.
 
     Mirrors the methods_summary geometry — title at top, bullets in
-    the trimmed body region, a textbox in the lower zone, and a
-    footer band at the master's footer position.
+    the trimmed body region, a textbox in the lower zone. The body
+    placeholder gets the full lower-band height back because there's
+    no data_source footer to reserve for.
+
+    Rationale: v0.7 Tier-I finding 3 (fdm slide-32) — visual-QA
+    caught the data_source rendering as visible scaffolding ("C-slot"
+    + "REPORT.md" citations on the closing slide). D-094 fixes by
+    moving the citation off the slide face, parallel to how
+    cross_tenant + deck_close already promote speaker_notes_seed.
     """
     _set_title(slide, content["unified_point"])
     _set_placeholder_bullets(slide, 1, content["key_takeaways"])
     # Trim the body placeholder above the forward-call zone — same
-    # pattern as methods_summary: reserve the lower band for the
-    # forward_call textbox + data_source footer below.
+    # pattern as methods_summary. v0.8/D-094: data_source no longer
+    # consumes the 4.52-4.80 band on the slide face, so the body
+    # placeholder could grow into it; we keep the conservative 2.85-in
+    # height to preserve a clean forward_call zone and avoid bullets
+    # crowding the actionable takeaway.
     _mp = _find_placeholder(slide, 1)
     if _mp is not None:
         _mp.left = Inches(0.34)
         _mp.top = Inches(1.30)
         _mp.width = Inches(9.32)
         _mp.height = Inches(2.85)   # bottom 4.15; reserve 4.15-4.45 for
-                                    # forward_call, 4.52+ for data_source
+                                    # forward_call (data_source moved to
+                                    # speaker_notes per D-094)
     # Dense key_takeaways shrink-to-fit (3-5 bullets, each 1 sentence;
     # average ~80 chars per bullet → 240-400 chars in the body region).
     _enable_normautofit(slide, 1)
 
     # Forward-call textbox — the audience's actionable takeaway.
-    # Positioned just below the trimmed body placeholder, above the
-    # data_source footer. Bold-ish via larger font; this is the
-    # "what next" line the audience leaves with.
+    # Positioned just below the trimmed body placeholder. v0.8/D-094:
+    # this is now the LAST on-slide content (data_source moved to
+    # speaker_notes). Bold-ish via larger font; this is the "what next"
+    # line the audience leaves with.
     forward_call = content.get("forward_call", "").strip()
     if forward_call:
         fc_tb = _add_textbox(slide, forward_call,
@@ -1747,12 +1762,9 @@ def _fill_deck_close(slide, content, draft_dir, warnings):
                      where=f"deck_close forward_call "
                            f"(slide {getattr(slide, 'slide_id', '?')})")
 
-    # Data-source footer — subdued, audit-trail-only band.
-    data_source = content.get("data_source", "").strip()
-    if data_source:
-        _add_textbox(slide, data_source,
-                     0.30, 4.52, 9.40, 0.28,
-                     font_size_pt=10, color_rgb=GRAPHITE_GRAY_RGB)
+    # v0.8/D-094: data_source is no longer drawn on the slide face.
+    # The merger (merge_compose_fragments.py) promoted it to
+    # speaker_notes as a **Sources:** appendix.
 
 
 # Dispatcher

@@ -3384,6 +3384,52 @@ handles the multi-section shape cleanly (existing speaker_notes
 plumbing already handles long notes via the rich-text speaker-
 notes API; this should "just work" but verify at Tier B).
 
+**Tier-B landing (2026-05-31):** the promotion was moved one
+layer earlier than D-094's spec described — into the **merger**
+(`merge_compose_fragments.py`) rather than the renderer
+(`assemble_pptx.py`). This is the cleaner design discovered at
+Tier-B implementation time:
+
+  1. The merger already had a `speaker_notes_seed →
+     speaker_notes` promotion block for deck_close slides
+     (~line 795). The data_source → **Sources:** appendix
+     joins that same code path, so the merged slide_spec.json
+     contains the final `speaker_notes` value before
+     `assemble.py` ever runs. No renderer-level conditional
+     needed; no post-handler clobber risk; the assembler's
+     existing `if slide_data.get("speaker_notes"): ...`
+     promotion path just works.
+
+  2. The renderer (`_fill_deck_close`) was simplified — the
+     `data_source` textbox draw was deleted. The body
+     placeholder height was preserved at 2.85 in (rather than
+     grown into the freed 4.52-4.80 band) to keep a clean
+     forward_call zone.
+
+  3. The composer doc (`prompts/deck_close.v1.md`) updated
+     with a load-bearing note explicitly marking `data_source`
+     as **AUDIT-TRAIL ONLY, NOT AUDIENCE-FACING**, describing
+     the **Sources:** appendix flow, and forbidding composers
+     from rephrasing `data_source` for audience-readability.
+
+  4. Concatenation shape (pinned by tests):
+     - seed + data_source → `"{seed}\n\n**Sources:** {data_source}"`
+     - seed only → `"{seed}"`
+     - data_source only → `"**Sources:** {data_source}"`
+     - neither → no speaker_notes field at all
+     - explicit speaker_notes on the fragment → NOT clobbered
+       (defensive guard preserves authored notes)
+
+  5. Schema preserved: `content.data_source` remains required
+     per D-086, retained verbatim on the merged slide so
+     audit-trail consumers (validator, cascade reader,
+     future tools) can still read it.
+
+  6. Test coverage: 8 new unit tests (+6 stage_deck_close
+     covering the merger promotion edge cases + 2 assembler
+     regression guards asserting the renderer drops
+     data_source from the slide face; suite total 1709 → 1717).
+
 **Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ2 +
 Tier B; D-092 finding 3 (the v0.7 Tier-I observation this
 addresses); D-086 (the deck_close content schema preserved);

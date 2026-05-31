@@ -796,11 +796,30 @@ def main() -> int:
                 # deck_close.v1 contract (parallel to cross_tenant's
                 # pattern; the speaker_notes stage runs only on
                 # substory slides).
+                #
+                # v0.8/D-094: also promote content.data_source into
+                # the speaker_notes pane as a **Sources:** appendix.
+                # The v0.7 Tier-I read found the renderer was drawing
+                # data_source as on-slide body text (fdm slide-32);
+                # D-094 reclassifies it as audit-trail metadata —
+                # presenter sees the citation in notes, audit pipeline
+                # still reads it from content, audience doesn't see it.
+                # Schema preserved: content.data_source remains
+                # required per D-086; validator unchanged. Only the
+                # rendered surface changes (face → notes).
                 seed = dc_slide.get("speaker_notes_seed")
+                content = dc_slide.get("content") or {}
+                data_source = (content.get("data_source") or "").strip() \
+                    if isinstance(content, dict) else ""
                 cleaned = strip_orchestrator_metadata(dc_slide)
-                if (isinstance(seed, str) and seed.strip()
-                        and "speaker_notes" not in cleaned):
-                    cleaned["speaker_notes"] = seed.strip()
+                if "speaker_notes" not in cleaned:
+                    notes_parts = []
+                    if isinstance(seed, str) and seed.strip():
+                        notes_parts.append(seed.strip())
+                    if data_source:
+                        notes_parts.append(f"**Sources:** {data_source}")
+                    if notes_parts:
+                        cleaned["speaker_notes"] = "\n\n".join(notes_parts)
                 cleaned["id"] = next_id
                 cleaned.pop("substory_id", None)
                 slides.append(cleaned)
