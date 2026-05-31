@@ -123,8 +123,21 @@ _SUBSTORY_HEADER_RE = re.compile(
     r"^### (S\d+)\s*[—–\-]", re.MULTILINE)
 
 # Notebook filename pattern in the **Critical analyses covered:** bullets.
+# v3/v3.1/v3.2 substory_design overlays produced lines like:
+#   - A1: ... — REPORT.md §"..." / NB04b_refit.ipynb ...
+# This pattern matches the full filename.
 _NB_FULL_RE = re.compile(
     r"\b(NB\d+[a-z]?_\w+\.ipynb)", re.IGNORECASE)
+
+# v0.8 Tier G live discovery: v3.3 substory_design produces
+# analyses lines citing bare NB-id tokens instead of full filenames:
+#   - A1: ... — REPORT.md §Pillar 1 item 1; NB01b
+#   - A3: ... — REPORT.md §Pillar 1 item 2; NB02 / NB16
+# The bare-token fallback matches these. Used only when the line has
+# NO _NB_FULL_RE match (so v3/v3.1/v3.2 output still produces full
+# filenames; v3.3 output produces bare tokens). The substory NB-id
+# set is then computed from BOTH sources.
+_NB_BARE_RE = re.compile(r"\b(NB\d+[a-z]?)\b", re.IGNORECASE)
 
 # Curated figure path pattern (mirrors check_figure_provenance.py).
 _CURATED_PATH_RE = re.compile(
@@ -211,8 +224,19 @@ def parse_substory_analyses(
         body = text[start:end]
         notebooks: list[str] = []
         for line in body.splitlines():
-            for m in _NB_FULL_RE.finditer(line):
-                notebooks.append(m.group(1))
+            # Prefer full filenames (v3/v3.1/v3.2 format) when present —
+            # they're richer signal for traceability + figure-provenance
+            # cross-reference. Fall back to bare NB-id tokens (v3.3
+            # format) only when no full filename matched on the line.
+            # The downstream NB-id matcher strips suffixes/extensions
+            # uniformly, so both shapes contribute equivalent NB-ids.
+            full_matches = list(_NB_FULL_RE.finditer(line))
+            if full_matches:
+                for m in full_matches:
+                    notebooks.append(m.group(1))
+            else:
+                for m in _NB_BARE_RE.finditer(line):
+                    notebooks.append(m.group(1))
         out[sid] = notebooks
     return out
 

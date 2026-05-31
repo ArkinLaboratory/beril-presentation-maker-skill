@@ -974,6 +974,14 @@ def _parse_substory_analyses_simple(
     curate_figures.py has no cross-tool import dependency (paper-
     writer parity surface). Same regex contract as the validator.
 
+    v0.8 Tier G fallback: v3.3 substory_design produces lines that
+    cite bare NB-id tokens (`NB02`, `NB04b`) rather than full
+    `NBXX_name.ipynb` filenames. The full-filename regex misses these
+    entirely. Fall back to bare NB-id tokens when no filename
+    matched. Mirrors the same fallback in
+    check_curator_figure_floor.py and check_figure_provenance.py so
+    all three NB-id-matching parsers behave consistently.
+
     Returns empty dict if the file is missing or malformed (defensive
     — same posture as the rest of curate_figures).
     """
@@ -984,7 +992,8 @@ def _parse_substory_analyses_simple(
     except OSError:
         return {}
     header_re = re.compile(r"^### (S\d+)\s*[—–\-]", re.MULTILINE)
-    nb_re = re.compile(r"\b(NB\d+[a-z]?_\w+\.ipynb)", re.IGNORECASE)
+    nb_full_re = re.compile(r"\b(NB\d+[a-z]?_\w+\.ipynb)", re.IGNORECASE)
+    nb_bare_re = re.compile(r"\b(NB\d+[a-z]?)\b", re.IGNORECASE)
     headers = list(header_re.finditer(text))
     out: dict[str, list[str]] = {}
     for i, h in enumerate(headers):
@@ -994,8 +1003,14 @@ def _parse_substory_analyses_simple(
         body = text[start:end]
         notebooks: list[str] = []
         for line in body.splitlines():
-            for m in nb_re.finditer(line):
-                notebooks.append(m.group(1))
+            full_matches = list(nb_full_re.finditer(line))
+            if full_matches:
+                for m in full_matches:
+                    notebooks.append(m.group(1))
+            else:
+                # v0.8 Tier G: v3.3 bare-token fallback
+                for m in nb_bare_re.finditer(line):
+                    notebooks.append(m.group(1))
         out[sid] = notebooks
     return out
 

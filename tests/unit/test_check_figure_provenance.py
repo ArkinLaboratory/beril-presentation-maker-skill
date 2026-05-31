@@ -236,6 +236,80 @@ def test_parse_substory_analyses_extracts_notebooks(tmp_path):
     assert "NB04b_ecotype_refit.ipynb" in out["S2"]
 
 
+def test_parse_substory_analyses_v3_3_bare_nb_token_fallback(tmp_path):
+    """v0.8 Tier G live discovery: v3.3 substory_design produces
+    analyses lines citing bare NB-id tokens (`NB02`, `NB04b`) instead
+    of full `NBXX_name.ipynb` filenames. The legacy _NB_PATTERN
+    (requires trailing `_`) returns nothing on bare-token lines, so
+    figure_provenance silently saw 0 analyses per substory on v3.3
+    output and produced 0 findings even when real coverage gaps
+    existed. The v0.8 Tier G fallback uses _NB_BARE_PATTERN when no
+    full-filename match is found. Pin so v3.3 bare-token output
+    produces meaningful coverage analysis.
+
+    Format mirrors actual draft_8/narrative/02_substories.md content.
+    """
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — Ecotype stratification\n"
+        "**Critical analyses covered:**\n"
+        "- A1: K=4 IBD ecotype framework — REPORT.md §Pillar 1 item 1; NB01b\n"
+        "- A3: Longitudinal drift — REPORT.md §Pillar 1 item 2; NB02 / NB16\n"
+        "\n"
+        "### S2 — Mechanism convergence\n"
+        "**Critical analyses covered:**\n"
+        "- A7: H2b divergence — REPORT.md; NB04e\n",
+        encoding="utf-8",
+    )
+    out = fp.parse_substory_analyses(p)
+    assert set(out.keys()) == {"S1", "S2"}
+    # S1: NB01b, NB02, NB16 — letter suffix preserved in the
+    # un-stripped notebooks list for traceability (matches how
+    # full filenames preserve NB04b_refit.ipynb). Downstream
+    # _nb_id() strips for NB-id matching.
+    assert "NB01b" in out["S1"]
+    assert "NB02" in out["S1"]
+    assert "NB16" in out["S1"]
+    # S2: NB04e (suffix preserved)
+    assert out["S2"] == ["NB04e"]
+    # Verify the matching layer still groups them correctly
+    assert fp._nb_id("NB01b") == "NB01"
+    assert fp._nb_id("NB04e") == "NB04"
+
+
+def test_parse_substory_analyses_prefers_full_filename_over_bare(tmp_path):
+    """When a line has BOTH a full filename AND bare tokens, the
+    parser keeps the full filename (richer signal for traceability).
+    Pins the priority rule so v3/v3.1/v3.2 output behavior is
+    preserved on backwards-compat decks."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — first\n"
+        "**Critical analyses covered:**\n"
+        "- A1: ... — NB04b_refit.ipynb / NB99 / NB77 reference\n",
+        encoding="utf-8",
+    )
+    out = fp.parse_substory_analyses(p)
+    # Full filename wins; bare NB99 + NB77 on same line are skipped
+    # because the full-filename match took precedence.
+    assert out["S1"] == ["NB04b_refit.ipynb"]
+    assert "NB99" not in out["S1"]
+    assert "NB77" not in out["S1"]
+
+
+def test_nb_id_grouping_works_on_bare_tokens(tmp_path):
+    """The downstream _nb_id() normalizer must handle bare tokens
+    (NB04b → NB04) the same way it handles filenames (NB04b_refit
+    → NB04). Pin so the v3.3 fallback's bare tokens funnel through
+    the same matching logic as v3/v3.1/v3.2 filenames."""
+    # Bare tokens
+    assert fp._nb_id("NB04b") == "NB04"
+    assert fp._nb_id("NB12") == "NB12"
+    # Full filenames (existing behavior)
+    assert fp._nb_id("NB04b_refit.ipynb") == "NB04"
+    assert fp._nb_id("NB13_phagefoundry.png") == "NB13"
+
+
 # ---------------------------------------------------------------------------
 # Utilization rate
 # ---------------------------------------------------------------------------

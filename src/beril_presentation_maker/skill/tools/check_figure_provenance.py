@@ -109,8 +109,25 @@ SCHEMA_VERSION = "figure-provenance.v1"
 #   NB13_phagefoundry_cocktail.png → NB13
 # Strips the optional trailing letter for normalization so
 # NB04b_* and NB04h_* both group under NB04 (the figure may be
-# cross-referenced across sub-analyses).
+# cross-referenced across sub-analyses). Requires trailing `_` so it
+# only matches tokens that ARE part of a filename — not bare NB
+# references in prose.
 _NB_PATTERN = re.compile(r"\b(NB\d+)[a-z]?_", re.IGNORECASE)
+
+# v0.8 Tier G live discovery: v3.3 substory_design produces analyses
+# lines that cite bare NB-id tokens (`NB02`, `NB04b`) rather than full
+# `NBXX_name.ipynb` filenames. The bare-token pattern is the fallback
+# when no `_NB_PATTERN` match is found on a line. Used to be the
+# "else: notebooks.append(nb)" branch which never fired because the
+# loop only ran when _NB_PATTERN matched something. Now bare tokens
+# get scanned independently when _NB_PATTERN comes up empty.
+# Capture group includes the optional letter suffix so the raw
+# substory analysis list preserves sub-analysis identity (NB04b vs
+# NB04h). Downstream _nb_id() strips the suffix for NB-id matching;
+# the un-stripped form is kept in the notebooks list for traceability,
+# parallel to how full filenames preserve `NB04b_refit.ipynb` even
+# though they group under NB04 for matching.
+_NB_BARE_PATTERN = re.compile(r"\b(NB\d+[a-z]?)\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +218,13 @@ def parse_substory_analyses(
 
     Per D-080: matching curated-figure-to-analysis is by NB-id prefix
     on the notebook filename, NOT by analysis content.
+
+    v0.8 Tier G fallback: v3.3 substory_design produces lines that
+    cite bare NB-id tokens (`NB02`, `NB04b`) rather than full
+    `NBXX_name.ipynb` filenames. When _NB_PATTERN (which requires the
+    trailing `_`) finds nothing on a line, fall back to _NB_BARE_PATTERN
+    so v3.3 analyses still register. v3/v3.1/v3.2 lines that DO contain
+    full filenames keep producing the rich filename for traceability.
     """
     if not substories_path.is_file():
         return {}
@@ -216,18 +240,19 @@ def parse_substory_analyses(
         notebooks: list[str] = []
         for line in body.splitlines():
             # Analysis bullets look like:
-            #   - A1: ... — REPORT.md §"..." / NBXX_name.ipynb ...
-            for nb in _NB_PATTERN.findall(line):
-                # _NB_PATTERN captures the "NB##" prefix; we also
-                # want the full filename for traceability. Pull it
-                # via the original line — find the .ipynb token if
-                # present, else fall back to the prefix alone.
-                m_full = re.search(
-                    r"(NB\d+[a-z]?_\w+\.ipynb)", line, re.IGNORECASE)
-                if m_full:
-                    notebooks.append(m_full.group(1))
-                else:
-                    notebooks.append(nb)
+            #   - A1: ... — REPORT.md §"..." / NBXX_name.ipynb ...      (v3/v3.1/v3.2)
+            #   - A1: ... — REPORT.md §Pillar 1 item 1; NB01b           (v3.3)
+            full_filename_matches = list(re.finditer(
+                r"(NB\d+[a-z]?_\w+\.ipynb)", line, re.IGNORECASE))
+            if full_filename_matches:
+                for m in full_filename_matches:
+                    notebooks.append(m.group(1))
+            else:
+                # v0.8 Tier G fallback: bare NB-id tokens (v3.3 format).
+                # Use _NB_BARE_PATTERN since _NB_PATTERN requires
+                # trailing `_` and won't match bare references.
+                for m in _NB_BARE_PATTERN.finditer(line):
+                    notebooks.append(m.group(1))
         if notebooks:
             out[sid] = notebooks
         else:

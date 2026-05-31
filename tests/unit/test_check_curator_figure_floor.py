@@ -74,6 +74,89 @@ def test_parse_substory_analyses_returns_empty_on_missing_file(cff, tmp_path):
     assert cff.parse_substory_analyses(tmp_path / "no.md") == {}
 
 
+def test_parse_substory_analyses_v3_3_bare_nb_token_fallback(cff, tmp_path):
+    """v0.8 Tier G live discovery: v3.3 substory_design produces
+    analyses lines citing BARE NB-id tokens instead of full
+    `NBXX_name.ipynb` filenames. Without fallback, the parser
+    returns empty notebook lists → vacuous coverage_rate=1.0 with
+    n_substories_with_candidates=0. Pin the bare-token fallback so
+    real v3.3 output produces meaningful coverage analysis.
+
+    Format mirrors actual draft_8/narrative/02_substories.md content.
+    """
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — Ecotype stratification\n"
+        "**Critical analyses covered:**\n"
+        "- A1: K=4 IBD ecotype framework — REPORT.md §Pillar 1 item 1; NB01b\n"
+        "- A3: Longitudinal ecotype drift — REPORT.md §Pillar 1 item 2; NB02 / NB16\n"
+        "- A4: Clinical-covariate-only classifier failure — REPORT.md §Pillar 1 item 3; NB03\n"
+        "\n"
+        "### S2 — Mechanism convergence\n"
+        "**Critical analyses covered:**\n"
+        "- A7: H2b ecotype-specific divergence — REPORT.md; NB04e\n"
+        "- A8: H2c retraction — REPORT.md; NB04b–c\n",
+        encoding="utf-8",
+    )
+    out = cff.parse_substory_analyses(p)
+    assert set(out.keys()) == {"S1", "S2"}, (
+        f"v3.3 bare-token format should still produce per-substory "
+        f"output; got keys: {set(out.keys())}")
+    # S1: NB01b, NB02, NB16, NB03 — 4 bare-token entries
+    assert len(out["S1"]) >= 4, (
+        f"S1 should capture all bare-token NB references; got: {out['S1']}")
+    s1_nb_ids = cff.substory_nb_ids(out["S1"])
+    assert s1_nb_ids == {"NB01", "NB02", "NB16", "NB03"}, (
+        f"S1 NB-id set must include all referenced notebooks; "
+        f"got: {s1_nb_ids}")
+    # S2: NB04e, NB04b — both normalize to NB04
+    s2_nb_ids = cff.substory_nb_ids(out["S2"])
+    assert s2_nb_ids == {"NB04"}, (
+        f"S2 NB04b–c + NB04e all collapse to NB04; got: {s2_nb_ids}")
+
+
+def test_parse_substory_analyses_prefers_full_filename_when_present(
+        cff, tmp_path):
+    """When a line has BOTH a full filename AND bare tokens, the
+    parser prefers the full filename (richer signal for traceability).
+    Pins the priority rule so v3/v3.1/v3.2 output behavior is
+    preserved on backwards-compat decks."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — first\n"
+        "**Critical analyses covered:**\n"
+        "- A1: ... — REPORT.md §X / NB04b_refit.ipynb / NB99 / NB77 reference\n",
+        encoding="utf-8",
+    )
+    out = cff.parse_substory_analyses(p)
+    # Full filename wins; bare tokens NB99 + NB77 on the same line
+    # are skipped because the full-filename match took precedence.
+    assert out["S1"] == ["NB04b_refit.ipynb"], (
+        f"line with full filename + bare tokens should yield ONLY "
+        f"the full filename (richer signal); got: {out['S1']}")
+
+
+def test_parse_substory_analyses_mixed_lines_per_substory(cff, tmp_path):
+    """Substory with SOME lines having full filenames and OTHER lines
+    having only bare tokens. Each line is parsed independently."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — mixed\n"
+        "- A1: ... NB04b_refit.ipynb\n"      # full filename
+        "- A2: ... ; NB99\n"                  # bare token
+        "- A3: ... NB02_other.ipynb / NB77\n" # full + bare on same line
+        "- A4: ... ; NB07b\n",                # bare token
+        encoding="utf-8",
+    )
+    out = cff.parse_substory_analyses(p)
+    nb_ids = cff.substory_nb_ids(out["S1"])
+    # NB04 (from A1 full), NB99 (from A2 bare), NB02 (from A3 full —
+    # NB77 skipped because A3 line had a full match), NB07 (from A4 bare)
+    assert nb_ids == {"NB04", "NB99", "NB02", "NB07"}, (
+        f"mixed format should produce union of full + bare NB-ids; "
+        f"got: {nb_ids}")
+
+
 def test_parse_curated_figures_extracts_backticked_paths(cff, tmp_path):
     p = tmp_path / "curated.md"
     p.write_text(

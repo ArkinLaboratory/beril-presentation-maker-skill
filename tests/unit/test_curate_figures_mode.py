@@ -446,6 +446,49 @@ def test_parse_substory_analyses_simple_returns_empty_on_missing_file(
     assert out == {}
 
 
+def test_parse_substory_analyses_simple_v3_3_bare_token_fallback(
+        cf, tmp_path):
+    """v0.8 Tier G live discovery: v3.3 substory_design uses bare
+    NB-id tokens (`NB02`, `NB04b`) rather than full `NBXX_name.ipynb`
+    filenames. Without fallback, the curator's --substories-path
+    forwarding silently produced empty NB-id sets per substory →
+    per-substory floor never engaged. Pin the bare-token fallback so
+    v3.3 output engages the floor properly.
+
+    Format mirrors actual draft_8/narrative/02_substories.md content.
+    """
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — Ecotype stratification\n"
+        "**Critical analyses covered:**\n"
+        "- A1: K=4 ecotype framework — REPORT.md §Pillar 1; NB01b\n"
+        "- A3: Longitudinal drift — REPORT.md §Pillar 1; NB02 / NB16\n",
+        encoding="utf-8",
+    )
+    out = cf._parse_substory_analyses_simple(p)
+    assert "S1" in out
+    # All three bare-token NB references captured
+    assert "NB01b" in out["S1"]
+    assert "NB02" in out["S1"]
+    assert "NB16" in out["S1"]
+
+
+def test_parse_substory_analyses_simple_prefers_full_filename(
+        cf, tmp_path):
+    """When a line has both a full filename and bare tokens, the
+    full filename wins (richer signal). Preserves v3/v3.1/v3.2
+    behavior on backwards-compat decks."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "### S1 — first\n"
+        "- A1: ... NB04b_refit.ipynb / NB99 / NB77 reference\n",
+        encoding="utf-8",
+    )
+    out = cf._parse_substory_analyses_simple(p)
+    # Only the full filename is captured (bare tokens on same line skipped)
+    assert out["S1"] == ["NB04b_refit.ipynb"]
+
+
 # ---------------------------------------------------------------------------
 # --substories-path CLI flag wiring
 # ---------------------------------------------------------------------------
