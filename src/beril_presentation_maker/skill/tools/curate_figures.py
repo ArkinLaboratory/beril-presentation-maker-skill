@@ -787,10 +787,50 @@ def _figure_score(record: FigureRecord) -> tuple[int, str]:
     return (tier, record.path)
 
 
+# v0.8/D-093: substory-NB-id matching for per-substory floor.
+# Mirrors the matching rule in check_figure_provenance.py — NB-id
+# prefix on filenames (e.g. NB04b_* and NB04h_* both group under
+# NB04). Strips the optional single-letter suffix for cross-analysis
+# figure association.
+_NB_ID_RE = re.compile(r"\b(NB\d+)[a-z]?", re.IGNORECASE)
+
+
+def _figure_nb_ids(record: "FigureRecord") -> set[str]:
+    """Return the set of NB-ids associated with a figure record.
+
+    Looks at the figure's filename + every savefig-origin notebook
+    + every notebook_md caption notebook. A figure may map to
+    multiple NB-ids (e.g., re-saved by a different notebook), so
+    the result is a set rather than a single id.
+    """
+    ids: set[str] = set()
+    for token in [record.filename, record.path]:
+        for m in _NB_ID_RE.finditer(token):
+            ids.add(m.group(1).upper())
+    for origin in record.savefig_origins:
+        for m in _NB_ID_RE.finditer(origin.notebook):
+            ids.add(m.group(1).upper())
+    for cap in record.captions:
+        nb = cap.context.get("notebook", "") if cap.context else ""
+        for m in _NB_ID_RE.finditer(nb):
+            ids.add(m.group(1).upper())
+    return ids
+
+
+def _substory_nb_ids(notebook_filenames: list[str]) -> set[str]:
+    """Return NB-id set for a substory's analyses notebook filenames."""
+    ids: set[str] = set()
+    for fn in notebook_filenames:
+        for m in _NB_ID_RE.finditer(fn):
+            ids.add(m.group(1).upper())
+    return ids
+
+
 def curate_for_mode(
     inventory: FigureInventoryReport,
     mode: str,
     target_count: int | None = None,
+    substory_analyses: dict[str, list[str]] | None = None,
 ) -> CuratedFigureSelection:
     """Pick a mode-bounded shortlist of figures from `inventory`.
 
@@ -799,6 +839,14 @@ def curate_for_mode(
       mode: One of MODE_FIGURE_BUDGETS keys (talk-30 / talk-15 / ...).
       target_count: Override the mode's default target. Clamped to the
         mode's [min, max] range; ignored if outside.
+      substory_analyses: v0.8/D-093 per-substory floor. When provided,
+        maps {substory_id: [analysis_notebook_filename, ...]} from
+        02_substories.md. For each substory with ≥1 NB-id candidate in
+        the inventory, the curator GUARANTEES ≥1 figure for that
+        substory in the selection. May exceed the mode's target_count
+        by up to N_substories — per D-093, per-substory coverage wins
+        over budget. When None (default — paper-writer parity), the
+        budget is the hard ceiling.
 
     Returns:
       CuratedFigureSelection.
@@ -819,7 +867,49 @@ def curate_for_mode(
     # Sort by score (descending tier, then filename)
     ranked = sorted(inventory.figures,
                     key=lambda r: _figure_score(r), reverse=True)
-    selected = ranked[:target]
+    selected = list(ranked[:target])
+
+    # v0.8/D-093: per-substory floor. After the budget-bounded pick,
+    # ensure every substory with ≥1 candidate figure in the inventory
+    # has ≥1 figure in `selected`. If not, promote the highest-scoring
+    # unselected candidate for that substory.
+    #
+    # Why this can't be done by sorting alone: the budget-bounded
+    # top-N pick may exhaust on figures matching ONE substory's
+    # analyses (when that substory's notebooks dominate the
+    # REPORT.md-referenced tier), starving other substories. The
+    # post-pick repair is bounded — at most one promotion per
+    # substory — so the selection can grow by ≤ N_substories.
+    if substory_analyses:
+        selected_ids = {f.path for f in selected}
+        # Pre-compute each figure's NB-ids once.
+        fig_nb_ids = {f.path: _figure_nb_ids(f) for f in inventory.figures}
+        for sid, analyses in substory_analyses.items():
+            sub_ids = _substory_nb_ids(analyses)
+            if not sub_ids:
+                continue
+            # Any selected figure already covers this substory?
+            covered = any(
+                fig_nb_ids[f.path] & sub_ids for f in selected)
+            if covered:
+                continue
+            # Find best unselected candidate for this substory.
+            candidates = [
+                f for f in ranked
+                if f.path not in selected_ids
+                and fig_nb_ids[f.path] & sub_ids
+            ]
+            if not candidates:
+                # No inventory figure covers this substory.
+                # The validator will catch this only if there
+                # IS a candidate; here there isn't, so nothing to
+                # do — let downstream emit a different finding if
+                # the substory's contract requires a figure.
+                continue
+            promoted = candidates[0]  # ranked-sorted
+            selected.append(promoted)
+            selected_ids.add(promoted.path)
+
     return CuratedFigureSelection(
         mode=mode,
         target_count=len(selected),
@@ -874,6 +964,42 @@ def format_curated_figures_md(selection: CuratedFigureSelection) -> str:
 # Curate CLI subcommand
 # ---------------------------------------------------------------------------
 
+def _parse_substory_analyses_simple(
+    substories_path: Path,
+) -> dict[str, list[str]]:
+    """Parse 02_substories.md for {substory_id: [notebook_filename, ...]}.
+
+    v0.8/D-093 — duplicate-free port of check_figure_provenance.py's
+    parse_substory_analyses(). Kept inline rather than imported so
+    curate_figures.py has no cross-tool import dependency (paper-
+    writer parity surface). Same regex contract as the validator.
+
+    Returns empty dict if the file is missing or malformed (defensive
+    — same posture as the rest of curate_figures).
+    """
+    if not substories_path.is_file():
+        return {}
+    try:
+        text = substories_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    header_re = re.compile(r"^### (S\d+)\s*[—–\-]", re.MULTILINE)
+    nb_re = re.compile(r"\b(NB\d+[a-z]?_\w+\.ipynb)", re.IGNORECASE)
+    headers = list(header_re.finditer(text))
+    out: dict[str, list[str]] = {}
+    for i, h in enumerate(headers):
+        sid = h.group(1)
+        start = h.end()
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        body = text[start:end]
+        notebooks: list[str] = []
+        for line in body.splitlines():
+            for m in nb_re.finditer(line):
+                notebooks.append(m.group(1))
+        out[sid] = notebooks
+    return out
+
+
 def _cmd_curate(argv: list[str] | None) -> int:
     """Top-level curate CLI: extract inventory + apply mode budget."""
     p = argparse.ArgumentParser(
@@ -896,6 +1022,15 @@ def _cmd_curate(argv: list[str] | None) -> int:
                         "curated_figures.md.")
     p.add_argument("--no-md", action="store_true",
                    help="Suppress markdown writes (JSON-only).")
+    p.add_argument(
+        "--substories-path", type=Path, default=None,
+        help="Path to narrative/02_substories.md. v0.8/D-093: when "
+             "supplied, curate_for_mode enforces a per-substory floor "
+             "of ≥1 figure for every substory whose analyses cite a "
+             "notebook with figures in the inventory. May exceed "
+             "--target-count by up to N_substories (per-substory "
+             "coverage wins over budget). When omitted, budget is "
+             "the hard ceiling (paper-writer parity).")
     args = p.parse_args(argv)
 
     if not args.project_dir.is_dir():
@@ -903,7 +1038,27 @@ def _cmd_curate(argv: list[str] | None) -> int:
         return 2
 
     inventory = extract_figures(args.project_dir)
-    selection = curate_for_mode(inventory, args.mode, args.target_count)
+    substory_analyses = None
+    if args.substories_path is not None:
+        substory_analyses = _parse_substory_analyses_simple(
+            args.substories_path)
+        if substory_analyses:
+            print(
+                f"curate: per-substory floor enabled "
+                f"(N_substories={len(substory_analyses)}; "
+                f"source={args.substories_path})",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"curate: --substories-path supplied but "
+                f"{args.substories_path} produced no parseable "
+                f"substories; per-substory floor disabled",
+                file=sys.stderr,
+            )
+    selection = curate_for_mode(
+        inventory, args.mode, args.target_count,
+        substory_analyses=substory_analyses)
 
     payload = {
         "inventory": inventory.to_dict(),

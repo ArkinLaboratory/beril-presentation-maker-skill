@@ -247,3 +247,239 @@ def test_cli_curate_missing_project_dir_returns_2(cf, tmp_path):
         "--mode", "talk-30",
     ])
     assert rc == 2
+
+
+# ===========================================================================
+# v0.8 Tier A — curate_for_mode substory-aware per-substory floor (D-093)
+# ===========================================================================
+#
+# When the caller passes substory_analyses, curate_for_mode must
+# guarantee ≥1 figure per substory whose analyses cite a notebook
+# with figures in the inventory. May exceed budget by up to
+# N_substories (per-substory coverage wins per D-093). When
+# substory_analyses is None, curator behavior is unchanged
+# (paper-writer parity).
+
+
+def test_curate_for_mode_unchanged_without_substory_analyses(cf, tmp_path):
+    """Baseline: without substory_analyses, curate_for_mode behaves
+    exactly as before — strict budget cap (target_count figures)."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(10)
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    sel = cf.curate_for_mode(inv, "talk-15")  # default target=4
+    assert sel.target_count == 4
+    assert len(sel.selected) == 4
+
+
+def test_curate_for_mode_promotes_uncovered_substory_candidate(cf, tmp_path):
+    """When a substory has 0 selected figures despite candidates in
+    inventory, curate_for_mode promotes the highest-scoring candidate."""
+    figs = [
+        # Top 4 (would naturally be selected at talk-15 default 4):
+        # all NB01-NB04 with REPORT tier
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 5)
+    ] + [
+        # NB99 — only available for S2 — lower tier (notebook_md only)
+        _make_figure(cf, "figures/NB99_y.png", ("notebook_md",)),
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": ["NB01_a.ipynb", "NB02_b.ipynb"],   # covered by top-4
+        "S2": ["NB99_z.ipynb"],                    # NEEDS promotion
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # Promoted: 4 baseline + 1 promotion for S2 = 5 selected
+    assert len(sel.selected) == 5, (
+        f"expected 5 selected (4 baseline + 1 S2 promotion); "
+        f"got {len(sel.selected)}: {[f.path for f in sel.selected]}")
+    paths = {f.path for f in sel.selected}
+    assert "figures/NB99_y.png" in paths, (
+        f"NB99 figure should be promoted for S2; selected: {paths}")
+
+
+def test_curate_for_mode_skips_substory_with_no_inventory_candidate(cf, tmp_path):
+    """A substory whose analyses cite a notebook with NO figures in
+    inventory cannot be covered — curate_for_mode must NOT make
+    something up. Selection stays at the budget."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 4)  # NB01, NB02, NB03
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": ["NB01_a.ipynb"],   # covered
+        "S2": ["NB99_z.ipynb"],   # NO candidate in inventory
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # All 3 figures selected; no promotion (no NB99 in inv)
+    assert len(sel.selected) == 3
+    paths = {f.path for f in sel.selected}
+    assert "figures/NB99_y.png" not in paths
+
+
+def test_curate_for_mode_promotes_one_per_uncovered_substory(cf, tmp_path):
+    """3 substories all uncovered → 3 promotions; final count = budget + 3."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 5)
+    ] + [
+        _make_figure(cf, "figures/NB10_y.png", ("notebook_md",)),
+        _make_figure(cf, "figures/NB11_y.png", ("notebook_md",)),
+        _make_figure(cf, "figures/NB12_y.png", ("notebook_md",)),
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": ["NB01_a.ipynb"],     # covered (NB01 in top-4)
+        "S2": ["NB10_a.ipynb"],     # promote
+        "S3": ["NB11_b.ipynb"],     # promote
+        "S4": ["NB12_c.ipynb"],     # promote
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # 4 baseline + 3 promotions = 7
+    assert len(sel.selected) == 7
+    paths = {f.path for f in sel.selected}
+    assert {"figures/NB10_y.png", "figures/NB11_y.png",
+            "figures/NB12_y.png"}.issubset(paths)
+
+
+def test_curate_for_mode_nb_id_matches_letter_suffix(cf, tmp_path):
+    """NB04b_* and NB04h_* both group under NB04 (mirrors
+    check_figure_provenance.py matching rule). A substory citing
+    NB04b should be covered by a NB04h figure in inventory."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 5)
+    ] + [
+        _make_figure(cf, "figures/NB04h_external.png", ("notebook_md",)),
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    # S2 cites NB04b — already covered by NB04_x in the baseline pick
+    # (NB04 prefix matches both NB04 and NB04b/h), so NO promotion needed.
+    substories = {
+        "S1": ["NB01_a.ipynb"],
+        "S2": ["NB04b_refit.ipynb"],
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # 4 baseline; no promotion (NB04_x already covers S2 via NB04 prefix)
+    assert len(sel.selected) == 4
+
+
+def test_curate_for_mode_uses_highest_score_promotion(cf, tmp_path):
+    """When multiple NB-id-matching candidates exist for an uncovered
+    substory, the highest-scoring one is promoted."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 5)
+    ] + [
+        # NB99 with low tier (filename only)
+        _make_figure(cf, "figures/NB99_low.png", ()),
+        # NB99 with REPORT tier (highest)
+        _make_figure(cf, "figures/NB99_high.png", ("report",)),
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": ["NB01_a.ipynb"],
+        "S2": ["NB99_z.ipynb"],
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    paths = {f.path for f in sel.selected}
+    # The REPORT-tier one should be promoted, not the filename-only one
+    assert "figures/NB99_high.png" in paths
+    assert "figures/NB99_low.png" not in paths
+
+
+def test_curate_for_mode_skips_substory_with_no_nb_ids(cf, tmp_path):
+    """Substory with empty analyses list → no NB-ids → no promotion."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 4)
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": [],   # no notebooks cited
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    assert len(sel.selected) == 3
+
+
+# ---------------------------------------------------------------------------
+# _parse_substory_analyses_simple — helper used by --substories-path
+# ---------------------------------------------------------------------------
+
+def test_parse_substory_analyses_simple_extracts_notebook_filenames(
+        cf, tmp_path):
+    """Parse a minimal 02_substories.md fragment + extract NB filenames."""
+    p = tmp_path / "02_substories.md"
+    p.write_text(
+        "# Substories\n"
+        "\n"
+        "### S1 — first arc\n"
+        "**Critical analyses covered:**\n"
+        "- A1: ... — REPORT.md §X / NB01_analysis.ipynb\n"
+        "- A2: ... — REPORT.md §Y / NB02b_refit.ipynb\n"
+        "\n"
+        "### S2 — second arc\n"
+        "**Critical analyses covered:**\n"
+        "- A3: ... — REPORT.md §Z / NB99_other.ipynb\n",
+        encoding="utf-8",
+    )
+    out = cf._parse_substory_analyses_simple(p)
+    assert set(out.keys()) == {"S1", "S2"}
+    assert "NB01_analysis.ipynb" in out["S1"]
+    assert "NB02b_refit.ipynb" in out["S1"]
+    assert out["S2"] == ["NB99_other.ipynb"]
+
+
+def test_parse_substory_analyses_simple_returns_empty_on_missing_file(
+        cf, tmp_path):
+    out = cf._parse_substory_analyses_simple(tmp_path / "no_such.md")
+    assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# --substories-path CLI flag wiring
+# ---------------------------------------------------------------------------
+
+def test_cli_curate_substories_path_flag_enables_floor(
+        cf, tmp_path, capsys, monkeypatch):
+    """CLI --substories-path forwards to curate_for_mode's
+    substory_analyses arg; promotion behavior visible in stderr message."""
+    proj = tmp_path / "demo"
+    proj.mkdir()
+    (proj / "figures").mkdir()
+    # Create real figure files so extract_figures picks them up
+    for i in range(1, 5):
+        (proj / "figures" / f"NB{i:02d}_x.png").write_bytes(b"\x89PNG\r\n")
+    (proj / "figures" / "NB99_y.png").write_bytes(b"\x89PNG\r\n")
+
+    subs = proj / "02_substories.md"
+    subs.write_text(
+        "### S1 — a\n- NB01_a.ipynb\n"
+        "### S2 — b\n- NB99_z.ipynb\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    rc = cf._cmd_curate([
+        str(proj),
+        "--mode", "talk-15",
+        "--output-dir", str(out_dir),
+        "--substories-path", str(subs),
+    ])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "per-substory floor enabled" in err, (
+        f"expected stderr message about floor being enabled; got: {err}")
+    # Curated should include NB99 (promoted for S2)
+    curated_text = (out_dir / "curated_figures.md").read_text(encoding="utf-8")
+    assert "NB99_y.png" in curated_text

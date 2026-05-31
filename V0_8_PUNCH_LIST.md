@@ -294,12 +294,12 @@ v0.8 fix is upstream prevention.
 | Tier | Scope | Status |
 |---|---|---|
 | 0 — DQ1-DQ5 sign-off + F3 prompt-layering root-cause | research + DECISIONS | ✅ done 2026-05-31 (D-093..D-097 in DECISIONS.md; Adam-confirmed; F3 root cause = LLM recency-bias displacement on v3.2 substory_design example block; slide_compose v3.2 not vulnerable per subagent's LAYOUT_REQUIRED_FIELDS-based reasoning; v3.3 substory_design ONLY scope, not slide_compose). |
-| A — F1: curator figure-floor per D-093 (curate_figures agent nudge + new check_curator_figure_floor.py validator + cascade integration) | curator stage | ⬜ not started |
+| A — F1: curator figure-floor per D-093 (curate_for_mode substory-aware per-substory floor [the BELT] + new check_curator_figure_floor.py validator + cascade integration [the SUSPENDERS] + orchestrator stage_curate_figures wiring) | curator stage | ✅ done 2026-05-31 (substory-aware promotion landed in curate_for_mode; check_curator_figure_floor.py emits audit/curator_figure_floor.json; review_cascade.py reads it as 9th Tier-1 source; presentation_maker.sh stage_curate_figures forwards --substories-path + invokes validator; 44 new unit tests; 1665→1709 unit total) |
 | B — F2: deck_close data_source speaker-notes promotion per D-094 (_fill_deck_close renderer + deck_close.v1 composer doc) | renderer + composer-doc | ⬜ not started |
-| C — F3: clean v3.3 substory_design overlay per D-095 (substory_design.v3.3_overlay.md on v1 + orchestrator --prompts-version v3.3 + retire v3.2) | prompt + orchestrator | ⬜ not started |
+| C — F3: clean v3.3 substory_design overlay per D-095 (substory_design.v3.3_overlay.md on v1 + orchestrator --prompts-version v3.3 + retire v3.2) | prompt + orchestrator | ✅ done 2026-05-31 (commit c83db0f; +9 tests; default still v3.2 in orchestrator) |
 | D — F4: visual-QA default-on per D-096 (orchestrator mode-aware VISUAL_QA toggle + --no-visual-qa opt-out flag + --help doc) | orchestrator | ⬜ not started |
 | E — F5: AI-image content-grounding per D-097 (ai_image_prompt.v1.md DECK_POSITION input + intro-slide spoiler rule + PA-9 anti-pattern + orchestrator wiring) | prompt + orchestrator | ⬜ not started |
-| F — smoke harness extension for v3.3 substory_design field-presence assertions per D-095 (smoke_v3_prompt.py + new validate_substory_design_fields function) | smoke tool | ⬜ not started |
+| F — smoke harness extension for v3.3 substory_design field-presence assertions per D-095 (smoke_v3_prompt.py + new validate_substory_design_fields function) | smoke tool | ✅ done 2026-05-31 (commit d2ca8cc; +12 tests; default --version=v3.3) |
 | G — live A/B re-run on ibd_phage_targeting (v3.3 substory + v3.2 slide_compose) | live (~$13) | ⬜ not started |
 | H — live A/B re-run on functional_dark_matter (v3.3) | live (~$13) | ⬜ not started |
 | I — Adam reads decks + casts veto | review + DECISION | ⬜ not started |

@@ -1148,3 +1148,121 @@ def test_tier1_aggregates_all_six_sources_in_one_pass(rc, tmp_path):
     # All P1/P2; no P0 → status advisory, cascade continues
     assert result.status == "advisory"
     assert result.has_p0 is False
+
+
+# ===========================================================================
+# v0.8 Tier A — curator-figure-floor cascade integration (D-093)
+# ===========================================================================
+#
+# The new _read_curator_figure_floor reader mirrors the
+# figure_provenance / cross_tenant_grounding pattern: reads
+# audit/curator_figure_floor.json if present, lifts findings into
+# Tier-1 as `curator_figure_floor:<finding-kind>` at P1 advisory.
+# Never invokes check_curator_figure_floor.py.
+
+
+def test_tier1_curator_figure_floor_no_op_when_missing(rc, tmp_path):
+    """Reader is no-op-safe when audit JSON is absent (read-if-present
+    pattern; mirrors figure_provenance + cross_tenant_grounding)."""
+    assert rc._read_curator_figure_floor(tmp_path) == []
+
+
+def test_tier1_curator_figure_floor_reads_findings_per_d093(rc, tmp_path):
+    """When audit/curator_figure_floor.json exists, each finding lifts
+    into Tier-1 with kind=curator_figure_floor:<original-kind> at P1
+    soft-warning per D-093."""
+    _write_audit_json(tmp_path, "curator_figure_floor.json", {
+        "schema_version": "curator-figure-floor.v1",
+        "substories_path": "narrative/02_substories.md",
+        "curated_figures_path": "working/curated_figures.md",
+        "figures_dir": "figures",
+        "n_substories": 4,
+        "n_curated_figures": 7,
+        "findings": [
+            {
+                "kind": "substory_no_curated_figure_despite_candidates",
+                "severity": "soft-warning",
+                "substory_id": "S2",
+                "message": (
+                    "substory S2 has 0 curated figures despite 1 "
+                    "candidate NB-id(s) ['NB99']"),
+                "evidence": {
+                    "candidate_nb_ids": ["NB99"],
+                    "candidate_figures": ["figures/NB99_y.png"],
+                    "curated_nb_ids": ["NB01", "NB02", "NB03"],
+                },
+            },
+        ],
+        "summary": {
+            "n_substories_with_candidates": 3,
+            "n_substories_uncovered": 1,
+            "n_substories_no_candidates": 1,
+            "coverage_rate": 0.6667,
+        },
+    })
+    findings = rc._read_curator_figure_floor(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.kind == (
+        "curator_figure_floor:"
+        "substory_no_curated_figure_despite_candidates")
+    assert f.severity == "P1"
+    assert f.evidence["substory_id"] == "S2"
+    assert f.evidence["cff_kind"] == (
+        "substory_no_curated_figure_despite_candidates")
+    # Original evidence merged in
+    assert "NB99" in f.evidence["candidate_nb_ids"]
+
+
+def test_tier1_curator_figure_floor_never_emits_p0(rc, tmp_path):
+    """Defensive pin per D-093: even if a future payload sets
+    severity=P0 (e.g., hand-edited audit file), the cascade reader
+    demotes it to P1 — D-093 places curator-figure-floor at advisory
+    P1, never P0."""
+    _write_audit_json(tmp_path, "curator_figure_floor.json", {
+        "schema_version": "curator-figure-floor.v1",
+        "findings": [
+            {"kind": "substory_no_curated_figure_despite_candidates",
+             "severity": "P0",
+             "substory_id": "S1",
+             "message": "x",
+             "evidence": {}},
+        ],
+    })
+    findings = rc._read_curator_figure_floor(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"  # demoted from P0
+
+
+def test_tier1_curator_figure_floor_empty_findings_returns_empty(
+        rc, tmp_path):
+    """Clean curator output (zero findings) emits zero cascade findings
+    — no spurious 'floor satisfied' marker."""
+    _write_audit_json(tmp_path, "curator_figure_floor.json", {
+        "schema_version": "curator-figure-floor.v1",
+        "findings": [],
+        "summary": {"n_substories_uncovered": 0, "coverage_rate": 1.0},
+    })
+    assert rc._read_curator_figure_floor(tmp_path) == []
+
+
+def test_tier1_aggregates_curator_figure_floor_in_run_tier1(rc, tmp_path):
+    """run_tier1 calls _read_curator_figure_floor as the 9th reader;
+    findings appear in the aggregated result."""
+    _write_audit_json(tmp_path, "curator_figure_floor.json", {
+        "schema_version": "curator-figure-floor.v1",
+        "findings": [
+            {"kind": "substory_no_curated_figure_despite_candidates",
+             "severity": "soft-warning",
+             "substory_id": "S2",
+             "message": "x",
+             "evidence": {"candidate_nb_ids": ["NB99"]}},
+        ],
+    })
+    result = rc.run_tier1(tmp_path)
+    kinds = [f.kind for f in result.findings]
+    assert any(k.startswith("curator_figure_floor:") for k in kinds)
+    # Advisory; no P0
+    assert result.status == "advisory"
+    assert result.has_p0 is False
+

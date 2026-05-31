@@ -3262,6 +3262,55 @@ file-existence (any `.png` in `figures/NB##_*.png` whose NB-id
 matches), or are there other heuristics? Likely the former for
 MVP; refine at v0.8 Tier-F if too noisy.
 
+**Tier-A landing (2026-05-31):** the "curator agent prompt
+nudge" piece of D-093 was reshaped at implementation time
+because `curate_figures.py` is a deterministic Python script
+(no LLM curator agent exists). Adam-confirmed shape (option a
+on the F1 design question):
+
+  1. **`curate_for_mode()` gains `substory_analyses=` kwarg.**
+     When supplied, the function deterministically promotes
+     ≥1 highest-scoring NB-id-matching figure per substory
+     after the budget-bounded pick. May exceed the mode budget
+     by up to N_substories (per-substory coverage wins over
+     budget per D-093). When `substory_analyses=None`, behavior
+     is unchanged — paper-writer parity preserved.
+
+  2. **Orchestrator forwards `02_substories.md` via new
+     `--substories-path` CLI flag** on `curate_figures.py`. The
+     stage falls back gracefully when the file is missing
+     (smoke runs + earlier-cancelled pipelines).
+
+  3. **`check_curator_figure_floor.py` validator** (the
+     suspenders) ships as described in D-093 — emits
+     `audit/curator_figure_floor.json` with
+     `substory_no_curated_figure_despite_candidates` findings
+     at P1 soft-warning. NB-id matching mirrors
+     `check_figure_provenance.py`'s rule (prefix-with-optional-
+     letter-suffix). Inventory source: `figures_inventory.md`
+     when present, filesystem scan of `figures/` as fallback.
+
+  4. **Cascade integration** via new
+     `review_cascade._read_curator_figure_floor` Tier-1 reader
+     (9th source after cross_tenant_grounding). Read-if-present
+     pattern; cascade never invokes the validator.
+
+  5. **Orchestrator `stage_curate_figures` invokes the
+     validator** after curation when both inputs (substories +
+     curated_figures.md) exist. The audit JSON lands at
+     `DRAFT_DIR/audit/curator_figure_floor.json`. Advisory; never
+     fails the stage.
+
+  6. **Test coverage:** 44 new unit tests (+9 curate-mode +23
+     validator +5 cascade +6 orchestrator-wiring; suite total
+     1665→1709).
+
+The "agent prompt" phrasing from the original decision becomes
+"deterministic per-substory floor" in implementation. The
+belt-and-suspenders intent is preserved: the belt (curator
+guarantees coverage) is now Python instead of an LLM rule, and
+the suspenders (validator catches drift) is unchanged from spec.
+
 **Related:** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) DQ1 +
 Tier A; D-092 finding 1 (the v0.7 Tier-I observation this
 addresses); D-080 (the curator-stage-gate validator

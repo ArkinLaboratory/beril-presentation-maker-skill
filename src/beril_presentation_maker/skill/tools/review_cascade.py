@@ -496,6 +496,50 @@ def _read_figure_provenance(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_curator_figure_floor(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/curator_figure_floor.json (v0.8 Tier A / D-093
+    output) if present. Per D-093: curator-figure-floor findings
+    emit at P1 severity (soft-warning; never gates the cascade).
+
+    Each FigureFloorFinding maps to a cascade finding with
+    `kind=curator_figure_floor:<finding-kind>` (currently only
+    `curator_figure_floor:substory_no_curated_figure_despite_candidates`
+    but the schema is forward-compatible for additional kinds).
+
+    Read-if-present per the figure_provenance pattern: the cascade
+    does NOT invoke check_curator_figure_floor.py.
+    """
+    payload = _load_json_safe(
+        draft_dir / "audit" / "curator_figure_floor.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        # Per D-093: all curator-figure-floor findings are P1
+        # soft-warnings. Map defensively (parallels figure_provenance).
+        sev = f.get("severity", "soft-warning")
+        if sev in ("soft-warning", "P1"):
+            sev = "P1"
+        elif sev in ("P2",):
+            sev = "P2"
+        else:
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind=f"curator_figure_floor:{f.get('kind', '?')}",
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={"substory_id": f.get("substory_id"),
+                      "cff_kind": f.get("kind"),
+                      **(f.get("evidence") or {})},
+        ))
+    return findings
+
+
 def _read_cross_tenant_grounding(draft_dir: Path) -> list[CascadeFinding]:
     """Read audit/cross_tenant_grounding.json (v0.7 Tier E.2 / D-089
     output) if present. Per D-089: cross-tenant grounding findings
@@ -589,7 +633,7 @@ def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
 def run_tier1(draft_dir: Path) -> TierResult:
     """Tier 1 — deterministic + visual-QA aggregation (M4b Tier B).
 
-    Aggregates seven sources in fail-fast cost order (cheapest first):
+    Aggregates sources in fail-fast cost order (cheapest first):
       1. validate_presentation P1–P10 (+ v0.5 P11 register-discipline
          per D-072) — run directly (no orchestrator stage today);
          writes audit/presentation_validation.json as a side-effect.
@@ -600,6 +644,10 @@ def run_tier1(draft_dir: Path) -> TierResult:
       6. audit/substory_shape.json (v0.5 Tier B / D-073: read-if-present;
          never invoke. P1 advisory; never gates).
       7. audit/figure_provenance.json (v0.6 Tier A.1 / D-080:
+         read-if-present; never invoke. P1 advisory; never gates).
+      8. audit/cross_tenant_grounding.json (v0.7 Tier E.2 / D-089:
+         read-if-present; never invoke. P1 advisory; never gates).
+      9. audit/curator_figure_floor.json (v0.8 Tier A / D-093:
          read-if-present; never invoke. P1 advisory; never gates).
 
     DQ4 short-circuit semantics: a P3/P4/P5 fail (per _P0_VALIDATORS)
@@ -658,6 +706,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_cross_tenant_grounding(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"cross_tenant_grounding read raised: {exc}")
+
+    # 9. Curator figure-floor (v0.8 Tier A / D-093; read-if-present).
+    try:
+        findings.extend(_read_curator_figure_floor(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"curator_figure_floor read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)

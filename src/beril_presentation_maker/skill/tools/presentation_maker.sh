@@ -1659,12 +1659,23 @@ stage_curate_figures() {
   echo "" >&2
   echo "[Stage 3.5/5] curate_figures (no LLM)" >&2
 
+  # v0.8/D-093: if 02_substories.md exists, pass it to curate so the
+  # per-substory floor kicks in. The curator will guarantee ≥1 figure
+  # per substory when the inventory contains a candidate (matched by
+  # NB-id on the substory's analyses). May exceed mode budget by up
+  # to N_substories; per-substory coverage wins per D-093.
+  local _substories_arg=()
+  if [[ -f "$NARRATIVE_DIR/02_substories.md" ]]; then
+    _substories_arg=(--substories-path "$NARRATIVE_DIR/02_substories.md")
+  fi
+
   # NB: --no-md is a store_true flag (no value); omitting it = produce
   # markdown output, which is what we want.
   if "$PYTHON_BIN" "$TOOLS_DIR/curate_figures.py" curate \
       "$PROJECT_DIR" \
       --mode "$MODE" \
       --output-dir "$WORKING_DIR" \
+      "${_substories_arg[@]}" \
       >/dev/null 2>"$STAGE_LOGS_DIR/curate_figures.stderr"; then
     # v0.3.1: curate_figures.py writes directly to working/curated_figures.md
     # via --output-dir pointing at the working/ zone. The legacy
@@ -1676,6 +1687,36 @@ stage_curate_figures() {
     else
       echo "  warning: curate_figures.py produced no curated_figures.md" >&2
       # Don't fail — slide_compose's escape hatch handles missing figures
+    fi
+
+    # v0.8/D-093 Tier A: run check_curator_figure_floor.py to emit
+    # audit/curator_figure_floor.json with per-substory coverage
+    # findings. The validator is the suspenders to curate_for_mode's
+    # belt — catches drift when the per-substory floor heuristic
+    # misses a candidate. Advisory P1; never blocks the pipeline.
+    # Requires 02_substories.md (already present at this stage) +
+    # curated_figures.md (just written above).
+    if [[ -f "$NARRATIVE_DIR/02_substories.md" && -f "$CURATED_FIGURES" ]]; then
+      local _ffloor_inv=""
+      if [[ -f "$WORKING_DIR/figures_inventory.md" ]]; then
+        _ffloor_inv="--inventory $WORKING_DIR/figures_inventory.md"
+      fi
+      if "$PYTHON_BIN" "$TOOLS_DIR/check_curator_figure_floor.py" \
+          --project-dir "$PROJECT_DIR" \
+          --substories "$NARRATIVE_DIR/02_substories.md" \
+          --curated-figures "$CURATED_FIGURES" \
+          $_ffloor_inv \
+          --draft-dir "$OUTDIR" \
+          >/dev/null 2>"$STAGE_LOGS_DIR/check_curator_figure_floor.stderr"; then
+        if [[ -f "$AUDIT_DIR/curator_figure_floor.json" ]]; then
+          local _n_uncovered
+          _n_uncovered="$("$PYTHON_BIN" -c "import json,sys; d=json.load(open('$AUDIT_DIR/curator_figure_floor.json')); print(d.get('summary',{}).get('n_substories_uncovered',0))" 2>/dev/null || echo "?")"
+          echo "  -> figure-floor check: $_n_uncovered substory/ies uncovered (advisory)" >&2
+        fi
+      else
+        echo "  warning: check_curator_figure_floor.py exited non-zero — see $STAGE_LOGS_DIR/check_curator_figure_floor.stderr" >&2
+        cat "$STAGE_LOGS_DIR/check_curator_figure_floor.stderr" >&2 || true
+      fi
     fi
     return 0
   else
