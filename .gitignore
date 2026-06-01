@@ -54,3 +54,7 @@ reference/master-template-source/*.pptx
 # timestamp are operator-machine-specific, not shared across
 # the team).
 /audit/
+
+# Claude Code session-local state (not for version control)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
