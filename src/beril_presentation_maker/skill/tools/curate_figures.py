@@ -832,24 +832,54 @@ def curate_for_mode(
     target_count: int | None = None,
     substory_analyses: dict[str, list[str]] | None = None,
 ) -> CuratedFigureSelection:
-    """Pick a mode-bounded shortlist of figures from `inventory`.
+    """Pick a shortlist of figures from `inventory` for downstream
+    slide composition.
+
+    v0.8 Tier G.5 — Adam-clarified semantics (2026-06-01):
+    Figures are pre-generated assets sitting on disk. Including
+    one in the curated shortlist costs NOTHING; the only downstream
+    cost is the slide_compose LLM deciding whether to USE one on a
+    given slide (slide-budget territory). So the curator's job is
+    NOT to enforce a figure-count budget on the talk deck.
+
+    Two operating modes:
+
+      WITH `substory_analyses` (the talk-deck path, --substories-path
+      flag set): include EVERY inventory figure whose NB-ids match
+      ANY substory's analyses notebooks, ordered by source-strength.
+      MODE_FIGURE_BUDGETS is IGNORED for the selection size; the
+      `budget_min`/`budget_max` fields still reflect the mode's
+      paper-writer-parity numbers for reporting consistency.
+      Rationale: the v0.8 Tier-G live read on ibd_phage_targeting
+      draft_10 found S1+S2 had ZERO data_figure slides because the
+      budget-bound 7-figure pick happened to land entirely on NB11-
+      NB17 (S3 territory). With substory_analyses, the curator now
+      surfaces ~25-30 figures across all three substories, giving
+      slide_compose real choice per substory.
+
+      WITHOUT `substory_analyses` (paper-writer parity, no --substories-path):
+      keep the legacy MODE_FIGURE_BUDGETS behavior — pick top-N by
+      source-strength up to the mode's `default` target_count
+      (clamped to `[min, max]` if `target_count` is overridden).
+      The per-substory floor never engages because there are no
+      substories defined.
 
     Args:
       inventory: FigureInventoryReport from extract_figures().
       mode: One of MODE_FIGURE_BUDGETS keys (talk-30 / talk-15 / ...).
-      target_count: Override the mode's default target. Clamped to the
-        mode's [min, max] range; ignored if outside.
-      substory_analyses: v0.8/D-093 per-substory floor. When provided,
-        maps {substory_id: [analysis_notebook_filename, ...]} from
-        02_substories.md. For each substory with ≥1 NB-id candidate in
-        the inventory, the curator GUARANTEES ≥1 figure for that
-        substory in the selection. May exceed the mode's target_count
-        by up to N_substories — per D-093, per-substory coverage wins
-        over budget. When None (default — paper-writer parity), the
-        budget is the hard ceiling.
+        Still required for the report's budget_min/budget_max
+        metadata + the legacy fallback path.
+      target_count: Legacy fallback only — override the mode's
+        default target when substory_analyses is None. Ignored when
+        substory_analyses is supplied (the substory-driven path
+        ignores numeric budgets).
+      substory_analyses: When provided, switches the curator to
+        substory-driven mode (no figure-count budget; include all
+        substory-relevant figures).
 
     Returns:
-      CuratedFigureSelection.
+      CuratedFigureSelection. With substory_analyses, `target_count`
+      reflects the actual size of the selection (could be 25-30+).
 
     Raises:
       ValueError: if mode is unknown.
@@ -859,56 +889,38 @@ def curate_for_mode(
             f"unknown mode '{mode}'; valid: {sorted(MODE_FIGURE_BUDGETS.keys())}"
         )
     lo, hi, default = MODE_FIGURE_BUDGETS[mode]
-    if target_count is None:
-        target = default
-    else:
-        target = max(lo, min(hi, target_count))
 
     # Sort by score (descending tier, then filename)
     ranked = sorted(inventory.figures,
                     key=lambda r: _figure_score(r), reverse=True)
-    selected = list(ranked[:target])
 
-    # v0.8/D-093: per-substory floor. After the budget-bounded pick,
-    # ensure every substory with ≥1 candidate figure in the inventory
-    # has ≥1 figure in `selected`. If not, promote the highest-scoring
-    # unselected candidate for that substory.
-    #
-    # Why this can't be done by sorting alone: the budget-bounded
-    # top-N pick may exhaust on figures matching ONE substory's
-    # analyses (when that substory's notebooks dominate the
-    # REPORT.md-referenced tier), starving other substories. The
-    # post-pick repair is bounded — at most one promotion per
-    # substory — so the selection can grow by ≤ N_substories.
     if substory_analyses:
-        selected_ids = {f.path for f in selected}
-        # Pre-compute each figure's NB-ids once.
-        fig_nb_ids = {f.path: _figure_nb_ids(f) for f in inventory.figures}
-        for sid, analyses in substory_analyses.items():
-            sub_ids = _substory_nb_ids(analyses)
-            if not sub_ids:
-                continue
-            # Any selected figure already covers this substory?
-            covered = any(
-                fig_nb_ids[f.path] & sub_ids for f in selected)
-            if covered:
-                continue
-            # Find best unselected candidate for this substory.
-            candidates = [
+        # v0.8 Tier G.5 substory-driven mode: include EVERY figure
+        # whose NB-ids match ANY substory's analyses. No budget cap.
+        # The selection is still source-strength-ordered.
+        all_substory_nb_ids: set[str] = set()
+        for analyses in substory_analyses.values():
+            all_substory_nb_ids |= _substory_nb_ids(analyses)
+        if all_substory_nb_ids:
+            selected = [
                 f for f in ranked
-                if f.path not in selected_ids
-                and fig_nb_ids[f.path] & sub_ids
+                if _figure_nb_ids(f) & all_substory_nb_ids
             ]
-            if not candidates:
-                # No inventory figure covers this substory.
-                # The validator will catch this only if there
-                # IS a candidate; here there isn't, so nothing to
-                # do — let downstream emit a different finding if
-                # the substory's contract requires a figure.
-                continue
-            promoted = candidates[0]  # ranked-sorted
-            selected.append(promoted)
-            selected_ids.add(promoted.path)
+        else:
+            # Defensive: substory_analyses passed but no parseable
+            # NB-ids (e.g., empty analyses on every substory). Fall
+            # back to the legacy budget pick rather than emit an
+            # empty curated_figures.md.
+            selected = list(ranked[:default])
+    else:
+        # Legacy fallback path (paper-writer parity, no
+        # --substories-path): apply MODE_FIGURE_BUDGETS as a hard
+        # ceiling on the top-N source-strength pick.
+        if target_count is None:
+            target = default
+        else:
+            target = max(lo, min(hi, target_count))
+        selected = list(ranked[:target])
 
     return CuratedFigureSelection(
         mode=mode,
@@ -925,14 +937,37 @@ def format_curated_figures_md(selection: CuratedFigureSelection) -> str:
     out: list[str] = []
     out.append(f"# Figures Curated for `{selection.mode}`")
     out.append("")
-    out.append(
-        f"Mode-bounded shortlist of {selection.target_count} figures "
-        f"(budget {selection.budget_min}-{selection.budget_max}; "
-        f"inventory had {selection.inventory_size}). The slide-compose "
-        f"prompt makes the final throughline-aware selection from this "
-        f"curated set; figures NOT in the shortlist are still in the full "
-        f"inventory at `figures_inventory.md` if a re-curation is needed."
-    )
+    # v0.8 Tier G.5: under substory-driven mode the selection is
+    # NOT budget-bound — it's "every figure whose NB-ids match a
+    # substory analysis." When the count is ≤ budget_max we keep
+    # the legacy framing for backwards-compatibility readability;
+    # when it exceeds budget_max, we surface the substory-driven
+    # mode in the header so the slide_compose-author (LLM or human)
+    # understands they're seeing a substory-scoped inventory, not a
+    # budget-bound shortlist.
+    if selection.target_count > selection.budget_max:
+        out.append(
+            f"Substory-scoped figure inventory: "
+            f"{selection.target_count} figures from a "
+            f"{selection.inventory_size}-figure inventory, ordered "
+            f"by source-strength. v0.8 Tier G.5 — figures don't have "
+            f"a budget on talk decks; every figure matching ANY "
+            f"substory's analyses NB-ids is surfaced for slide_compose "
+            f"to choose from. (Mode budget for paper-writer parity: "
+            f"{selection.budget_min}-{selection.budget_max} figures; "
+            f"NOT enforced here.) The slide-compose prompt makes the "
+            f"per-slide selection; figures NOT picked stay in the "
+            f"full inventory at `figures_inventory.md`."
+        )
+    else:
+        out.append(
+            f"Mode-bounded shortlist of {selection.target_count} figures "
+            f"(budget {selection.budget_min}-{selection.budget_max}; "
+            f"inventory had {selection.inventory_size}). The slide-compose "
+            f"prompt makes the final throughline-aware selection from this "
+            f"curated set; figures NOT in the shortlist are still in the full "
+            f"inventory at `figures_inventory.md` if a re-curation is needed."
+        )
     out.append("")
     if not selection.selected:
         out.append("_(no figures available)_")

@@ -288,43 +288,51 @@ def test_curate_for_mode_promotes_uncovered_substory_candidate(cf, tmp_path):
     ]
     inv = _make_inventory(cf, tmp_path, figs)
     substories = {
-        "S1": ["NB01_a.ipynb", "NB02_b.ipynb"],   # covered by top-4
-        "S2": ["NB99_z.ipynb"],                    # NEEDS promotion
+        "S1": ["NB01_a.ipynb", "NB02_b.ipynb"],   # NB01 + NB02 in inventory
+        "S2": ["NB99_z.ipynb"],                    # NB99 in inventory
     }
     sel = cf.curate_for_mode(inv, "talk-15",
                              substory_analyses=substories)
-    # Promoted: 4 baseline + 1 promotion for S2 = 5 selected
-    assert len(sel.selected) == 5, (
-        f"expected 5 selected (4 baseline + 1 S2 promotion); "
-        f"got {len(sel.selected)}: {[f.path for f in sel.selected]}")
+    # v0.8 Tier G.5: substory-driven mode includes EVERY figure
+    # whose NB-ids match any substory's analyses. Here that's
+    # NB01_x, NB02_x, NB99_y (NB03_x and NB04_x don't match any
+    # substory's analyses and are SKIPPED).
     paths = {f.path for f in sel.selected}
+    assert "figures/NB01_x.png" in paths
+    assert "figures/NB02_x.png" in paths
     assert "figures/NB99_y.png" in paths, (
-        f"NB99 figure should be promoted for S2; selected: {paths}")
+        f"NB99 figure should be included for S2; selected: {paths}")
+    assert "figures/NB03_x.png" not in paths, (
+        "NB03_x doesn't match any substory's NB-ids; should NOT be included")
+    assert "figures/NB04_x.png" not in paths
 
 
 def test_curate_for_mode_skips_substory_with_no_inventory_candidate(cf, tmp_path):
-    """A substory whose analyses cite a notebook with NO figures in
-    inventory cannot be covered — curate_for_mode must NOT make
-    something up. Selection stays at the budget."""
+    """v0.8 Tier G.5: a substory whose analyses cite a notebook with
+    NO figures in inventory cannot be covered — curate_for_mode must
+    NOT make something up. The included set is figures matching ANY
+    substory's NB-ids."""
     figs = [
         _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
         for i in range(1, 4)  # NB01, NB02, NB03
     ]
     inv = _make_inventory(cf, tmp_path, figs)
     substories = {
-        "S1": ["NB01_a.ipynb"],   # covered
-        "S2": ["NB99_z.ipynb"],   # NO candidate in inventory
+        "S1": ["NB01_a.ipynb"],   # NB01 in inventory
+        "S2": ["NB99_z.ipynb"],   # NO NB99 in inventory
     }
     sel = cf.curate_for_mode(inv, "talk-15",
                              substory_analyses=substories)
-    # All 3 figures selected; no promotion (no NB99 in inv)
-    assert len(sel.selected) == 3
+    # Only NB01_x matches; NB02_x and NB03_x are unreferenced; NB99 isn't there
     paths = {f.path for f in sel.selected}
-    assert "figures/NB99_y.png" not in paths
+    assert paths == {"figures/NB01_x.png"}, (
+        f"only NB01_x matches any substory's analyses; got: {paths}")
 
 
-def test_curate_for_mode_promotes_one_per_uncovered_substory(cf, tmp_path):
-    """3 substories all uncovered → 3 promotions; final count = budget + 3."""
+def test_curate_for_mode_includes_all_substory_relevant_figures(cf, tmp_path):
+    """v0.8 Tier G.5: when 4 substories each cite a different
+    notebook with figures in inventory, ALL 4 figures land in the
+    selection (no budget cap when substory_analyses is supplied)."""
     figs = [
         _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
         for i in range(1, 5)
@@ -335,24 +343,26 @@ def test_curate_for_mode_promotes_one_per_uncovered_substory(cf, tmp_path):
     ]
     inv = _make_inventory(cf, tmp_path, figs)
     substories = {
-        "S1": ["NB01_a.ipynb"],     # covered (NB01 in top-4)
-        "S2": ["NB10_a.ipynb"],     # promote
-        "S3": ["NB11_b.ipynb"],     # promote
-        "S4": ["NB12_c.ipynb"],     # promote
+        "S1": ["NB01_a.ipynb"],
+        "S2": ["NB10_a.ipynb"],
+        "S3": ["NB11_b.ipynb"],
+        "S4": ["NB12_c.ipynb"],
     }
     sel = cf.curate_for_mode(inv, "talk-15",
                              substory_analyses=substories)
-    # 4 baseline + 3 promotions = 7
-    assert len(sel.selected) == 7
     paths = {f.path for f in sel.selected}
-    assert {"figures/NB10_y.png", "figures/NB11_y.png",
-            "figures/NB12_y.png"}.issubset(paths)
+    # NB01 + NB10 + NB11 + NB12 (the 4 substory-relevant figures)
+    # NB02/NB03/NB04 are NOT included (don't match any substory)
+    assert paths == {"figures/NB01_x.png", "figures/NB10_y.png",
+                     "figures/NB11_y.png", "figures/NB12_y.png"}, (
+        f"expected exactly the 4 substory-matching figures; got: {paths}")
 
 
 def test_curate_for_mode_nb_id_matches_letter_suffix(cf, tmp_path):
     """NB04b_* and NB04h_* both group under NB04 (mirrors
     check_figure_provenance.py matching rule). A substory citing
-    NB04b should be covered by a NB04h figure in inventory."""
+    NB04b should match a NB04h figure in inventory under the v0.8
+    Tier G.5 substory-driven semantics."""
     figs = [
         _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
         for i in range(1, 5)
@@ -360,21 +370,96 @@ def test_curate_for_mode_nb_id_matches_letter_suffix(cf, tmp_path):
         _make_figure(cf, "figures/NB04h_external.png", ("notebook_md",)),
     ]
     inv = _make_inventory(cf, tmp_path, figs)
-    # S2 cites NB04b — already covered by NB04_x in the baseline pick
-    # (NB04 prefix matches both NB04 and NB04b/h), so NO promotion needed.
     substories = {
         "S1": ["NB01_a.ipynb"],
         "S2": ["NB04b_refit.ipynb"],
     }
     sel = cf.curate_for_mode(inv, "talk-15",
                              substory_analyses=substories)
-    # 4 baseline; no promotion (NB04_x already covers S2 via NB04 prefix)
+    paths = {f.path for f in sel.selected}
+    # NB01_x matches S1; NB04_x AND NB04h_external both match S2
+    # (both share NB04 prefix). NB02/NB03 don't match any substory.
+    assert "figures/NB01_x.png" in paths
+    assert "figures/NB04_x.png" in paths
+    assert "figures/NB04h_external.png" in paths
+    assert "figures/NB02_x.png" not in paths
+    assert "figures/NB03_x.png" not in paths
+
+
+def test_curate_for_mode_no_budget_cap_when_substory_analyses_supplied(
+        cf, tmp_path):
+    """v0.8 Tier G.5: when substory_analyses is supplied, the mode
+    budget (talk-15 default=4, max=6) is NOT a cap. If 12 figures
+    match substory analyses, all 12 land in the selection.
+
+    Live failure that motivated this: ibd_phage_targeting draft_10 —
+    7 budget-bound figures all from NB11-NB17 (S3 territory),
+    leaving S1+S2 with ZERO data_figure slides despite ~25 inventory
+    figures matching their analyses. Figures don't have a budget on
+    talk decks (Adam, 2026-06-01)."""
+    # Build inventory with 12 figures, all matching the same substory
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 13)  # NB01..NB12, all REPORT-tier
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    substories = {
+        "S1": [f"NB{i:02d}_x.ipynb" for i in range(1, 13)],
+    }
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # All 12 figures match S1's analyses → all 12 included.
+    # talk-15 budget is 3-6 (default 4); 12 > 6 — budget IGNORED.
+    assert len(sel.selected) == 12, (
+        f"substory-driven mode must surface ALL substory-matching "
+        f"figures regardless of mode budget; expected 12, got "
+        f"{len(sel.selected)}")
+    # Budget metadata still reflects mode's paper-writer numbers
+    # (kept for reporting consistency)
+    assert sel.budget_min == 3
+    assert sel.budget_max == 6
+
+
+def test_curate_for_mode_legacy_budget_when_no_substory_analyses(
+        cf, tmp_path):
+    """v0.8 Tier G.5: backwards-compatible behavior. Without
+    substory_analyses, MODE_FIGURE_BUDGETS still acts as the hard
+    ceiling — paper-writer parity preserved."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 13)  # NB01..NB12
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    sel = cf.curate_for_mode(inv, "talk-15")  # no substory_analyses
+    # talk-15 default = 4
+    assert len(sel.selected) == 4, (
+        f"without substory_analyses, mode budget IS the ceiling; "
+        f"talk-15 default=4; got {len(sel.selected)}")
+
+
+def test_curate_for_mode_falls_back_to_budget_on_empty_substory_analyses(
+        cf, tmp_path):
+    """v0.8 Tier G.5 defensive: when substory_analyses is supplied
+    but contains no parseable NB-ids (e.g., empty analyses on every
+    substory), fall back to the legacy budget pick rather than
+    emit an empty selection."""
+    figs = [
+        _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
+        for i in range(1, 13)
+    ]
+    inv = _make_inventory(cf, tmp_path, figs)
+    # All substories have empty analyses (no NB references)
+    substories = {"S1": [], "S2": [], "S3": []}
+    sel = cf.curate_for_mode(inv, "talk-15",
+                             substory_analyses=substories)
+    # Falls back to default budget = 4
     assert len(sel.selected) == 4
 
 
-def test_curate_for_mode_uses_highest_score_promotion(cf, tmp_path):
-    """When multiple NB-id-matching candidates exist for an uncovered
-    substory, the highest-scoring one is promoted."""
+def test_curate_for_mode_orders_by_source_strength(cf, tmp_path):
+    """v0.8 Tier G.5: substory-driven mode preserves source-strength
+    ordering. When multiple figures match the same substory, the
+    REPORT-tier ones come first; the filename-only ones come last."""
     figs = [
         _make_figure(cf, f"figures/NB{i:02d}_x.png", ("report",))
         for i in range(1, 5)
@@ -391,10 +476,16 @@ def test_curate_for_mode_uses_highest_score_promotion(cf, tmp_path):
     }
     sel = cf.curate_for_mode(inv, "talk-15",
                              substory_analyses=substories)
-    paths = {f.path for f in sel.selected}
-    # The REPORT-tier one should be promoted, not the filename-only one
+    paths = [f.path for f in sel.selected]
+    # Both NB99 figures included; REPORT-tier one comes before
+    # filename-only one in the source-strength order
     assert "figures/NB99_high.png" in paths
-    assert "figures/NB99_low.png" not in paths
+    assert "figures/NB99_low.png" in paths
+    high_idx = paths.index("figures/NB99_high.png")
+    low_idx = paths.index("figures/NB99_low.png")
+    assert high_idx < low_idx, (
+        f"REPORT-tier NB99 should come before filename-only NB99; "
+        f"got paths order: {paths}")
 
 
 def test_curate_for_mode_skips_substory_with_no_nb_ids(cf, tmp_path):
