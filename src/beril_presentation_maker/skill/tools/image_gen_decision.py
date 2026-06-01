@@ -689,6 +689,26 @@ def llm_judge(
     response). Latency: 2-5s typical, 60s timeout.
     """
     if shutil.which("claude") is None:
+        # v0.8 Tier G.4: log diagnostics on the fallback path. This
+        # fired transiently on draft_10 (3 of 12 judge calls) with no
+        # reproducible cause on retry — likely PATH env mutation
+        # mid-batch from a transient OS-level issue. Log enough
+        # context to root-cause next recurrence: PATH itself, cwd,
+        # PID, and the slide_id under judgment (so we can correlate
+        # against the orchestrator timeline).
+        import os
+        import sys
+        slide_id = slide_stub.get("slide_id", "?")
+        path_env = os.environ.get("PATH", "<unset>")
+        path_summary = (
+            f"len={len(path_env)} entries={path_env.count(':') + 1 if path_env else 0}"
+        )
+        print(
+            f"[image_gen_decision diag] shutil.which('claude') returned None "
+            f"for slide_id={slide_id} (pid={os.getpid()}, cwd={os.getcwd()}, "
+            f"PATH {path_summary}, PATH_head={path_env[:200]!r})",
+            file=sys.stderr,
+        )
         return False, "claude CLI not on PATH; default no"
 
     prompt = _build_judge_prompt(slide_stub, tier, mode)

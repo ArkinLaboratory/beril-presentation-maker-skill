@@ -483,6 +483,32 @@ class TestLLMJudgeHelper:
         assert emit is False
         assert "claude CLI not on PATH" in reason
 
+    def test_llm_judge_logs_diagnostics_on_path_fallback(
+            self, monkeypatch, capsys):
+        """v0.8 Tier G.4: when shutil.which('claude') returns None,
+        log diagnostic context to stderr so the next recurrence of
+        the transient PATH-env-corruption issue (live-discovered on
+        draft_10) has enough data to root-cause.
+
+        Pin: stderr contains the diagnostic marker, the slide_id
+        under judgment, the PID, and PATH summary."""
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        stub = _stub("claim_evidence")
+        stub_with_id = {**stub, "slide_id": "intro-pos1"}
+        emit, reason = igd.llm_judge(stub_with_id, "STRONG", "talk-30")
+        captured = capsys.readouterr()
+        assert "[image_gen_decision diag]" in captured.err, (
+            f"diagnostic marker missing from stderr; got: {captured.err!r}")
+        assert "intro-pos1" in captured.err, (
+            "slide_id must appear in diagnostic so operator can "
+            "correlate against orchestrator timeline")
+        assert "pid=" in captured.err, (
+            "PID must appear so operator can correlate against the "
+            "orchestrator process tree")
+        assert "PATH" in captured.err, (
+            "PATH summary must appear so operator can see whether "
+            "PATH was unset, truncated, or just missing claude")
+
     def test_llm_judge_parses_yes_response(self, monkeypatch):
         from unittest.mock import MagicMock
         monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/claude")
