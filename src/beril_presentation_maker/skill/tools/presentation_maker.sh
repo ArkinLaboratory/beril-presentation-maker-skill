@@ -175,6 +175,18 @@
 #                            Use this flag to skip; the standalone
 #                            stage_adversarial_review still runs unless
 #                            --no-adversarial is also set.
+#   --revise-severity-floor P0|P1|P2
+#                            v0.8 Tier G.6: severity floor for the
+#                            revise loop (default P1; was hard-pinned
+#                            P0 in v0.7). P0 = only revise critical
+#                            findings (strict mode, very few revisions
+#                            per cycle); P1 = revise critical + load-
+#                            bearing findings (default; matches what
+#                            revise_slide.v1 was designed for); P2 =
+#                            also revise minor register-drift +
+#                            two_column_compare findings. Cost still
+#                            bounded by --max-revisions +
+#                            --max-revise-cost-usd.
 #   --help                   Show this message
 #
 # Subcommands:
@@ -216,6 +228,16 @@ DRAFT_DIR_OVERRIDE="" # required when RESUME_FROM is set
 NO_ADVERSARIAL=0      # 2026-04-29 v0.3.0: skip adversarial review + revise loop
 MAX_REVISE_COST_USD="5.00"  # cost cap for revise loop (per-run)
 MAX_REVISIONS=6       # max findings the revise loop will process per run
+# v0.8 Tier G.6 — severity floor for revise loop (Adam-clarified
+# semantics 2026-06-01). Was hard-pinned to P0; live discovery on
+# draft_11 showed P0-only filtering means revise_loop runs once
+# per cycle (and only on quantitative P0s, which surface_only
+# routes back out — so net zero revisions). P1 default catches
+# the substory_arc / register_drift / qa_softball / missing_slide
+# findings that revise_slide.v1 was designed for. Cost still
+# bounded by MAX_REVISIONS + MAX_REVISE_COST_USD caps. Operators
+# who want strict-P0-only can override with --revise-severity-floor.
+REVISE_SEVERITY_FLOOR=P1
 
 # v0.3.3 image-gen flags
 NO_IMAGES=0                   # skip image_gen stage entirely
@@ -480,6 +502,10 @@ while [[ $# -gt 0 ]]; do
     --no-adversarial)    NO_ADVERSARIAL=1; shift ;;
     --max-revise-cost-usd) MAX_REVISE_COST_USD="$2"; shift 2 ;;
     --max-revisions)     MAX_REVISIONS="$2"; shift 2 ;;
+    # v0.8 Tier G.6 — revise loop severity floor (default P1 since
+    # v0.8; was hard-pinned P0 in v0.7. Override to P0 for strict
+    # mode or P2 to also revise minor register-drift findings.)
+    --revise-severity-floor) REVISE_SEVERITY_FLOOR="$2"; shift 2 ;;
     # v0.3.3 image-gen flags
     --no-images)             NO_IMAGES=1; shift ;;
     --auto-approve-images)   AUTO_APPROVE_IMAGES=1; shift ;;
@@ -529,6 +555,10 @@ esac
 case "$TIER" in
   STRONG|THIN|EXPLORATORY) ;;
   *) echo "Error: invalid --tier '$TIER'" >&2; exit 1 ;;
+esac
+case "$REVISE_SEVERITY_FLOOR" in
+  P0|P1|P2) ;;
+  *) echo "Error: invalid --revise-severity-floor '$REVISE_SEVERITY_FLOOR' (P0|P1|P2)" >&2; exit 1 ;;
 esac
 
 # v0.8/D-096 — mode-aware visual-QA auto-on. Flip VISUAL_QA from 0
@@ -3230,10 +3260,10 @@ stage_revise_slides() {
   local stream_flag=""
   if [[ $NO_STREAM -eq 1 ]]; then stream_flag="--no-stream"; fi
 
-  echo "  invoking revise_loop.py (max-revisions=$MAX_REVISIONS, max-cost-usd=$MAX_REVISE_COST_USD)" >&2
+  echo "  invoking revise_loop.py (max-revisions=$MAX_REVISIONS, max-cost-usd=$MAX_REVISE_COST_USD, severity-floor=$REVISE_SEVERITY_FLOOR)" >&2
   "$PYTHON_BIN" "$TOOLS_DIR/revise_loop.py" \
     "$OUTDIR" \
-    --severity-floor P0 \
+    --severity-floor "$REVISE_SEVERITY_FLOOR" \
     --max-revisions "$MAX_REVISIONS" \
     --max-cost-usd "$MAX_REVISE_COST_USD" \
     --model "$MODEL" \
