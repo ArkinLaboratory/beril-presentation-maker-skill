@@ -1,0 +1,162 @@
+"""Tests for v0.8 Tier G.7 orchestrator wiring: stage_visual_qa_final
+runs after stage_revise_slides and performs the post-revise
+visual-QA gate + second revise pass.
+
+Source-level pins only — runtime exec of the full stage would require
+a real visual_qa.py invocation against a real .pptx (expensive).
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ORCH_SH = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
+           / "tools" / "presentation_maker.sh")
+
+
+def test_stage_visual_qa_final_function_defined():
+    """The stage_visual_qa_final() function must exist in the
+    orchestrator."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    assert "stage_visual_qa_final() {" in text, (
+        "stage_visual_qa_final function must be defined per Tier G.7")
+
+
+def test_stage_visual_qa_final_invoked_after_stage_revise_slides():
+    """Main-flow dispatch must call stage_visual_qa_final AFTER
+    stage_revise_slides (the post-revise visual-QA semantic)."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # Find the main-flow block where revise_slides is invoked.
+    # stage_visual_qa_final should appear in the same conditional
+    # block, AFTER the stage_revise_slides invocation.
+    revise_pos = text.rfind("stage_revise_slides ||")
+    assert revise_pos > 0, (
+        "stage_revise_slides invocation must exist in main flow")
+    # stage_visual_qa_final must be invoked NEXT in the same conditional
+    vq_final_pos = text.find("stage_visual_qa_final", revise_pos)
+    assert vq_final_pos > revise_pos, (
+        "stage_visual_qa_final must be invoked AFTER stage_revise_slides "
+        "(visual-QA judges the POST-revise deck per Tier G.7)")
+    # Check that nothing else intervenes — the two calls should be
+    # in the same conditional block. Search for a standalone `fi`
+    # keyword between them (lone word on a line, not part of a
+    # comment or longer identifier).
+    between = text[revise_pos:vq_final_pos]
+    has_closing_fi = bool(
+        re.search(r"^\s*fi\s*$", between, re.MULTILINE))
+    assert not has_closing_fi, (
+        "stage_visual_qa_final must be in the SAME conditional block "
+        "as stage_revise_slides (must run only when adversarial review "
+        "produced findings)")
+
+
+def test_stage_visual_qa_final_skips_when_visual_qa_disabled():
+    """The stage must respect the existing VISUAL_QA flag so
+    --no-visual-qa runs don't try to invoke visual_qa.py."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    # The stage's body must include a VISUAL_QA -ne 1 short-circuit
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    assert '"$VISUAL_QA" -ne 1' in body, (
+        "stage_visual_qa_final must skip when VISUAL_QA != 1 "
+        "(operator opted out via --no-visual-qa or non-audience mode)")
+
+
+def test_stage_visual_qa_final_writes_distinct_audit_paths():
+    """The final pass must write visual_qa_final.{json,md} so the
+    early-warning cascade output at visual_qa.{json,md} isn't
+    overwritten."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    assert "visual_qa_final.json" in body, (
+        "stage_visual_qa_final must write to visual_qa_final.json "
+        "(distinct from the cascade's pre-revise visual_qa.json)")
+    assert "--out-json" in body, (
+        "stage_visual_qa_final must use visual_qa.py's --out-json flag "
+        "to write the final pass's output to a distinct path")
+
+
+def test_stage_visual_qa_final_invokes_merge_tool():
+    """The stage must invoke merge_visual_qa_into_review.py to
+    append synthetic adversarial-shape findings before the second
+    revise pass."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    assert "merge_visual_qa_into_review.py" in body, (
+        "stage_visual_qa_final must invoke the merge tool to fold "
+        "visual-QA findings into adversarial_review.json before the "
+        "second revise pass")
+
+
+def test_stage_visual_qa_final_invokes_second_revise_loop():
+    """After merging, the stage must invoke revise_loop.py again
+    (the 2nd revise pass)."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    # Look for the revise_loop.py invocation block inside the stage
+    assert "revise_loop.py" in body, (
+        "stage_visual_qa_final must invoke revise_loop.py for the "
+        "2nd revise pass on visual-QA findings")
+    # Same severity floor as the first pass
+    assert "$REVISE_SEVERITY_FLOOR" in body, (
+        "2nd revise pass must use the same REVISE_SEVERITY_FLOOR as "
+        "the first (consistent operator policy)")
+
+
+def test_stage_visual_qa_final_reassembles_when_revise_makes_changes():
+    """After the 2nd revise pass, if revisions were applied, the
+    deck must be re-assembled."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    assert "assemble_pptx.py" in body, (
+        "stage_visual_qa_final must re-assemble the deck after the "
+        "2nd revise pass applies changes")
+    assert "re-assembled deck" in body, (
+        "operator-visible stderr must announce the re-assemble step")
+
+
+def _extract_stage_body(text: str, fn_name: str) -> str:
+    """Extract a shell function body from the orchestrator source.
+    Returns text from the opening brace through the matching closing
+    brace (heredocs handled — only column-0 `}` outside a heredoc
+    counts as the end)."""
+    fn_start = text.find(f"{fn_name}() {{")
+    if fn_start < 0:
+        raise AssertionError(f"function {fn_name} not found")
+    lines = text[fn_start:].splitlines(keepends=True)
+    out_lines = [lines[0]]
+    in_heredoc = False
+    for line in lines[1:]:
+        out_lines.append(line)
+        if not in_heredoc:
+            if "<<EOF" in line:
+                in_heredoc = True
+            elif line.rstrip("\n") == "}":
+                break
+        else:
+            if line.rstrip("\n") == "EOF":
+                in_heredoc = False
+    return "".join(out_lines)
+
+
+# ---------------------------------------------------------------------------
+# visual_qa.py --out-json / --out-md flags (v0.8 Tier G.7 enabler)
+# ---------------------------------------------------------------------------
+
+def test_visual_qa_py_accepts_out_json_flag():
+    """visual_qa.py --help must document --out-json + --out-md per
+    v0.8 Tier G.7 (the orchestrator stage uses them to write the
+    post-revise pass output to a distinct path)."""
+    result = subprocess.run(
+        ["python", str(REPO_ROOT / "src" / "beril_presentation_maker"
+                       / "skill" / "tools" / "visual_qa.py"),
+         "--help"],
+        capture_output=True, text=True, timeout=10,
+    )
+    help_text = result.stdout + result.stderr
+    assert "--out-json" in help_text, (
+        "visual_qa.py must accept --out-json per v0.8 Tier G.7")
+    assert "--out-md" in help_text, (
+        "visual_qa.py must accept --out-md per v0.8 Tier G.7")

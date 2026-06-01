@@ -3323,6 +3323,155 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
 }
 
 # ==============================================================================
+# v0.8 Tier G.7 — visual-QA as final step on the REVISED deck
+# ==============================================================================
+#
+# Adam reframe 2026-06-01: visual-QA is the FINAL gate before
+# delivery, judging the post-revise deck. The first visual-QA pass
+# (in stage_review_cascade Tier-1) sees the PRE-revise render and
+# is early-warning advisory. This stage runs visual-QA on the
+# POST-revise render + merges findings into adversarial_review.json
+# + runs revise_loop once more to address them + re-assembles.
+#
+# Pipeline order after this stage lands:
+#   assemble → review_cascade (incl. EARLY visual-QA) → adversarial
+#   → revise(P1+) → re-assemble → visual-QA(FINAL on revised deck)
+#   → merge VQ findings → revise(2nd pass on VQ) → re-assemble → deliver
+#
+# Cost: ~$1 + ~30s/deck for visual-QA + ~$0.30-1.50 for 2nd revise.
+# Wall-clock: ~3-5min extra.
+#
+# Skipped when: --no-adversarial (no revise pipeline) OR
+# --skip-assembly (no deck to QA) OR --no-visual-qa (operator
+# explicitly disabled the visual-QA gate).
+stage_visual_qa_final() {
+  echo "" >&2
+  echo "──────────────────────────────────────────────────" >&2
+  echo "[Stage 14/14] visual_qa_final (Tier G.7 — post-revise QA gate)" >&2
+  echo "──────────────────────────────────────────────────" >&2
+
+  # Pre-flight: need a deck + an adversarial_review.json to augment.
+  if [[ ! -f "$DECK_PPTX" ]]; then
+    echo "  no deck at $DECK_PPTX; skipping visual_qa_final" >&2
+    return 0
+  fi
+  if [[ ! -f "$AUDIT_DIR/adversarial_review.json" ]]; then
+    echo "  no adversarial_review.json; skipping visual_qa_final" >&2
+    return 0
+  fi
+  if [[ "$VISUAL_QA" -ne 1 ]]; then
+    echo "  visual-QA disabled (--no-visual-qa or non-audience mode); skipping" >&2
+    return 0
+  fi
+
+  # 1. Run visual-QA against the (post-revise) deck. Output to
+  #    audit/visual_qa_final.json (distinct from the cascade's
+  #    pre-revise visual_qa.json).
+  local vq_final_json="$AUDIT_DIR/visual_qa_final.json"
+  local vq_final_md="$AUDIT_DIR/visual_qa_final.md"
+  echo "  running visual-QA on post-revise deck..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/visual_qa.py" \
+    "$OUTDIR" \
+    --out-json "$vq_final_json" \
+    --out-md "$vq_final_md" \
+    2>&1 | sed 's/^/    /' >&2 || true
+
+  if [[ ! -f "$vq_final_json" ]]; then
+    echo "  visual-QA produced no output; skipping merge" >&2
+    return 0
+  fi
+
+  local n_vq_findings
+  n_vq_findings=$("$PYTHON_BIN" -c "
+import json
+try:
+    d = json.load(open('$vq_final_json'))
+    print(len(d.get('findings') or []))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+
+  if [[ "$n_vq_findings" -eq 0 ]]; then
+    echo "  visual-QA found 0 findings on post-revise deck; no merge needed" >&2
+    return 0
+  fi
+
+  echo "  visual-QA found $n_vq_findings finding(s) on post-revise deck" >&2
+
+  # 2. Merge visual-QA findings into adversarial_review.json as
+  #    synthetic adversarial-shape entries.
+  echo "  merging visual-QA findings into adversarial_review.json..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/merge_visual_qa_into_review.py" \
+    --draft-dir "$OUTDIR" 2>&1 | sed 's/^/    /' >&2
+
+  # 3. Run revise_loop again on the augmented adversarial_review.json.
+  #    Same severity-floor as the first pass; the visual-QA-origin
+  #    findings have id-prefix "VQ" so they're processed alongside
+  #    the original F-prefixed adversarial findings.
+  echo "  running second revise pass (visual-QA findings)..." >&2
+  local stream_flag=""
+  if [[ $NO_STREAM -eq 1 ]]; then stream_flag="--no-stream"; fi
+
+  # Snapshot current revise_loop_metadata so we can diff before/after
+  # for the operator-visible summary.
+  local _meta_before="$AUDIT_DIR/revise_loop_metadata.pre_vq.json"
+  if [[ -f "$AUDIT_DIR/revise_loop_metadata.json" ]]; then
+    cp "$AUDIT_DIR/revise_loop_metadata.json" "$_meta_before"
+  fi
+
+  "$PYTHON_BIN" "$TOOLS_DIR/revise_loop.py" \
+    "$OUTDIR" \
+    --severity-floor "$REVISE_SEVERITY_FLOOR" \
+    --max-revisions "$MAX_REVISIONS" \
+    --max-cost-usd "$MAX_REVISE_COST_USD" \
+    --model "$MODEL" \
+    $stream_flag 2>&1 | sed 's/^/    /' >&2
+
+  local rc=$?
+  if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+    echo "  visual-QA-revise pass crashed (rc=$rc); deck is the pre-VQ-revise version" >&2
+    return 0
+  fi
+
+  # 4. If revise made changes, re-assemble. Same logic as
+  #    stage_revise_slides.
+  local meta="$AUDIT_DIR/revise_loop_metadata.json"
+  local n_changed=0
+  if [[ -f "$meta" ]]; then
+    n_changed=$("$PYTHON_BIN" -c "
+import json
+with open('$meta') as f:
+    m = json.load(f)
+print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
+" 2>/dev/null || echo "0")
+  fi
+
+  if [[ "$n_changed" -gt 0 ]]; then
+    echo "  visual-QA-revise applied $n_changed change(s); re-assembling deck..." >&2
+    local _vq_validate_stderr="$AUDIT_DIR/validate.post_vq_revise.stderr"
+    if ! "$PYTHON_BIN" "$TOOLS_DIR/slide_spec.py" validate "$SLIDE_SPEC" \
+          2> "$_vq_validate_stderr"; then
+      echo "  post-VQ-revise validation FAILED — spec at $SLIDE_SPEC" >&2
+      [[ -s "$_vq_validate_stderr" ]] && cat "$_vq_validate_stderr" >&2
+      return 0
+    fi
+    [[ -s "$_vq_validate_stderr" ]] && cat "$_vq_validate_stderr" >&2
+    "$PYTHON_BIN" "$TOOLS_DIR/assemble_pptx.py" \
+      "$SLIDE_SPEC" \
+      --out "$DECK_PPTX" \
+      --master "$SKILL_DIR/references/templates/kbase-presentation-master.pptx" || {
+      echo "  post-VQ-revise assemble_pptx FAILED" >&2
+      return 0
+    }
+    "$PYTHON_BIN" "$TOOLS_DIR/draft_paths.py" record-render-hash "$OUTDIR" \
+      >/dev/null 2>&1 || true
+    echo "  re-assembled deck: $DECK_PPTX" >&2
+  else
+    echo "  visual-QA-revise made no changes (all VQ findings surface-only or skipped)" >&2
+  fi
+}
+
+# ==============================================================================
 # Main flow
 # ==============================================================================
 
@@ -3535,6 +3684,14 @@ if [[ $NO_ADVERSARIAL -eq 0 && $SKIP_ASSEMBLY -eq 0 ]]; then
     if [[ -f "$ADVERSARIAL_REVIEW_JSON" ]]; then
       stage_revise_slides || {
         echo "[warn] revise_slides loop failed — slide_spec may be at backup" >&2
+      }
+      # v0.8 Tier G.7 — visual-QA as final gate on the REVISED deck.
+      # Runs visual-QA against the post-revise render + merges
+      # findings into adversarial_review.json + runs revise_loop
+      # again on the augmented review. Skipped automatically when
+      # VISUAL_QA=0 (non-audience modes or operator opt-out).
+      stage_visual_qa_final || {
+        echo "[warn] visual_qa_final stage failed — deck is the post-first-revise version" >&2
       }
     else
       echo "[skip] revise_slides — no $ADVERSARIAL_REVIEW_JSON present" >&2

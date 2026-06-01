@@ -383,6 +383,8 @@ def run_visual_qa(
     reuse_pptx: bool = False,
     claude_bin: str = "claude",
     model: str = DEFAULT_MODEL,
+    out_json_override: Path | None = None,
+    out_md_override: Path | None = None,
 ) -> int:
     """Run the full pipeline end-to-end. Always returns 0 (advisory).
 
@@ -391,8 +393,13 @@ def run_visual_qa(
     a single-line stderr summary, and returns 0.
     """
     audit_dir = draft_dir / "audit"
-    out_json = audit_dir / "visual_qa.json"
-    out_md = audit_dir / "visual_qa.md"
+    # v0.8 Tier G.7 — allow callers to override output paths via the
+    # new --out-json / --out-md CLI flags (default: audit/visual_qa.{json,md}).
+    # The orchestrator's stage_visual_qa_final passes
+    # audit/visual_qa_final.{json,md} so the post-revise visual-QA
+    # pass doesn't overwrite the early-warning cascade output.
+    out_json = out_json_override or (audit_dir / "visual_qa.json")
+    out_md = out_md_override or (audit_dir / "visual_qa.md")
     pngs_dir = audit_dir / "visual_qa_pngs"
 
     # --- 1. Probe toolchain ---
@@ -587,6 +594,16 @@ def main(argv: list[str] | None = None) -> int:
                         f"{DEFAULT_MODEL}).")
     p.add_argument("--claude-bin", default="claude",
                    help="Path to the claude CLI (default: claude on PATH).")
+    # v0.8 Tier G.7 — output-path overrides for callers (orchestrator's
+    # stage_visual_qa_final uses these to write audit/visual_qa_final.{json,md}
+    # so the post-revise visual-QA pass doesn't overwrite the early-warning
+    # cascade output at audit/visual_qa.{json,md}.
+    p.add_argument(
+        "--out-json", type=Path, default=None,
+        help="Override JSON output path (default: DRAFT/audit/visual_qa.json).")
+    p.add_argument(
+        "--out-md", type=Path, default=None,
+        help="Override markdown output path (default: DRAFT/audit/visual_qa.md).")
     args = p.parse_args(argv)
 
     draft = Path(args.draft_dir)
@@ -597,6 +614,8 @@ def main(argv: list[str] | None = None) -> int:
         reuse_pptx=args.reuse_pptx,
         claude_bin=args.claude_bin,
         model=args.model,
+        out_json_override=args.out_json,
+        out_md_override=args.out_md,
     )
 
 
