@@ -160,7 +160,12 @@ def _extract_auto_on_block() -> str:
     copy."""
     text = ORCH_SH.read_text(encoding="utf-8")
     start_marker = "# v0.8/D-096 — mode-aware visual-QA auto-on"
-    end_marker = "# v0.4 M2:"
+    # Stop BEFORE the v0.8 Tier G.3 implication block that was
+    # interleaved after D-096 in commit (this file). Without the
+    # tighter end marker, the extractor would include the G.3 block
+    # which references $AUTO_ADVANCE — undefined in this test's
+    # synthetic env → unbound-variable error under `set -euo pipefail`.
+    end_marker = "# v0.8 Tier G.3 — --auto-advance"
     start = text.find(start_marker)
     end = text.find(end_marker, start)
     if start < 0 or end < 0:

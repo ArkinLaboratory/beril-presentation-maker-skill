@@ -41,6 +41,11 @@
 #   --auto-advance           Skip interactive gates: pick TL1 throughline,
 #                            escalate-mode on overflow. Use for unattended
 #                            smoke runs against known-shape projects.
+#                            v0.8 Tier G.3: implies --auto-approve-images
+#                            unless --no-images is also set, because
+#                            unattended runs have no TTY for the per-slide
+#                            approval gate (the gate's EOF-quit behavior
+#                            would skip all images silently otherwise).
 #   --skip-assembly          Stop after fragment merge; do not run
 #                            assemble_pptx.py.
 #   --model <model>          Override claude model (default: sonnet)
@@ -68,6 +73,10 @@
 #   --no-images              Skip image_gen stage entirely (v0.3.3).
 #   --auto-approve-images    Bypass per-slide approval gate for image_gen
 #                            (CI / power users). Cost cap still enforced.
+#                            v0.8 Tier G.3: auto-set when --auto-advance
+#                            is passed; explicit --auto-approve-images
+#                            still useful for interactive runs where the
+#                            operator wants to skip per-slide review.
 #   --image-allow-exploratory
 #                            Allow concept_illustration on EXPLORATORY tier
 #                            (default: skipped per architecture R6).
@@ -538,6 +547,31 @@ if [[ "$VISUAL_QA" -eq 0 && "$NO_VISUAL_QA" -eq 0 ]]; then
          "(audience-facing mode; ~\$1 + ~30s/deck; --no-visual-qa " \
          "to opt out)" >&2
   fi
+fi
+
+# v0.8 Tier G.3 — --auto-advance implies --auto-approve-images.
+# Live discovery 2026-05-31 on ibd_phage_targeting draft_8:
+# operator passed --auto-advance (intent: unattended run) but not
+# --auto-approve-images. Image_gen produced a clean ai_image_prompt
+# for intro-pos0 ($0.27 spent), then the per-slide approval gate
+# hit EOFError on stdin (background bash, no TTY), returned
+# Verdict.QUIT, and the loop broke after 1 slide. Result: 1 emit=true
+# slide processed (out of 2), 0 images generated, $0.27 in
+# ai_image_prompt cost wasted.
+#
+# Fix: when --auto-advance is set AND --auto-approve-images is NOT
+# set AND --no-images is NOT set, auto-set AUTO_APPROVE_IMAGES=1.
+# The semantic principle: "unattended" implies "don't gate on TTY
+# prompts." Operators who want unattended + no images can pass
+# --no-images explicitly; operators who want per-slide gating need
+# interactive context anyway.
+if [[ "$AUTO_ADVANCE" -eq 1 && "$AUTO_APPROVE_IMAGES" -eq 0 \
+      && "$NO_IMAGES" -eq 0 ]]; then
+  AUTO_APPROVE_IMAGES=1
+  echo "[v0.8 Tier G.3] --auto-advance implies --auto-approve-images " \
+       "(no TTY in unattended runs; approval gate would EOF-quit on " \
+       "the first slide and silently skip the rest). Pass --no-images " \
+       "to skip image-gen entirely." >&2
 fi
 
 # v0.4 M2: which clustering stage runs at the substory slot.
