@@ -222,6 +222,7 @@ def merge(
     visual_qa_path: Path,
     review_path: Path,
     slide_spec_path: Path,
+    vq_only_review_path: Path | None = None,
 ) -> tuple[int, int]:
     """Read visual-QA findings + append to adversarial review.
 
@@ -229,6 +230,15 @@ def merge(
     place (with idempotency via dedupe). Raises FileNotFoundError if
     either input is missing; that's a hard error (caller should have
     checked).
+
+    v0.8 Tier G.8 — when `vq_only_review_path` is supplied, ALSO writes
+    a standalone adversarial-review-shaped JSON containing ONLY the
+    synthetic VQ findings. This file is used by the orchestrator's
+    2nd revise loop pass so it doesn't re-iterate the original
+    F-prefixed findings and exhaust max_revisions before reaching any
+    VQ finding (the G.7 architectural bug live-discovered on draft_12).
+    The merged review_path still gets the VQ findings appended for
+    cascade-reader / next_actions consumption.
     """
     if not visual_qa_path.is_file():
         raise FileNotFoundError(
@@ -240,6 +250,13 @@ def merge(
     vq = json.loads(visual_qa_path.read_text(encoding="utf-8"))
     vq_findings = vq.get("findings", []) or []
     if not vq_findings:
+        # v0.8 Tier G.8: even when no VQ findings, write an empty
+        # standalone file so the orchestrator's 2nd revise pass has
+        # a stable artifact to read (revise_loop crashes on missing
+        # --review-path; an empty findings[] array is the cleanest
+        # no-op signal).
+        if vq_only_review_path is not None:
+            _write_vq_only_review(vq_only_review_path, [], review_path)
         return (0, 0)
 
     review = json.loads(review_path.read_text(encoding="utf-8"))
@@ -258,7 +275,7 @@ def merge(
             except ValueError:
                 pass
 
-    n_added = 0
+    new_vq_synthetic: list[dict[str, Any]] = []
     n_dup = 0
     for vq_f in vq_findings:
         sid = vq_f.get("slide_id")
@@ -270,9 +287,11 @@ def merge(
                 n_dup += 1
                 continue
         existing_vq_max += 1
-        findings.append(
-            _vq_to_adversarial(vq_f, existing_vq_max, slide_layouts))
-        n_added += 1
+        synth = _vq_to_adversarial(vq_f, existing_vq_max, slide_layouts)
+        new_vq_synthetic.append(synth)
+        findings.append(synth)
+
+    n_added = len(new_vq_synthetic)
 
     _recompute_summary(review)
 
@@ -280,7 +299,60 @@ def merge(
         json.dumps(review, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+    # v0.8 Tier G.8 — write standalone VQ-only review file for the
+    # 2nd revise pass (only when path requested).
+    if vq_only_review_path is not None:
+        _write_vq_only_review(vq_only_review_path, new_vq_synthetic, review_path)
+
     return (n_added, n_dup)
+
+
+def _write_vq_only_review(
+    out_path: Path,
+    vq_findings: list[dict[str, Any]],
+    source_review_path: Path,
+) -> None:
+    """Write a standalone adversarial-review-shaped JSON containing
+    ONLY the VQ-prefixed synthetic findings.
+
+    v0.8 Tier G.8 — used by the orchestrator's 2nd revise pass so it
+    iterates only the visual-QA findings, not the original F-prefixed
+    adversarial findings. Each revise pass has its own max_revisions
+    budget this way.
+
+    The shape mirrors adversarial_review.json's envelope but with
+    findings[] holding only the VQ entries. tier + verdict + summary
+    fields are copied from the source review (or defaulted) so any
+    downstream consumer expecting that shape doesn't choke.
+    """
+    try:
+        source = json.loads(source_review_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        source = {}
+    out = {
+        "schema_version": source.get("schema_version", "adversarial-review.v3"),
+        "tier": source.get("tier", "STRONG"),
+        "verdict": "PASS",  # VQ-only file is always advisory
+        "_origin": "visual_qa_final (Tier G.8 standalone for 2nd revise pass)",
+        "findings": list(vq_findings),
+        "summary": {
+            "by_severity": _count_by(vq_findings, "severity"),
+            "by_class": _count_by(vq_findings, "class"),
+        },
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(out, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _count_by(findings: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for f in findings:
+        counts[f.get(key, "?")] += 1
+    return dict(counts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -307,12 +379,23 @@ def main(argv: list[str] | None = None) -> int:
         "--slide-spec", type=Path, default=None,
         help="Override path to slide_spec.json (default: "
              "DRAFT/working/slide_spec.json).")
+    p.add_argument(
+        "--vq-only-review", type=Path, default=None,
+        help="v0.8 Tier G.8: also write a standalone "
+             "adversarial-review-shaped JSON containing ONLY the new "
+             "VQ-prefixed synthetic findings to this path. Used by the "
+             "orchestrator's 2nd revise pass so it iterates only VQ "
+             "findings (each pass has its own max_revisions budget). "
+             "Default: DRAFT/audit/adversarial_review_vq_only.json when "
+             "--draft-dir resolved.")
     args = p.parse_args(argv)
 
     draft = args.draft_dir
     vq_path = args.visual_qa or (draft / "audit" / "visual_qa_final.json")
     review_path = args.review or (draft / "audit" / "adversarial_review.json")
     spec_path = args.slide_spec or (draft / "working" / "slide_spec.json")
+    vq_only_path = (args.vq_only_review
+                    or (draft / "audit" / "adversarial_review_vq_only.json"))
 
     if not vq_path.is_file():
         print(
@@ -331,7 +414,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        n_added, n_dup = merge(vq_path, review_path, spec_path)
+        n_added, n_dup = merge(
+            vq_path, review_path, spec_path,
+            vq_only_review_path=vq_only_path)
     except (OSError, json.JSONDecodeError) as e:
         print(
             f"merge_visual_qa_into_review: ERROR merging — {e}",
@@ -341,7 +426,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"merge_visual_qa_into_review: appended {n_added} synthetic "
-        f"finding(s) to {review_path} (deduped {n_dup})",
+        f"finding(s) to {review_path} (deduped {n_dup}); wrote "
+        f"VQ-only review for 2nd revise pass to {vq_only_path}",
         file=sys.stderr,
     )
     return 0

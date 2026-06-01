@@ -3399,16 +3399,25 @@ except Exception:
   echo "  visual-QA found $n_vq_findings finding(s) on post-revise deck" >&2
 
   # 2. Merge visual-QA findings into adversarial_review.json as
-  #    synthetic adversarial-shape entries.
+  #    synthetic adversarial-shape entries. Also writes a standalone
+  #    adversarial_review_vq_only.json containing ONLY the synthetic
+  #    VQ findings (v0.8 Tier G.8 — the 2nd revise pass reads THAT
+  #    file so it doesn't re-iterate the original F-prefixed findings
+  #    and exhaust max_revisions before reaching any VQ finding).
   echo "  merging visual-QA findings into adversarial_review.json..." >&2
   "$PYTHON_BIN" "$TOOLS_DIR/merge_visual_qa_into_review.py" \
     --draft-dir "$OUTDIR" 2>&1 | sed 's/^/    /' >&2
 
-  # 3. Run revise_loop again on the augmented adversarial_review.json.
-  #    Same severity-floor as the first pass; the visual-QA-origin
-  #    findings have id-prefix "VQ" so they're processed alongside
-  #    the original F-prefixed adversarial findings.
-  echo "  running second revise pass (visual-QA findings)..." >&2
+  local _vq_only_review="$AUDIT_DIR/adversarial_review_vq_only.json"
+  if [[ ! -f "$_vq_only_review" ]]; then
+    echo "  no adversarial_review_vq_only.json written; skipping 2nd revise pass" >&2
+    return 0
+  fi
+
+  # 3. Run revise_loop on the VQ-ONLY review file. Per Tier G.8 this
+  #    gives the 2nd pass its OWN max_revisions budget instead of
+  #    competing with the 1st pass's F-finding iteration.
+  echo "  running second revise pass (visual-QA findings only; Tier G.8)..." >&2
   local stream_flag=""
   if [[ $NO_STREAM -eq 1 ]]; then stream_flag="--no-stream"; fi
 
@@ -3421,6 +3430,7 @@ except Exception:
 
   "$PYTHON_BIN" "$TOOLS_DIR/revise_loop.py" \
     "$OUTDIR" \
+    --review-path "$_vq_only_review" \
     --severity-floor "$REVISE_SEVERITY_FLOOR" \
     --max-revisions "$MAX_REVISIONS" \
     --max-cost-usd "$MAX_REVISE_COST_USD" \

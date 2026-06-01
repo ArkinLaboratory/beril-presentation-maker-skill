@@ -160,3 +160,46 @@ def test_visual_qa_py_accepts_out_json_flag():
         "visual_qa.py must accept --out-json per v0.8 Tier G.7")
     assert "--out-md" in help_text, (
         "visual_qa.py must accept --out-md per v0.8 Tier G.7")
+
+
+# ---------------------------------------------------------------------------
+# v0.8 Tier G.8 — 2nd revise pass reads VQ-only review (not full review)
+# ---------------------------------------------------------------------------
+
+def test_g8_stage_invokes_2nd_revise_with_vq_only_review_path():
+    """The orchestrator's 2nd revise invocation must use
+    --review-path adversarial_review_vq_only.json so it only
+    iterates VQ findings (not re-iterating F-prefixed adversarial
+    findings + exhausting max_revisions before any VQ runs)."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    # The 2nd revise invocation block must reference the VQ-only
+    # review file path
+    assert "adversarial_review_vq_only.json" in body, (
+        "v0.8 Tier G.8: stage_visual_qa_final must reference "
+        "adversarial_review_vq_only.json (the standalone VQ findings "
+        "file) for the 2nd revise pass — without this, the 2nd pass "
+        "re-iterates F-prefixed adversarial findings and exhausts "
+        "max_revisions before reaching any VQ finding")
+    # The revise_loop.py invocation must use --review-path with the
+    # VQ-only file
+    assert "--review-path" in body, (
+        "2nd revise pass must use revise_loop.py --review-path to "
+        "point at the standalone VQ-only review file")
+
+
+def test_g8_stage_skips_2nd_revise_if_vq_only_missing():
+    """Defensive: if the merger didn't write the VQ-only review file
+    (e.g., 0 visual-QA findings), the stage must skip the 2nd revise
+    pass cleanly rather than crashing revise_loop.py."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    # Look for the existence check
+    assert "_vq_only_review" in body, (
+        "stage_visual_qa_final must capture the VQ-only review path "
+        "in a variable for the existence check + revise invocation")
+    # Skip-when-missing pattern
+    assert "no adversarial_review_vq_only.json written" in body, (
+        "stage_visual_qa_final must skip the 2nd revise pass when "
+        "no VQ-only review file exists (defensive against merger "
+        "writing zero findings)")
