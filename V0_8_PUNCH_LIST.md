@@ -170,6 +170,153 @@ deferred to v0.8.1):**
   Tier-G runbook's invocation example uses the shell-direct
   path so this gap is bypassed.
 
+## Tier G.10 — Deterministic layout-quality pass (v0.8.0 release-blocker)
+
+**Status:** scoped 2026-06-02 after lanthanide_methylotrophy_atlas
+draft_1 Tier-I read. **Promoted to v0.8.0 release-blocker** per
+Adam: lanthanide draft_1 reads as ship-with-G.10-as-final-gate —
+mechanical wins are real, content quality passes, but the
+deterministic-layout work has to land before tagging because it's
+the substrate underneath the "visual quality still off" complaint
+that's been recurring across cycles (v0.5/v0.6/v0.7/v0.8 Tier-I
+reads all touched this).
+
+Three coupled workstreams that move layout decisions out of
+PowerPoint's runtime guess and into our deterministic compose
+path. ~1.5-2 days estimated. Lands as a single coherent pass
+because the three pieces share the same geometry primitives +
+feed the same revise-loop finding channel.
+
+**Also promoted to v0.8.0 release-blocker (from the Tier-G carry
+block above):**
+
+- **Duplicate deck_close-shaped slide with `forward_call: "---"`**
+  — visible regression (slide 25 of 31 on lanthanide draft_1). Adam:
+  "We need to find why." Investigate path through `extract_deck_close.py`
+  / merger / composer before applying fix at correct layer.
+- **install-skill smoke fixture gap** — required for clean install
+  per v0.8.0 packaging criterion ("clean install for users").
+- **`draft` wrapper drops `--prompts-version`** — required for the
+  documented invocation path to work (silent v2 downgrade otherwise).
+
+**Root-cause framing.** Three recurring visual-quality complaints
+have a shared root cause: layout decisions are deferred to
+PowerPoint's autofit + the operator's vision-LLM judgment, instead
+of being committed deterministically at compose time.
+
+- **Bounding-box overlaps** (text-box × text-box, image × text-box,
+  footer × body) — `python-pptx` exposes every shape's `left/top/
+  width/height` in EMU. Pure geometry; deterministic detection is
+  cheaper + more accurate than visual-QA's vision-LLM raster read.
+- **Latent autofit** (text appears overflowing on open; "touch" the
+  textbox in edit mode + PowerPoint recomputes + it fits). Caused
+  by `python-pptx` writing autofit *intent*
+  (`MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE` or `<a:normAutofit/>` element)
+  without the computed `fontScale`/`lnSpcReduction` attributes.
+  PowerPoint displays at authored size until a text-frame
+  invalidation triggers the recompute. Visual-QA sees the
+  un-autofit PNG → reports `illegible_scale` → operator opens
+  the file → autofit kicks in → file looks fine → operator
+  loses trust in visual-QA findings. This gap is what's been
+  making visual-QA flaky.
+- **Renderer shrink-to-fit-cascade illegibility** — the existing
+  shrink-to-fit ladder (100/90/80/70/60%) shrinks font scale but
+  never repositions boxes or surfaces a "this content is too long"
+  finding back to revise loop. Past 60% the text is
+  projection-illegible; we just produce it silently.
+
+**Scope (3 workstreams):**
+
+1. **G.10-A: Deterministic bounding-box overlap detector.**
+   → New `tools/check_slide_layout_overlaps.py`. Pure geometry:
+     walks every shape on every rendered slide via `python-pptx`,
+     computes pairwise overlap with configurable padding tolerance
+     (default ~0.04in / 36000 EMU).
+   → Emits findings in adversarial-review-shape:
+     - `text_box_overlap` (text × text) — P1
+     - `image_text_overlap` (image × text) — P1
+     - `footer_title_collision` (chrome × body) — P1
+     - `container_breach` (shape extends past slide bounds) — P0
+   → Layout-template allow-list: enumerate intentional overlap
+     zones per layout (e.g., footer band watermark) in a YAML
+     beside the layout templates. One-time table; bounded work.
+   → Cascade integration: runs in `stage_visual_qa_final()`
+     BEFORE visual-QA. Findings merge into
+     `adversarial_review_vq_only.json` for the 2nd revise pass
+     (same channel as VQ findings, distinct from F-prefixed
+     adversarial findings per G.8 routing).
+   → Visual-QA prompt update: stop reporting `element_overlap`
+     / `container_breach` / `footer_or_title_collision` — those
+     become the deterministic validator's job. Visual-QA
+     narrows to `headline_body_mismatch` + `illegible_scale`
+     + AI-image-spoiler patterns (cases where reading the
+     rendered raster genuinely adds signal).
+
+2. **G.10-B: Commit autofit to explicit font sizes at compose
+   time.**
+   → Renderer change: at every step of the existing shrink-to-fit
+     ladder, instead of setting `text_frame.auto_size = MSO_AUTO_SIZE
+     .TEXT_TO_FIT_SHAPE`, walk paragraphs + runs and set
+     `font.size = Pt(base * scale)` directly. Disable autofit
+     (`auto_size = MSO_AUTO_SIZE.NONE`).
+   → Text-measurement: start with cheap approximate character-
+     width tables (~80% accurate, no new deps); upgrade to
+     `fonttools` + PIL precise measurement if approximation
+     produces false-negative overflows. For 31-slide decks even
+     the precise path is <5s total.
+   → Net effect: PowerPoint shows what we authored; no
+     "touch the textbox to fix it" interaction needed.
+     Visual-QA's PNG matches the file the operator opens — vision
+     LLM judgments about legibility become trustworthy again.
+
+3. **G.10-C: Overflow finding when shrink would exceed
+   projection-illegibility floor.**
+   → Renderer extension: if the computed shrink falls below 60%
+     (the projection-legibility cliff per slide_spec.py
+     `QA_ANSWER_SUMMARY_HARD_MAX_CHARS = 1100` rationale), the
+     renderer emits a `content_overflow` finding instead of
+     silently producing illegible output. P1 severity, includes
+     slide_id + estimated character count + computed shrink
+     ratio.
+   → Feeds the revise loop: this is the same channel as
+     G.10-A's findings. The revise prompt (revise_slide.v1)
+     gets a new hint: "if you receive a content_overflow
+     finding, REWRITE shorter — do not just trust the renderer
+     to shrink it." Routes via `revise_slide.v1` (REVISE_CLASSES)
+     since the fix is content-not-structure.
+
+**Why these three ship together:** they share a single
+geometry primitive (the `_box(shape) -> Rect` helper), a single
+finding-emission channel (adversarial_review_vq_only.json), and
+a single integration point (`stage_visual_qa_final()`). Landing
+piecemeal would mean 3× the test-fixture work + 3× the
+orchestrator-stage changes; landing together amortizes both.
+
+**Gate criteria (Tier-F equivalent):**
+
+- Lanthanide draft_N with G.10 stack: 0 P0 `container_breach`
+  findings (currently unmeasured; visual-QA caught some as
+  `element_overlap` with high mis-attribution rate).
+- 0 "touch the textbox to fix it" cases — verified by opening
+  the rendered pptx on a clean machine without first
+  interacting with any shape; everything that should fit, fits.
+- Visual-QA finding count drops on overlap-class items (those
+  are now caught earlier + deterministically) while
+  headline-body-mismatch + AI-image-spoiler counts stay stable.
+
+**Carries deferred to G.10+ scope:**
+
+- LibreOffice headless round-trip fallback (option C from the
+  scoping discussion). Tier G.10 makes this unnecessary if
+  G.10-B succeeds; keep as an emergency lever if approximate
+  text-measurement turns out to be insufficient for some
+  font/layout combination.
+- LLM-driven layout patches (option (b) / (c) from the
+  scoping discussion). Defer until G.10-A's findings show what
+  the deterministic resolver couldn't handle. If most overlaps
+  resolve via G.10-B's commit-the-shrink, the LLM-patch path
+  may not be needed at all.
+
 **Carries from v0.7 (still real; deferred again):**
 
 - **Per-arc figure clustering / per-arc-distribution metric** —
