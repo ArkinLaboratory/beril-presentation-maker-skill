@@ -149,6 +149,101 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         default=None,
         help="Force style override across all images this run.",
     )
+    # v0.5.1 D-076 prompt-version + smoke-gate flags
+    p.add_argument(
+        "--prompts-version",
+        default=None,
+        choices=["v1", "v2", "v3", "v3.1", "v3.2", "v3.3"],
+        help=(
+            "Select the prompt-stack version for substory_design + "
+            "slide_compose (v0.8.0 stack: v3.3 substory_design + "
+            "v3.2 slide_compose; default v2)."
+        ),
+    )
+    p.add_argument(
+        "--force-v3-smoke-stale",
+        action="store_true",
+        help=(
+            "Bypass the D-076 live-LLM smoke-pass gate. Use ONLY "
+            "when you have just edited prompts and accept that "
+            "the next run isn't smoke-verified."
+        ),
+    )
+    # v0.4 architecture pipeline (opt-in)
+    p.add_argument(
+        "--architecture-pipeline",
+        default=None,
+        choices=["v0_3", "v0_4"],
+        help=(
+            "v0_3 (default; sequential per-substory) or v0_4 "
+            "(architect-then-parallel-compose; opt-in)."
+        ),
+    )
+    # Resume mechanism (existing draft, skip upstream stages)
+    p.add_argument(
+        "--resume-from",
+        default=None,
+        help=(
+            "Resume an existing draft at a specific stage "
+            "(plan|throughline|substory_design|phase0_tooling|"
+            "deck_outline|curate_figures|citation_pool|cross_tenant|"
+            "intro|slide_compose|qa_prep|deck_close|speaker_notes|"
+            "image_gen|merge|adversarial_review|revise_slides). "
+            "Requires --draft-dir."
+        ),
+    )
+    p.add_argument(
+        "--draft-dir",
+        default=None,
+        help=(
+            "Existing draft_N directory to resume into. Required "
+            "when --resume-from is set."
+        ),
+    )
+    # v0.8 revise + visual-QA flags
+    p.add_argument(
+        "--revise-severity-floor",
+        default=None,
+        choices=["P0", "P1", "P2"],
+        help=(
+            "Lowest severity the revise loop will process "
+            "(v0.8 default: P1). P0 = only blockers; P1 = "
+            "blockers + significant gaps; P2 = also nits."
+        ),
+    )
+    p.add_argument(
+        "--visual-qa",
+        action="store_true",
+        help=(
+            "Force-enable the visual-QA stage even when mode/tier "
+            "wouldn't auto-on it (D-096)."
+        ),
+    )
+    p.add_argument(
+        "--no-visual-qa",
+        action="store_true",
+        help=(
+            "Force-disable the visual-QA stage (overrides D-096 "
+            "auto-on for talk-30 STRONG + talk-15 STRONG/BRIEF)."
+        ),
+    )
+    # M5b image-provider override
+    p.add_argument(
+        "--image-provider",
+        default=None,
+        help=(
+            "Force image-gen provider (cbiorg | google-ai-studio | "
+            "auto). Default: auto-discovery per M5b/D-062."
+        ),
+    )
+    p.add_argument(
+        "--max-image-approvals",
+        default=None,
+        help=(
+            "Cap on how many AI images may be approved per run "
+            "(D-088; v0.8 default: 4)."
+        ),
+    )
     p.set_defaults(func=run)
     return p
 
@@ -228,6 +323,31 @@ def run(args: argparse.Namespace) -> int:
         argv += ["--max-image-cost-usd", str(args.max_image_cost_usd)]
     if args.image_style:
         argv += ["--image-style", args.image_style]
+    # v0.5.1 D-076 prompt-version + smoke-gate
+    if args.prompts_version:
+        argv += ["--prompts-version", args.prompts_version]
+    if args.force_v3_smoke_stale:
+        argv += ["--force-v3-smoke-stale"]
+    # v0.4 architecture pipeline
+    if args.architecture_pipeline:
+        argv += ["--architecture-pipeline", args.architecture_pipeline]
+    # Resume mechanism
+    if args.resume_from:
+        argv += ["--resume-from", args.resume_from]
+    if args.draft_dir:
+        argv += ["--draft-dir", args.draft_dir]
+    # v0.8 revise + visual-QA
+    if args.revise_severity_floor:
+        argv += ["--revise-severity-floor", args.revise_severity_floor]
+    if args.visual_qa:
+        argv += ["--visual-qa"]
+    if args.no_visual_qa:
+        argv += ["--no-visual-qa"]
+    # M5b image-provider override
+    if args.image_provider:
+        argv += ["--image-provider", args.image_provider]
+    if args.max_image_approvals is not None:
+        argv += ["--max-image-approvals", str(args.max_image_approvals)]
 
     print(f"▸ Running: {' '.join(argv)}", file=sys.stderr)
     print("", file=sys.stderr)

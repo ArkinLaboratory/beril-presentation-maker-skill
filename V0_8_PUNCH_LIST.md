@@ -154,22 +154,18 @@ deferred to v0.8.1):**
   field-routing logic).
 
 - **`beril-presentation-maker draft` Python wrapper silently
-  drops `--prompts-version`.** Discovered at Tier G 2026-05-31
-  when an agent invoked the skill via the documented
-  slash-command path: `draft.py`'s argv allowlist doesn't
-  include `--prompts-version`, so passing it through the
-  Python wrapper produces an argparse error OR (worse) a
-  silent v2 default if the wrapper silently drops it. The
-  agent had to fall back to invoking the byte-identical shell
-  orchestrator directly (`bash .claude/skills/.../presentation_maker.sh
-  --prompts-version v3.3 ...`) to honor the flag. Any future
-  v0.8 caller following the documented path gets a silent v2
-  downgrade. v0.8.1 fix: extend the Python wrapper's allowlist
-  to forward `--prompts-version` + `--force-v3-smoke-stale` to
-  the shell orchestrator (also any other shell-orchestrator-
-  only flags worth surfacing to operators). Until then, the
-  Tier-G runbook's invocation example uses the shell-direct
-  path so this gap is bypassed.
+  drops `--prompts-version`.** Discovered at Tier G 2026-05-31.
+  **CLOSED 2026-06-02 (v0.8.0):** draft.py now forwards the
+  complete v0.5/v0.6/v0.7/v0.8 flag surface to the shell
+  orchestrator: `--prompts-version`, `--force-v3-smoke-stale`,
+  `--architecture-pipeline`, `--resume-from`, `--draft-dir`,
+  `--revise-severity-floor`, `--visual-qa`, `--no-visual-qa`,
+  `--image-provider`, `--max-image-approvals`. The wrapper's
+  argument definitions match the shell-side choices exactly
+  (prompts-version: v1|v2|v3|v3.1|v3.2|v3.3; severity-floor:
+  P0|P1|P2; architecture-pipeline: v0_3|v0_4). 9 new
+  forwarding tests pin each flag + a regression-guard test
+  that unset flags don't leak through.
 
 - **`extract_deck_close.py` captures REPORT.md HR separator
   ("---") as `forward_call`.** Surfaced on lanthanide draft_1

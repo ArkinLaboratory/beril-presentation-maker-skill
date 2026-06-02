@@ -65,6 +65,17 @@ def _args(**kw):
         "image_allow_exploratory": False,
         "max_image_cost_usd": None,
         "image_style": None,
+        # v0.8.0 forwarded flags
+        "prompts_version": None,
+        "force_v3_smoke_stale": False,
+        "architecture_pipeline": None,
+        "resume_from": None,
+        "draft_dir": None,
+        "revise_severity_floor": None,
+        "visual_qa": False,
+        "no_visual_qa": False,
+        "image_provider": None,
+        "max_image_approvals": None,
     }
     defaults.update(kw)
     return argparse.Namespace(**defaults)
@@ -203,3 +214,152 @@ def test_run_validates_explicit_beril_root_via_discovery(
     assert "--beril-root" in captured_argv
     idx = captured_argv.index("--beril-root")
     assert captured_argv[idx + 1] == str(not_beril)
+
+
+# ---------------------------------------------------------------------------
+# v0.8.0: forwarded flags (--prompts-version + the rest of the v0.5/v0.6/
+# v0.7/v0.8 surface previously dropped by the Python wrapper)
+# ---------------------------------------------------------------------------
+
+def _capture_argv(fake_beril_root, monkeypatch, **arg_overrides):
+    """Helper: run draft.run() with patched subprocess.run; return
+    the argv list passed to bash."""
+    monkeypatch.delenv("BERIL_ROOT", raising=False)
+    monkeypatch.chdir(fake_beril_root)
+    captured = []
+
+    def fake_run(argv, **kwargs):
+        captured.extend(argv)
+
+        class _Result:
+            returncode = 0
+        return _Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    rc = draft.run(_args(**arg_overrides))
+    assert rc == 0
+    return captured
+
+
+def test_forwards_prompts_version(fake_beril_root, monkeypatch):
+    """v0.8.0 release-blocker: --prompts-version must reach the
+    shell orchestrator. Pre-v0.8.0, the wrapper silently dropped
+    this flag, causing a silent v2 downgrade on the documented
+    invocation path."""
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch, prompts_version="v3.3"
+    )
+    assert "--prompts-version" in argv
+    idx = argv.index("--prompts-version")
+    assert argv[idx + 1] == "v3.3"
+
+
+def test_omits_prompts_version_when_unset(fake_beril_root, monkeypatch):
+    """When --prompts-version is unset the wrapper must not pass
+    it to the shell (preserving the shell's own default; don't
+    force v2 from the Python side)."""
+    argv = _capture_argv(fake_beril_root, monkeypatch)
+    assert "--prompts-version" not in argv
+
+
+def test_forwards_force_v3_smoke_stale(fake_beril_root, monkeypatch):
+    """The D-076 smoke-gate bypass must be forwardable through the
+    wrapper (otherwise the wrapper can't be used when the operator
+    has freshly edited prompts)."""
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch, force_v3_smoke_stale=True
+    )
+    assert "--force-v3-smoke-stale" in argv
+
+
+def test_forwards_resume_from_and_draft_dir(
+    fake_beril_root, monkeypatch, tmp_path
+):
+    """Resume mechanism must be forwardable. Both --resume-from
+    and --draft-dir reach the shell."""
+    draft_dir = tmp_path / "talks" / "draft_1"
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch,
+        resume_from="slide_compose",
+        draft_dir=str(draft_dir),
+    )
+    assert "--resume-from" in argv
+    assert argv[argv.index("--resume-from") + 1] == "slide_compose"
+    assert "--draft-dir" in argv
+    assert argv[argv.index("--draft-dir") + 1] == str(draft_dir)
+
+
+def test_forwards_architecture_pipeline(fake_beril_root, monkeypatch):
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch, architecture_pipeline="v0_4"
+    )
+    assert "--architecture-pipeline" in argv
+    idx = argv.index("--architecture-pipeline")
+    assert argv[idx + 1] == "v0_4"
+
+
+def test_forwards_revise_severity_floor(fake_beril_root, monkeypatch):
+    """v0.8 G.6: --revise-severity-floor must be forwardable so
+    operators can override the v0.8 default of P1."""
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch, revise_severity_floor="P0"
+    )
+    assert "--revise-severity-floor" in argv
+    idx = argv.index("--revise-severity-floor")
+    assert argv[idx + 1] == "P0"
+
+
+def test_forwards_visual_qa_flags(fake_beril_root, monkeypatch):
+    """D-096: both --visual-qa and --no-visual-qa must be
+    forwardable (the shell's mode-aware default-on can be
+    overridden in either direction)."""
+    argv_on = _capture_argv(
+        fake_beril_root, monkeypatch, visual_qa=True
+    )
+    assert "--visual-qa" in argv_on
+    argv_off = _capture_argv(
+        fake_beril_root, monkeypatch, no_visual_qa=True
+    )
+    assert "--no-visual-qa" in argv_off
+
+
+def test_forwards_image_provider_and_max_approvals(
+    fake_beril_root, monkeypatch
+):
+    """M5b D-062 image-provider override + D-088 max-approvals cap
+    must be forwardable."""
+    argv = _capture_argv(
+        fake_beril_root, monkeypatch,
+        image_provider="google-ai-studio",
+        max_image_approvals=8,
+    )
+    assert "--image-provider" in argv
+    assert argv[argv.index("--image-provider") + 1] == "google-ai-studio"
+    assert "--max-image-approvals" in argv
+    assert argv[argv.index("--max-image-approvals") + 1] == "8"
+
+
+def test_all_forwarded_flags_omitted_when_unset(
+    fake_beril_root, monkeypatch
+):
+    """Sanity: with default _args() the wrapper passes none of the
+    new v0.8.0 flags to bash. This pin prevents accidental defaults
+    leaking through the wrapper (which would override shell-side
+    defaults like the v0.8 P1 severity floor)."""
+    argv = _capture_argv(fake_beril_root, monkeypatch)
+    for flag in (
+        "--prompts-version",
+        "--force-v3-smoke-stale",
+        "--architecture-pipeline",
+        "--resume-from",
+        "--draft-dir",
+        "--revise-severity-floor",
+        "--visual-qa",
+        "--no-visual-qa",
+        "--image-provider",
+        "--max-image-approvals",
+    ):
+        assert flag not in argv, (
+            f"{flag} must not appear when its arg is unset; would "
+            f"force a non-default value through the wrapper"
+        )
