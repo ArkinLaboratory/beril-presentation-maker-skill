@@ -219,7 +219,19 @@ def _ensure_slide_text_autofit(text_frame_element,
     body_pr.set("anchor", anchor)
 
 
-def _set_title(slide, text: str) -> None:
+# v0.8.0 Tier G.10-B: per-layout title base font size (pt). Used by
+# `_set_title` to compute geometry-aware fontScale for the title
+# placeholder. Values match the master's defRPr.sz table (×100 → pt).
+# Layouts NOT in this map use the master default (28pt).
+_TITLE_BASE_PT_BY_LAYOUT: dict[str, int] = {
+    "section_divider": 40,    # sz="4000" in build_master LAYOUT_FIXES
+    "big_idea": 36,           # banner-mode default per LAYOUT_FIXES
+    "big_number": 66,         # sz="6600" in build_master LAYOUT_FIXES
+}
+_TITLE_BASE_PT_DEFAULT = 28
+
+
+def _set_title(slide, text: str, warnings: list[str] | None = None) -> None:
     if not slide.shapes.title:
         return
     title_shape = slide.shapes.title
@@ -232,7 +244,36 @@ def _set_title(slide, text: str) -> None:
     # caps, not autofit, and forcing autofit here would override the
     # master's intentional pinning).
     layout_name = slide.slide_layout.name
-    if layout_name not in ("big_number", "big_idea"):
+    if layout_name in ("big_number", "big_idea"):
+        return
+    # v0.8.0 Tier G.10-B: compute geometry-derived fontScale from the
+    # title's actual box × the layout's base pt size. Fixes the
+    # "touch the textbox to trigger resize" symptom where the previous
+    # fixed-80% commit didn't actually fit long titles, leaving the
+    # rendered slide showing un-shrunk text until PowerPoint's
+    # interactive re-autofit fired.
+    base_pt = _TITLE_BASE_PT_BY_LAYOUT.get(layout_name, _TITLE_BASE_PT_DEFAULT)
+    box_w = int(getattr(title_shape, "width", 0) or 0)
+    box_h = int(getattr(title_shape, "height", 0) or 0)
+    if box_w > 0 and box_h > 0:
+        scale = _fontscale_for_geometry(
+            len(text or ""),
+            box_width_emu=box_w, box_height_emu=box_h,
+            base_pt=base_pt,
+        )
+        if scale == FONTSCALE_FLOOR and warnings is not None:
+            warnings.append(
+                f"slide title ({layout_name}): {len(text or '')} chars "
+                f"at base {base_pt}pt in "
+                f"{box_w/_EMU_PER_INCH:.2f}×{box_h/_EMU_PER_INCH:.2f} in "
+                f"box requires sub-floor shrink; clamped at "
+                f"{FONTSCALE_FLOOR/1000:.0f}%; title-length cap "
+                f"recommended (G.10-C content_overflow)"
+            )
+        _ensure_slide_text_autofit(title_shape.element, font_scale=scale)
+    else:
+        # Geometry unavailable (placeholder may inherit from layout
+        # without explicit coords). Fall back to the v0.4 fixed 80%.
         _ensure_slide_text_autofit(title_shape.element)
 
 
@@ -447,6 +488,99 @@ def _enable_normautofit_on_title(slide,
 FONTSCALE_FLOOR = 60000        # DQ3 — 60% of the master pt size
 FONTSCALE_FULL = 100000        # 100% (no shrink)
 
+# v0.8.0 Tier G.10-B — geometry-aware text fitting.
+#
+# Background: `_fontscale_for_chars` (the v0.4 M4a heuristic) maps
+# pure character count to a fontScale via a hand-tuned ladder. It
+# doesn't see the actual box width × height or the base font size
+# in pt. Result: when a slot's content overshoots what the ladder
+# predicts, PowerPoint shows the explicit fontScale we wrote but
+# the text *still* overflows. User clicks the textbox → PowerPoint
+# re-runs autofit → text shrinks further → fits. That "touch the
+# textbox to trigger resize" was Adam's lanthanide_methylotrophy_atlas
+# draft_1 complaint.
+#
+# G.10-B fix: a geometry-aware sizer that computes the required
+# fontScale from (chars × avg_char_width × pt_base) vs (box_width
+# × box_height × line_height). Writes the geometry-derived scale
+# explicitly, so PowerPoint's render-time view matches operator
+# expectations on open.
+#
+# Approximation: avg_char_width ≈ 0.55 × pt for Oxygen/Roboto-style
+# proportional fonts (empirically tuned vs python-pptx renderings).
+# This is intentionally a heuristic — the real measurement would
+# require fonttools+PIL+actual font files, which is non-trivial to
+# bundle. The approximation is good enough to catch the high-char-
+# count slots that the char-only ladder undershoots.
+
+# Average glyph width as a fraction of font pt size for the master's
+# default fonts (Oxygen). Calibrated empirically.
+_AVG_GLYPH_WIDTH_RATIO = 0.55
+
+# Line-height multiplier (line spacing / font pt size). PowerPoint
+# defaults to ~1.2 for proportional fonts.
+_LINE_HEIGHT_RATIO = 1.2
+
+# python-pptx coordinate: 914400 EMU = 1 inch; 72pt per inch.
+_EMU_PER_INCH = 914400
+_PT_PER_INCH = 72
+
+
+def _fontscale_for_geometry(
+    chars: int,
+    *,
+    box_width_emu: int,
+    box_height_emu: int,
+    base_pt: int,
+    avg_glyph_ratio: float = _AVG_GLYPH_WIDTH_RATIO,
+    line_height_ratio: float = _LINE_HEIGHT_RATIO,
+) -> int:
+    """Compute the fontScale needed to fit `chars` chars at `base_pt`
+    into a box of `box_width_emu × box_height_emu`.
+
+    Returns a fontScale in [FONTSCALE_FLOOR, FONTSCALE_FULL] (×1000
+    units per OOXML convention). The scale is the geometry-derived
+    answer — what fontScale would just-fit the text. PowerPoint
+    accepts the scale verbatim at render time; no "touch to refit"
+    needed.
+
+    Algorithm:
+      1. Compute target text area (box width × height in pt²).
+      2. Compute required text area at full scale (chars ×
+         avg_glyph_width × line_height × base_pt²).
+      3. The scale is sqrt(target_area / required_area) (text area
+         scales as scale² since both width and line-height shrink).
+      4. Clamp into [FLOOR, FULL].
+
+    This is approximate — we ignore word-wrap raggedness, font
+    metrics variance, and language-specific glyph widths. The
+    approximation is calibrated for the master's Oxygen font and
+    holds within ~10% for English prose in the char-count range
+    (50-2000) the deck slots actually hit.
+    """
+    if chars <= 0:
+        return FONTSCALE_FULL
+    box_width_pt = box_width_emu * _PT_PER_INCH / _EMU_PER_INCH
+    box_height_pt = box_height_emu * _PT_PER_INCH / _EMU_PER_INCH
+    # Available text area (pt²)
+    target_area = max(box_width_pt * box_height_pt, 1.0)
+    # Required text area at full scale (chars × glyph_w × line_h × pt²)
+    required_area = (chars * avg_glyph_ratio * line_height_ratio
+                     * base_pt * base_pt)
+    if required_area <= 0:
+        return FONTSCALE_FULL
+    # Scale²: target / required → scale = sqrt(...)
+    ratio = target_area / required_area
+    if ratio >= 1.0:
+        return FONTSCALE_FULL
+    scale = ratio ** 0.5
+    scaled_int = int(scale * FONTSCALE_FULL)
+    if scaled_int < FONTSCALE_FLOOR:
+        return FONTSCALE_FLOOR
+    if scaled_int > FONTSCALE_FULL:
+        return FONTSCALE_FULL
+    return scaled_int
+
 
 def _fontscale_for_chars(chars: int,
                          *, full_below: int = 200,
@@ -472,6 +606,149 @@ def _fontscale_for_chars(chars: int,
         if chars <= cap:
             return scale
     return FONTSCALE_FLOOR
+
+
+def _fit_textbox_by_geometry(
+    shape,
+    *,
+    base_pt: int,
+    content_chars: int | None = None,
+    ln_spc_reduction: int = 20000,
+    warnings: list[str] | None = None,
+    where: str = "",
+) -> int:
+    """v0.8.0 Tier G.10-B: write a geometry-derived explicit fontScale
+    onto a freeform shape, computed from the shape's actual box +
+    the base pt size of its content.
+
+    Preferred over `_fit_textbox` (which uses the char-only ladder)
+    when the caller knows the base pt size for the slot. The
+    char-only ladder can undershoot — geometry-aware fitting catches
+    the cases where the explicit fontScale we write doesn't actually
+    fit the content, leading PowerPoint to behave as if autofit
+    hasn't been computed until the user "touches" the textbox.
+
+    Args:
+      shape: a python-pptx shape with a `.text_frame`.
+      base_pt: the master/layout-defined base font size in pt for
+        this slot (NOT the rendered pt; we're computing what scale
+        to apply to the base).
+      content_chars: character count. If None, derived from
+        `shape.text_frame.text`.
+      ln_spc_reduction: line-spacing reduction at full shrink.
+      warnings: assembler warnings list. If the derived scale lands
+        at FONTSCALE_FLOOR (DQ3), a warning is appended.
+      where: free-text location for the warning.
+
+    Returns the fontScale written.
+    """
+    tf = shape.text_frame
+    if content_chars is None:
+        content_chars = len(tf.text or "")
+    box_w = int(getattr(shape, "width", 0) or 0)
+    box_h = int(getattr(shape, "height", 0) or 0)
+    if box_w <= 0 or box_h <= 0 or base_pt <= 0:
+        # Defensive fallback: if we can't read geometry, defer to the
+        # char-only ladder so we never crash.
+        return _fit_textbox(shape, content_chars=content_chars,
+                            ln_spc_reduction=ln_spc_reduction,
+                            warnings=warnings, where=where)
+    scale = _fontscale_for_geometry(
+        content_chars,
+        box_width_emu=box_w, box_height_emu=box_h,
+        base_pt=base_pt,
+    )
+    if scale == FONTSCALE_FLOOR and warnings is not None:
+        warnings.append(
+            f"{where or 'textbox'}: content {content_chars} chars "
+            f"at base {base_pt}pt in "
+            f"{box_w/_EMU_PER_INCH:.2f}×{box_h/_EMU_PER_INCH:.2f} in "
+            f"box requires sub-floor shrink; clamped at "
+            f"{FONTSCALE_FLOOR/1000:.0f}%; content-length cap "
+            f"recommended (G.10-C content_overflow finding)"
+        )
+    _ensure_slide_text_autofit(
+        shape.element,
+        font_scale=scale,
+        ln_spc_reduction=ln_spc_reduction,
+        anchor="t",
+    )
+    return scale
+
+
+def _enable_normautofit_by_geometry(
+    slide,
+    idx: int,
+    *,
+    base_pt: int,
+    content_chars: int | None = None,
+    ln_spc_reduction: int = 20000,
+    warnings: list[str] | None = None,
+    where: str = "",
+) -> int:
+    """v0.8.0 Tier G.10-B: write a geometry-derived explicit fontScale
+    onto a placeholder's <a:bodyPr> normAutofit. Preferred over
+    `_enable_normautofit` (which writes a fixed 80%) when the caller
+    knows the base pt + content length.
+
+    Same algorithm as `_fit_textbox_by_geometry` but reaches into the
+    placeholder's bodyPr instead of the textbox's shape element.
+
+    Returns the fontScale written, or FONTSCALE_FULL if the
+    placeholder couldn't be located (defensive default; matches
+    _enable_normautofit's no-op-on-missing semantics).
+    """
+    ph = _find_placeholder(slide, idx)
+    if ph is None:
+        return FONTSCALE_FULL
+    if content_chars is None:
+        try:
+            content_chars = len(ph.text_frame.text or "")
+        except AttributeError:
+            content_chars = 0
+    box_w = int(getattr(ph, "width", 0) or 0)
+    box_h = int(getattr(ph, "height", 0) or 0)
+    if box_w <= 0 or box_h <= 0 or base_pt <= 0:
+        # Defensive fallback to the fixed-scale 80% writer.
+        _enable_normautofit(slide, idx, ln_spc_reduction=ln_spc_reduction)
+        return 80000
+    scale = _fontscale_for_geometry(
+        content_chars,
+        box_width_emu=box_w, box_height_emu=box_h,
+        base_pt=base_pt,
+    )
+    if scale == FONTSCALE_FLOOR and warnings is not None:
+        warnings.append(
+            f"{where or f'placeholder idx={idx}'}: content "
+            f"{content_chars} chars at base {base_pt}pt in "
+            f"{box_w/_EMU_PER_INCH:.2f}×{box_h/_EMU_PER_INCH:.2f} in "
+            f"box requires sub-floor shrink; clamped at "
+            f"{FONTSCALE_FLOOR/1000:.0f}%; content-length cap "
+            f"recommended (G.10-C content_overflow finding)"
+        )
+    # Reuse _enable_normautofit's bodyPr-manipulation by inlining the
+    # OOXML write. We can't call _enable_normautofit(slide, idx, font_scale=...)
+    # because that helper takes font_scale as a kwarg with default 80000;
+    # we'd be duplicating the lookup. So write directly:
+    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    txBody = ph._element.find(f".//{{{p_ns}}}txBody")
+    if txBody is None:
+        txBody = ph._element.find(f".//{{{a_ns}}}txBody")
+    if txBody is None:
+        return scale
+    bodyPr = txBody.find(f"{{{a_ns}}}bodyPr")
+    if bodyPr is None:
+        return scale
+    for tag in ("normAutofit", "noAutofit", "spAutoFit"):
+        for child in list(bodyPr):
+            if child.tag == f"{{{a_ns}}}{tag}":
+                bodyPr.remove(child)
+    from lxml import etree as _et
+    autofit = _et.SubElement(bodyPr, f"{{{a_ns}}}normAutofit")
+    autofit.set("fontScale", str(scale))
+    autofit.set("lnSpcReduction", str(ln_spc_reduction))
+    return scale
 
 
 def _fit_textbox(shape, *, content_chars: int | None = None,
@@ -863,7 +1140,7 @@ def _fill_title(slide, content, draft_dir, warnings):
     # from project_id "ibd_phage_targeting"; restore "IBD" + any other
     # KBase/BERDL/clinical acronym in _KNOWN_ACRONYMS.
     content["title"] = _fix_acronyms_in_title(content.get("title", ""))
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     parts: list[str] = []
     if content.get("subtitle"):
         parts.append(content["subtitle"])
@@ -886,7 +1163,7 @@ def _fill_title(slide, content, draft_dir, warnings):
 
 
 def _fill_section_divider(slide, content, draft_dir, warnings):
-    _set_title(slide, content["punchline"])
+    _set_title(slide, content["punchline"], warnings)
     if content.get("substory_number"):
         # Add a small footer with the substory number
         _add_textbox(slide, f"Substory {content['substory_number']}",
@@ -928,7 +1205,7 @@ def _fill_big_idea(slide, content, draft_dir, warnings):
                      else "big_idea.image_path")
     if graphic_src:
         # Mode 2: banner + image (original layout)
-        _set_title(slide, content["title"])
+        _set_title(slide, content["title"], warnings)
         path = _resolve_asset_path(graphic_src, draft_dir,
                                    warnings, graphic_field)
         if path:
@@ -944,7 +1221,7 @@ def _fill_big_idea(slide, content, draft_dir, warnings):
     _reposition_placeholder_to_center(slide, idx=0,
                                       left_in=0.0, top_in=1.94,
                                       width_in=10.0, height_in=1.27)
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # 48pt vs section_divider's 40pt — big_idea is opening-claim
     # emphasis; section_divider is transition cadence.
     _set_title_font_size(slide, font_pt=48)
@@ -957,7 +1234,7 @@ def _fill_big_number(slide, content, draft_dir, warnings):
     LAYOUT_FIXES to be the huge centered area. We place the headline + a
     smaller subtitle below as a separate text box (the placeholder font is
     66pt bold, and we want subtitle smaller)."""
-    _set_title(slide, content["headline"])
+    _set_title(slide, content["headline"], warnings)
     # The big number sits in the TITLE placeholder. The master's
     # LAYOUT_FIXES region (top 1.01in, 3.59in tall, bottom 4.60) left
     # only 0.40in between the title and the logo strip at y=5.00 — too
@@ -1015,7 +1292,7 @@ def _fill_big_number(slide, content, draft_dir, warnings):
 
 
 def _fill_claim_evidence(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     bullets = content["bullets"]
     # v0.6 / D-082: accept either `figure` (curated data figure) or
     # `image_path` (v0.3.3+ image-gen pipeline binding). The merger's
@@ -1057,7 +1334,15 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
         # caption row + the logo strip. _enable_normautofit at the
         # 80% default + 20% line-spacing reduction is sufficient on
         # this content; the no-figure branch uses the same defaults.
-        _enable_normautofit(slide, 1)
+        # v0.8.0 Tier G.10-B: geometry-aware fontScale. Master body
+        # base = 14pt; box 4.86×3.50 in (narrow because figure on right).
+        _ce_bw_chars = sum(len(str(b or "")) for b in bullets)
+        _enable_normautofit_by_geometry(
+            slide, 1, base_pt=14, content_chars=_ce_bw_chars,
+            warnings=warnings,
+            where=f"claim_evidence body w/figure "
+                  f"(slide {getattr(slide, 'slide_id', '?')})",
+        )
         path = _resolve_asset_path(figure_src, draft_dir, warnings,
                                     figure_field)
         if path:
@@ -1112,7 +1397,15 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
             ph.width = Inches(9.32)
             ph.height = Inches(3.25)   # bottom 4.55
         _set_placeholder_bullets(slide, 1, bullets)
-        _enable_normautofit(slide, 1)
+        # v0.8.0 Tier G.10-B: geometry-aware fontScale. Master body
+        # base = 14pt; box 9.32×3.25 in (full width, no figure).
+        _ce_nofig_chars = sum(len(str(b or "")) for b in bullets)
+        _enable_normautofit_by_geometry(
+            slide, 1, base_pt=14, content_chars=_ce_nofig_chars,
+            warnings=warnings,
+            where=f"claim_evidence body no-figure "
+                  f"(slide {getattr(slide, 'slide_id', '?')})",
+        )
     if content.get("citations"):
         # short-form citation footer at bottom
         cite_text = " · ".join(content["citations"])
@@ -1121,7 +1414,7 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
 
 
 def _fill_two_column_compare(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # Idx 1 = left column, Idx 2 = right column (per master inspection).
     for idx, col_key in [(1, "left_col"), (2, "right_col")]:
         col_title = content[f"{col_key}_title"]
@@ -1156,7 +1449,7 @@ def _fill_two_column_compare(slide, content, draft_dir, warnings):
 
 
 def _fill_data_figure(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # Remove the body placeholder entirely — the body region is occupied
     # by the freeform figure + caption + data_source. Setting ph.text = ""
     # is insufficient: the layout-defined "Click to add text" prompt
@@ -1233,7 +1526,7 @@ def _fill_data_table(slide, content, draft_dir, warnings):
     from pptx.util import Inches, Pt
     from pptx.enum.text import PP_ALIGN
 
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     _remove_placeholder(slide, 1)  # body region taken by the table
 
     columns = content["columns"]
@@ -1388,7 +1681,7 @@ def _set_table_cell(cell, text: str, *, bg_rgb, text_rgb,
 
 
 def _fill_workflow_diagram(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # Remove the body placeholder — its region is occupied by the
     # rendered diagram (native python-pptx shapes).
     _remove_placeholder(slide, 1)
@@ -1465,7 +1758,7 @@ def _fill_workflow_diagram(slide, content, draft_dir, warnings):
 
 
 def _fill_methods_summary(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     _set_placeholder_bullets(slide, 1, content["bullets"])
     # Trim the body placeholder clear of the footer band — the master
     # body runs to y=5.00 (into the logo strip); reserve 4.50–4.92 for
@@ -1482,7 +1775,16 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
     # content (5-7 bullets, 600-800 chars) shrinks to fit. The layout-
     # level body_pr autofit from LAYOUT_FIXES gets overridden when
     # python-pptx creates a fresh slide-level txBody during fill.
-    _enable_normautofit(slide, 1)
+    # v0.8.0 Tier G.10-B: geometry-aware fontScale instead of fixed 80%.
+    # Master body base = 14pt; box ~9.32×3.15 in. The geometry sizer
+    # computes the actual scale needed for the bullet content,
+    # preventing the "touch the textbox to refit" symptom.
+    _body_chars = sum(len(str(b or "")) for b in content["bullets"])
+    _enable_normautofit_by_geometry(
+        slide, 1, base_pt=14, content_chars=_body_chars,
+        warnings=warnings,
+        where=f"methods_summary body (slide {getattr(slide, 'slide_id', '?')})",
+    )
 
     # 2026-04-26 fix #59: render tools_versions as a footer band.
     # Prior version dropped this structured data entirely, leaving only
@@ -1524,7 +1826,7 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
 
 
 def _fill_concept_illustration(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # The body placeholder on the left is narrowed (per Adam's
     # build_master fix) but v0.1 schema has no body-text field for this
     # layout — remove the placeholder so its empty prompt doesn't show
@@ -1544,7 +1846,7 @@ def _fill_concept_illustration(slide, content, draft_dir, warnings):
 
 
 def _fill_cross_tenant_integration(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # Build the body content: tenant list, K-BERDL DBs, sibling projects
     lines: list[str] = []
     if content.get("no_signal_fallback"):
@@ -1571,7 +1873,7 @@ def _fill_cross_tenant_integration(slide, content, draft_dir, warnings):
 
 
 def _fill_implications(slide, content, draft_dir, warnings):
-    _set_title(slide, content["title"])
+    _set_title(slide, content["title"], warnings)
     # bullets is list of {claim, evidence_pointer}
     lines = [
         f"{b['claim']}\n   ↪ {b['evidence_pointer']}"
@@ -1582,7 +1884,7 @@ def _fill_implications(slide, content, draft_dir, warnings):
 
 def _fill_acknowledgments(slide, content, draft_dir, warnings):
     # Title is hard-coded "Acknowledgments" (exempt from punchline rule per SPEC §6.1)
-    _set_title(slide, "Acknowledgments")
+    _set_title(slide, "Acknowledgments", warnings)
     contributors = list(content["contributors"])
     # 2026-04-29 (v0.2.2): TBD soft-default. Live test draft_10 slide 25
     # showed "TBD - populated by production orchestrator" + "TBD" leaking
@@ -1622,7 +1924,7 @@ def _fill_acknowledgments(slide, content, draft_dir, warnings):
 
 def _fill_references(slide, content, draft_dir, warnings):
     # Title is hard-coded "References" (exempt from punchline rule per SPEC §6.1)
-    _set_title(slide, "References")
+    _set_title(slide, "References", warnings)
     _set_placeholder_bullets(slide, 1, content["refs_short"])
     # 2026-04-28 (v0.2.1): normAutofit at slide level. References at 8
     # entries × ~134 chars wraps to ~17 lines @ 18pt against a 12-line
@@ -1640,7 +1942,7 @@ def _fill_references(slide, content, draft_dir, warnings):
 
 
 def _fill_qa_anticipated(slide, content, draft_dir, warnings):
-    _set_title(slide, content["question"])
+    _set_title(slide, content["question"], warnings)
     # The `question` is an anticipated *audience question* — naturally
     # longer than a normal slide title. Shrink it to fit the 1.3in title
     # band rather than letting it overflow into the body region (the same
@@ -1724,7 +2026,7 @@ def _fill_deck_close(slide, content, draft_dir, warnings):
     moving the citation off the slide face, parallel to how
     cross_tenant + deck_close already promote speaker_notes_seed.
     """
-    _set_title(slide, content["unified_point"])
+    _set_title(slide, content["unified_point"], warnings)
     _set_placeholder_bullets(slide, 1, content["key_takeaways"])
     # Trim the body placeholder above the forward-call zone — same
     # pattern as methods_summary. v0.8/D-094: data_source no longer
@@ -1742,7 +2044,15 @@ def _fill_deck_close(slide, content, draft_dir, warnings):
                                     # speaker_notes per D-094)
     # Dense key_takeaways shrink-to-fit (3-5 bullets, each 1 sentence;
     # average ~80 chars per bullet → 240-400 chars in the body region).
-    _enable_normautofit(slide, 1)
+    # v0.8.0 Tier G.10-B: geometry-aware fontScale. Master body base
+    # = 14pt; box 9.32×2.85 in. Computes the actual scale needed for
+    # this slide's key_takeaways content vs. the trimmed body region.
+    _kt_chars = sum(len(str(b or "")) for b in content.get("key_takeaways", []))
+    _enable_normautofit_by_geometry(
+        slide, 1, base_pt=14, content_chars=_kt_chars,
+        warnings=warnings,
+        where=f"deck_close key_takeaways (slide {getattr(slide, 'slide_id', '?')})",
+    )
 
     # Forward-call textbox — the audience's actionable takeaway.
     # Positioned just below the trimmed body placeholder. v0.8/D-094:

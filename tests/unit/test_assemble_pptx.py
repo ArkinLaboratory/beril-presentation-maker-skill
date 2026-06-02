@@ -458,6 +458,13 @@ def test_slide_level_title_autofit_landed(ss, asm, tmp_path):
     failures = []
     intentional_no_autofit = {"big_number", "big_idea"}
 
+    # v0.8.0 Tier G.10-B: _set_title now writes a GEOMETRY-DERIVED
+    # fontScale (computed from chars × base_pt vs. box width × height).
+    # The old fixed-80% commit caused PowerPoint to under-shrink long
+    # titles, leaving "touch the textbox to refit" symptoms. The new
+    # behavior writes a scale in [FONTSCALE_FLOOR=60000, FONTSCALE_FULL=100000]
+    # — short titles get 100%, long ones get a tighter scale that
+    # actually fits on render.
     for i, slide in enumerate(prs.slides, 1):
         if slide.slide_layout.name in intentional_no_autofit:
             continue
@@ -477,10 +484,20 @@ def test_slide_level_title_autofit_landed(ss, asm, tmp_path):
                 f"missing slide-level <a:normAutofit/>"
             )
             continue
-        if norm.get("fontScale") != "80000":
+        scale_str = norm.get("fontScale")
+        try:
+            scale = int(scale_str)
+        except (TypeError, ValueError):
             failures.append(
                 f"slide {i} ({slide.slide_layout.name}): "
-                f"fontScale={norm.get('fontScale')!r}, expected '80000'"
+                f"fontScale={scale_str!r} is not an integer"
+            )
+            continue
+        if not (60000 <= scale <= 100000):
+            failures.append(
+                f"slide {i} ({slide.slide_layout.name}): "
+                f"fontScale={scale} outside [60000, 100000] "
+                f"(G.10-B geometry-derived range)"
             )
         if body_pr.get("anchor") != "t":
             failures.append(
