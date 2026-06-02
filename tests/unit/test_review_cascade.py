@@ -1266,3 +1266,107 @@ def test_tier1_aggregates_curator_figure_floor_in_run_tier1(rc, tmp_path):
     assert result.status == "advisory"
     assert result.has_p0 is False
 
+
+
+# ---------------------------------------------------------------------------
+# v0.8.0 Tier G.10-A: _read_layout_overlaps
+# ---------------------------------------------------------------------------
+
+def test_tier1_layout_overlaps_no_op_when_missing(rc, tmp_path):
+    """Reader is no-op-safe when audit/layout_overlaps.json absent
+    (read-if-present pattern)."""
+    assert rc._read_layout_overlaps(tmp_path) == []
+
+
+def test_tier1_layout_overlaps_reads_p0_container_breach(rc, tmp_path):
+    """container_breach findings lift as P0 — the rendered slide is
+    mechanically broken (shape extends off-canvas, projection cuts
+    it off)."""
+    _write_audit_json(tmp_path, "layout_overlaps.json", {
+        "schema_version": "layout-overlaps.v1",
+        "pptx_path": "deliverable/draft.pptx",
+        "pad_emu": 36000,
+        "findings": [
+            {
+                "kind": "container_breach",
+                "severity": "P0",
+                "slide_id": 5,
+                "layout_name": "workflow_diagram",
+                "shape_a": "Parallelogram 15",
+                "shape_b": "",
+                "overlap_area_emu": 459870048000,
+                "overlap_fraction": 0.306,
+                "message": "shape extends past canvas",
+            },
+        ],
+    })
+    findings = rc._read_layout_overlaps(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.kind == "layout_overlaps:container_breach"
+    assert f.severity == "P0"
+    assert f.slide_id == 5
+    assert f.evidence["layout_name"] == "workflow_diagram"
+    assert f.evidence["shape_a"] == "Parallelogram 15"
+    assert f.evidence["lo_kind"] == "container_breach"
+
+
+def test_tier1_layout_overlaps_reads_p1_text_overlap(rc, tmp_path):
+    """text_box_overlap / image_text_overlap / footer_title_collision
+    lift as P1 soft-warnings."""
+    _write_audit_json(tmp_path, "layout_overlaps.json", {
+        "schema_version": "layout-overlaps.v1",
+        "findings": [
+            {"kind": "text_box_overlap", "severity": "P1",
+             "slide_id": 3, "layout_name": "claim_evidence",
+             "shape_a": "A", "shape_b": "B",
+             "overlap_area_emu": 1000, "overlap_fraction": 0.1,
+             "message": "A overlaps B"},
+            {"kind": "image_text_overlap", "severity": "P1",
+             "slide_id": 7, "layout_name": "big_idea",
+             "shape_a": "Pic", "shape_b": "Body",
+             "overlap_area_emu": 2000, "overlap_fraction": 0.2,
+             "message": "Pic overlaps Body"},
+            {"kind": "footer_title_collision", "severity": "P1",
+             "slide_id": 8, "layout_name": "data_figure",
+             "shape_a": "Title", "shape_b": "Footer",
+             "overlap_area_emu": 500, "overlap_fraction": 0.05,
+             "message": "title eats body"},
+        ],
+    })
+    findings = rc._read_layout_overlaps(tmp_path)
+    assert len(findings) == 3
+    for f in findings:
+        assert f.severity == "P1"
+        assert f.kind.startswith("layout_overlaps:")
+
+
+def test_tier1_layout_overlaps_empty_findings_returns_empty(rc, tmp_path):
+    """A run with 0 overlaps emits 0 cascade findings."""
+    _write_audit_json(tmp_path, "layout_overlaps.json", {
+        "schema_version": "layout-overlaps.v1",
+        "findings": [],
+    })
+    assert rc._read_layout_overlaps(tmp_path) == []
+
+
+def test_tier1_aggregates_layout_overlaps_in_run_tier1(rc, tmp_path):
+    """run_tier1 calls _read_layout_overlaps as the 10th reader;
+    findings appear in the aggregated result. A P0 container_breach
+    marks the tier 'fail' (consistent with other P0-producing
+    readers)."""
+    _write_audit_json(tmp_path, "layout_overlaps.json", {
+        "schema_version": "layout-overlaps.v1",
+        "findings": [
+            {"kind": "container_breach", "severity": "P0",
+             "slide_id": 5, "layout_name": "workflow_diagram",
+             "shape_a": "X", "shape_b": "",
+             "overlap_area_emu": 1000, "overlap_fraction": 0.3,
+             "message": "x extends past canvas"},
+        ],
+    })
+    result = rc.run_tier1(tmp_path)
+    kinds = [f.kind for f in result.findings]
+    assert any(k.startswith("layout_overlaps:") for k in kinds)
+    # P0 finding → tier fails
+    assert result.has_p0 is True

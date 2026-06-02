@@ -203,3 +203,39 @@ def test_g8_stage_skips_2nd_revise_if_vq_only_missing():
         "stage_visual_qa_final must skip the 2nd revise pass when "
         "no VQ-only review file exists (defensive against merger "
         "writing zero findings)")
+
+
+# ---------------------------------------------------------------------------
+# v0.8.0 Tier G.10-A: layout-overlap detector runs in stage_visual_qa_final
+# ---------------------------------------------------------------------------
+
+def test_stage_visual_qa_final_invokes_layout_overlap_check():
+    """Source-level pin: stage_visual_qa_final must invoke
+    check_slide_layout_overlaps.py per Tier G.10-A. The detector
+    runs BEFORE visual-QA so its findings join the same revise
+    channel."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    assert "check_slide_layout_overlaps.py" in body, (
+        "stage_visual_qa_final must invoke check_slide_layout_overlaps.py "
+        "(Tier G.10-A: deterministic overlap detector replaces visual-"
+        "QA's overlap-class findings)"
+    )
+
+
+def test_stage_visual_qa_final_overlap_check_runs_before_visual_qa():
+    """Source-level pin: the overlap check must precede the
+    visual-QA invocation so visual-QA can be narrowed in future
+    iterations + the overlap findings flow through the same merge
+    pipeline."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    overlap_pos = body.find("check_slide_layout_overlaps.py")
+    vq_pos = body.find("visual_qa.py")
+    assert overlap_pos > 0
+    assert vq_pos > 0
+    assert overlap_pos < vq_pos, (
+        "Tier G.10-A: layout-overlap check must run BEFORE visual_qa.py "
+        "(detector is cheaper + its findings can inform what visual-QA "
+        "still needs to flag)"
+    )

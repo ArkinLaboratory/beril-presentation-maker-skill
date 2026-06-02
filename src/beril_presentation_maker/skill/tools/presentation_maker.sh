@@ -3364,6 +3364,17 @@ stage_visual_qa_final() {
     return 0
   fi
 
+  # 0. v0.8.0 Tier G.10-A: deterministic bounding-box overlap detector.
+  #    Pure-geometry check over the rendered .pptx — cheaper, faster,
+  #    and more accurate than visual-QA's vision-LLM raster judgment
+  #    for the overlap/breach class of findings. Runs BEFORE visual-QA
+  #    so its findings join the same revise channel (cascade Tier-1
+  #    reader + adversarial_review.json merge). Output:
+  #    audit/layout_overlaps.{json,md}.
+  echo "  running layout-overlap detector (Tier G.10-A)..." >&2
+  "$PYTHON_BIN" "$TOOLS_DIR/check_slide_layout_overlaps.py" \
+    "$OUTDIR" 2>&1 | sed 's/^/    /' >&2 || true
+
   # 1. Run visual-QA against the (post-revise) deck. Output to
   #    audit/visual_qa_final.json (distinct from the cascade's
   #    pre-revise visual_qa.json).

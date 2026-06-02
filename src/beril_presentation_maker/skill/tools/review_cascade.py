@@ -584,6 +584,52 @@ def _read_cross_tenant_grounding(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_layout_overlaps(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/layout_overlaps.json (v0.8.0 Tier G.10-A output)
+    if present. Pure-geometry deterministic overlap detection over
+    the rendered .pptx.
+
+    Per check_slide_layout_overlaps.py:
+      - `container_breach`: P0 (shape extends past slide canvas;
+        renders cut off in projection).
+      - `text_box_overlap` / `image_text_overlap` /
+        `footer_title_collision`: P1.
+
+    Each OverlapFinding maps to a cascade finding with
+    `kind=layout_overlaps:<finding-kind>`. Read-if-present per the
+    figure_provenance pattern: the cascade does NOT invoke the
+    checker (stage_visual_qa_final does, before visual-QA).
+    """
+    payload = _load_json_safe(
+        draft_dir / "audit" / "layout_overlaps.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        sev = f.get("severity", "P1")
+        if sev not in ("P0", "P1", "P2"):
+            sev = "P1"
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind=f"layout_overlaps:{f.get('kind', '?')}",
+            severity=sev,
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={
+                "layout_name": f.get("layout_name"),
+                "shape_a": f.get("shape_a"),
+                "shape_b": f.get("shape_b"),
+                "overlap_area_emu": f.get("overlap_area_emu"),
+                "overlap_fraction": f.get("overlap_fraction"),
+                "lo_kind": f.get("kind"),
+            },
+        ))
+    return findings
+
+
 def _read_substory_shape(draft_dir: Path) -> list[CascadeFinding]:
     """Read audit/substory_shape.json (v0.5 Tier B / D-073 output) if
     present. Per D-073: substory-shape findings emit at P1 severity
@@ -649,6 +695,10 @@ def run_tier1(draft_dir: Path) -> TierResult:
          read-if-present; never invoke. P1 advisory; never gates).
       9. audit/curator_figure_floor.json (v0.8 Tier A / D-093:
          read-if-present; never invoke. P1 advisory; never gates).
+      10. audit/layout_overlaps.json (v0.8.0 Tier G.10-A:
+         read-if-present; never invoke. container_breach lifts as
+         P0 — slides mechanically broken cut off in projection;
+         text/image overlaps lift as P1).
 
     DQ4 short-circuit semantics: a P3/P4/P5 fail (per _P0_VALIDATORS)
     marks the tier 'fail' and triggers cascade short-circuit; otherwise
@@ -712,6 +762,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_curator_figure_floor(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"curator_figure_floor read raised: {exc}")
+
+    # 10. Layout overlaps (v0.8.0 Tier G.10-A; read-if-present).
+    try:
+        findings.extend(_read_layout_overlaps(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"layout_overlaps read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)

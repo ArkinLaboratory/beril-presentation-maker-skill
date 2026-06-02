@@ -65,6 +65,8 @@ _EXECUTABLE_FILES = (
     "tools/revise_loop.py",
     "tools/image_gen_calibration.py",
     "tools/draft_paths.py",
+    # v0.8.0 Tier G.10-A: deterministic layout-overlap detector
+    "tools/check_slide_layout_overlaps.py",
 )
 
 
