@@ -794,33 +794,202 @@ def _figure_score(record: FigureRecord) -> tuple[int, str]:
 # figure association.
 _NB_ID_RE = re.compile(r"\b(NB\d+)[a-z]?", re.IGNORECASE)
 
+# v0.8 Tier G.9: extended NB-id extraction for projects whose REPORT.md
+# uses the NUMERIC-PREFIX notebook naming convention (e.g.,
+# `03_h1_formal_test.ipynb`, `Notebook: 03_h1_formal_test.ipynb`)
+# rather than the NB-PREFIX convention (`NB03_...`). The numeric
+# token at the start of the filename maps to the same NB-id (03 →
+# NB03) — this normalizer accepts both. Used by REPORT.md walker
+# below to bridge figures cited in REPORT-sections to substory
+# analyses that use the bare NB-id convention.
+_NUMERIC_NOTEBOOK_RE = re.compile(
+    r"\b(\d{2})_[a-z][a-z0-9_]*\.ipynb\b", re.IGNORECASE)
 
-def _figure_nb_ids(record: "FigureRecord") -> set[str]:
+# v0.8 Tier G.9: explicit `Notebook: <filename>` prose-cite pattern
+# common in REPORT.md sections. The filename portion may be either
+# `NB03_...` or `03_...` form.
+_NOTEBOOK_PROSE_CITE_RE = re.compile(
+    r"Notebook[s]?:?\s+([A-Za-z0-9_]+\.ipynb|NB\d+[a-z]?)",
+    re.IGNORECASE)
+
+# Markdown image reference pattern. Captures the URL (figure path).
+_MD_IMAGE_REF_RE = re.compile(
+    r"!\[[^\]]*\]\(([^)]+\.(?:png|jpg|jpeg|svg|pdf|gif|webp))\)",
+    re.IGNORECASE)
+
+
+def _normalize_to_nb_id(token: str) -> Optional[str]:
+    """Extract a normalized NB-id from any notebook-name-flavored token.
+
+    Accepts:
+      - 'NB03', 'NB04b'                → 'NB03', 'NB04'
+      - 'NB03_h1_test.ipynb'           → 'NB03'
+      - '03_h1_formal_test.ipynb'      → 'NB03'  (v0.8 Tier G.9 — numeric prefix)
+      - '03_h1_formal_test'            → 'NB03'  (v0.8 Tier G.9 — no extension)
+
+    Returns None if no NB-id pattern matched.
+    """
+    # First try NB-prefix forms
+    m = _NB_ID_RE.search(token)
+    if m:
+        return m.group(1).upper()
+    # Then numeric-prefix-with-underscore forms
+    m = _NUMERIC_NOTEBOOK_RE.search(token)
+    if m:
+        return f"NB{int(m.group(1)):02d}"
+    # Fallback: bare 2-digit number followed by underscore
+    m = re.search(r"\b(\d{2})_[a-z]", token, re.IGNORECASE)
+    if m:
+        return f"NB{int(m.group(1)):02d}"
+    return None
+
+
+def _walk_report_for_figure_nb_ids(
+    report_path: Path,
+) -> dict[str, set[str]]:
+    """Walk REPORT.md and build {figure_path: set(nb_ids)}.
+
+    For each ![](figures/x.png) reference, find the nearest preceding
+    notebook citation within ~80 lines (handles long sections with
+    multiple figures). Multiple citations within range all contribute.
+
+    v0.8 Tier G.9 — added so projects whose figures are named by
+    hypothesis-id (h1/h2/h3) or domain words (rather than NB-prefix)
+    can still bind to substory analyses via the REPORT.md context.
+
+    Returns {} if REPORT.md missing or unreadable.
+    """
+    if not report_path.is_file():
+        return {}
+    try:
+        text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    lines = text.split("\n")
+
+    # Pre-scan: for each line, collect NB-ids mentioned on that line
+    # (whether explicit `NB##` or numeric-prefix notebook references).
+    nb_ids_per_line: list[set[str]] = []
+    for line in lines:
+        ids: set[str] = set()
+        # Pattern A: NB-prefix form (NB01, NB04b)
+        for m in _NB_ID_RE.finditer(line):
+            ids.add(m.group(1).upper())
+        # Pattern B: numeric-prefix `.ipynb` form (03_h1_formal_test.ipynb)
+        for m in _NUMERIC_NOTEBOOK_RE.finditer(line):
+            ids.add(f"NB{int(m.group(1)):02d}")
+        # Pattern C: explicit "Notebook: X" prose cite
+        for m in _NOTEBOOK_PROSE_CITE_RE.finditer(line):
+            normalized = _normalize_to_nb_id(m.group(1))
+            if normalized:
+                ids.add(normalized)
+        nb_ids_per_line.append(ids)
+
+    # Now walk lines looking for figure references, attribute to the
+    # nearest preceding context. "Nearest preceding" = walk backward
+    # from the figure-reference line up to 80 lines, accumulating
+    # NB-ids; stop when we hit a section header (# / ##) since that
+    # demarcates a new section.
+    figure_to_nb_ids: dict[str, set[str]] = {}
+    section_header_re = re.compile(r"^#{1,3}\s")
+
+    for line_idx, line in enumerate(lines):
+        for m in _MD_IMAGE_REF_RE.finditer(line):
+            fig_path = m.group(1).strip()
+            # Normalize: 'figures/x.png' → keep as-is.
+            ids_found: set[str] = set(nb_ids_per_line[line_idx])
+            # Walk backward up to 80 lines OR until section header.
+            for back in range(1, 81):
+                back_idx = line_idx - back
+                if back_idx < 0:
+                    break
+                back_line = lines[back_idx]
+                if section_header_re.match(back_line):
+                    # Include this header line's NB-ids (section title
+                    # may name a notebook), then stop walking further.
+                    ids_found.update(nb_ids_per_line[back_idx])
+                    break
+                ids_found.update(nb_ids_per_line[back_idx])
+            # Also walk forward up to 20 lines (caption + next-line
+            # citations are sometimes BELOW the figure reference).
+            for fwd in range(1, 21):
+                fwd_idx = line_idx + fwd
+                if fwd_idx >= len(lines):
+                    break
+                fwd_line = lines[fwd_idx]
+                if section_header_re.match(fwd_line):
+                    break
+                ids_found.update(nb_ids_per_line[fwd_idx])
+            if ids_found:
+                existing = figure_to_nb_ids.setdefault(fig_path, set())
+                existing.update(ids_found)
+    return figure_to_nb_ids
+
+
+def _figure_nb_ids(
+    record: "FigureRecord",
+    report_nb_ids: dict[str, set[str]] | None = None,
+) -> set[str]:
     """Return the set of NB-ids associated with a figure record.
 
-    Looks at the figure's filename + every savefig-origin notebook
-    + every notebook_md caption notebook. A figure may map to
-    multiple NB-ids (e.g., re-saved by a different notebook), so
-    the result is a set rather than a single id.
+    Looks at:
+      - the figure's filename + path (matched against _NB_ID_RE)
+      - every savefig-origin notebook (NB-id prefix + numeric prefix)
+      - every notebook_md caption's notebook field
+      - v0.8 Tier G.9: REPORT.md citation context (via
+        report_nb_ids lookup), when supplied. This catches figures
+        named by hypothesis-id or domain words that don't carry an
+        NB-id in the filename but ARE cited in REPORT.md sections
+        adjacent to notebook references.
+
+    A figure may map to multiple NB-ids (re-saved by a different
+    notebook, or cited in multiple REPORT sections), so the result
+    is a set.
     """
     ids: set[str] = set()
+    # Filename/path token (NB-prefix form first, numeric fallback)
     for token in [record.filename, record.path]:
         for m in _NB_ID_RE.finditer(token):
             ids.add(m.group(1).upper())
+        for m in _NUMERIC_NOTEBOOK_RE.finditer(token):
+            ids.add(f"NB{int(m.group(1)):02d}")
+    # savefig origins
     for origin in record.savefig_origins:
         for m in _NB_ID_RE.finditer(origin.notebook):
             ids.add(m.group(1).upper())
+        for m in _NUMERIC_NOTEBOOK_RE.finditer(origin.notebook):
+            ids.add(f"NB{int(m.group(1)):02d}")
+    # notebook_md captions
     for cap in record.captions:
         nb = cap.context.get("notebook", "") if cap.context else ""
         for m in _NB_ID_RE.finditer(nb):
             ids.add(m.group(1).upper())
+        for m in _NUMERIC_NOTEBOOK_RE.finditer(nb):
+            ids.add(f"NB{int(m.group(1)):02d}")
+    # v0.8 Tier G.9: REPORT.md citation context
+    if report_nb_ids is not None:
+        # Look up by exact path AND by filename (in case the REPORT
+        # references the figure with a slightly different prefix).
+        ids.update(report_nb_ids.get(record.path, set()))
+        # Also try `figures/<basename>` if the path is fully qualified
+        # or has different prefixes.
+        basename = record.path.rsplit("/", 1)[-1]
+        ids.update(report_nb_ids.get(f"figures/{basename}", set()))
     return ids
 
 
 def _substory_nb_ids(notebook_filenames: list[str]) -> set[str]:
-    """Return NB-id set for a substory's analyses notebook filenames."""
+    """Return NB-id set for a substory's analyses notebook filenames.
+
+    v0.8 Tier G.9: handles both NB-prefix and numeric-prefix forms.
+    """
     ids: set[str] = set()
     for fn in notebook_filenames:
+        normalized = _normalize_to_nb_id(fn)
+        if normalized:
+            ids.add(normalized)
+        # Also try the more permissive _NB_ID_RE.finditer for tokens
+        # that contain multiple NB-ids (rare but possible).
         for m in _NB_ID_RE.finditer(fn):
             ids.add(m.group(1).upper())
     return ids

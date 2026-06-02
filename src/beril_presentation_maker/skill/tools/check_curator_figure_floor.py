@@ -118,6 +118,18 @@ SCHEMA_VERSION = "curator-figure-floor.v1"
 # check_figure_provenance.py).
 _NB_ID_RE = re.compile(r"\b(NB\d+)[a-z]?", re.IGNORECASE)
 
+# v0.8 Tier G.9: also accept the numeric-prefix notebook convention
+# (`03_h1_formal_test.ipynb`) used by projects like
+# lanthanide_methylotrophy_atlas. The 2-digit prefix at the start
+# of a basename maps to the same NB-id (03 → NB03). Used by
+# _nb_ids() to extract NB-ids from figure paths whose basenames
+# follow that convention (e.g., a project might name figures
+# `03_h1_forest.png` instead of `NB03_h1_forest.png`). The
+# token boundary uses \b to also catch numeric prefixes that
+# appear mid-string (e.g., "see ... 05_lanmodulin_test.ipynb").
+_NUMERIC_NOTEBOOK_RE = re.compile(
+    r"(?:^|[/\s(,;])(\d{2})_[a-z]", re.IGNORECASE)
+
 # Substory header pattern (02_substories.md template).
 _SUBSTORY_HEADER_RE = re.compile(
     r"^### (S\d+)\s*[—–\-]", re.MULTILINE)
@@ -267,6 +279,55 @@ def parse_inventory_figures(inventory_path: Path) -> list[str]:
     return [m.group(1) for m in _INVENTORY_PATH_RE.finditer(text)]
 
 
+def parse_inventory_with_nb_ids(
+    inventory_path: Path,
+) -> dict[str, set[str]]:
+    """Parse figures_inventory.md and return {figure_path: set(NB-ids)}.
+
+    v0.8 Tier G.9: extracts NB-ids from EACH figure's context block
+    (notebook-context line + Generated-by line), not just from the
+    bare path. This catches the lanthanide-style case where figures
+    are named `h1_*.png` (no NB-id in path) but the inventory's
+    notebook-context section says
+    `notebooks/03_h1_formal_test.ipynb`.
+
+    Each figure entry in figures_inventory.md spans from its `###`
+    heading to the next `###` heading. Within that block, we look
+    for notebook references (both `NB##` and numeric-prefix forms)
+    and accumulate their normalized NB-ids.
+
+    Returns {} if file missing or unparseable.
+    """
+    if not inventory_path.is_file():
+        return {}
+    try:
+        text = inventory_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    out: dict[str, set[str]] = {}
+    # Split on ### headings (each figure has one). re.split keeps
+    # the headings intact via a regex that matches the heading line.
+    heading_re = re.compile(
+        r"^### `(figures/[^`]+\.(?:png|jpg|jpeg|svg|pdf))`",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    matches = list(heading_re.finditer(text))
+    for i, m in enumerate(matches):
+        fig_path = m.group(1)
+        block_start = m.end()
+        block_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        block = text[block_start:block_end]
+        # Extract all NB-ids from the block (NB-prefix + numeric-prefix)
+        ids: set[str] = set()
+        for nb_m in _NB_ID_RE.finditer(block):
+            ids.add(nb_m.group(1).upper())
+        for num_m in _NUMERIC_NOTEBOOK_RE.finditer(block):
+            ids.add(f"NB{int(num_m.group(1)):02d}")
+        out[fig_path] = ids
+    return out
+
+
 def scan_figures_dir(figures_dir: Path) -> list[str]:
     """Return ordered list of `figures/<filename>` paths under
     `figures_dir`. Filesystem fallback when figures_inventory.md is
@@ -292,8 +353,17 @@ def scan_figures_dir(figures_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _nb_ids(token: str) -> set[str]:
-    """All NB-ids in a string (normalized uppercase, no trailing letter)."""
-    return {m.group(1).upper() for m in _NB_ID_RE.finditer(token)}
+    """All NB-ids in a string (normalized uppercase, no trailing letter).
+
+    Accepts both NB-prefix form (`NB03`, `NB04b`) and the
+    v0.8 Tier G.9 numeric-prefix form (`03_h1_formal_test.ipynb`,
+    `03_h1_formal_test`). Numeric prefix at the start of a path
+    component normalizes to `NB<NN>` (e.g., `03_*` → `NB03`).
+    """
+    ids: set[str] = {m.group(1).upper() for m in _NB_ID_RE.finditer(token)}
+    for m in _NUMERIC_NOTEBOOK_RE.finditer(token):
+        ids.add(f"NB{int(m.group(1)):02d}")
+    return ids
 
 
 def figures_by_nb_id(figure_paths: list[str]) -> dict[str, list[str]]:
@@ -339,13 +409,37 @@ def check_figure_floor(
     substory_analyses = parse_substory_analyses(substories_path)
     curated_paths = parse_curated_figures(curated_figures_path)
     inv_paths: list[str] = []
+    # v0.8 Tier G.9: when figures_inventory.md is supplied, ALSO
+    # extract NB-ids from each figure's context block (notebook-
+    # context + savefig-origin lines). This is the load-bearing path
+    # for projects whose figures are named without NB-id prefix
+    # (e.g., `h1_*.png` for hypothesis-id naming) — the path-only
+    # NB-id matcher would fail entirely, but the inventory context
+    # carries the binding to the notebook that produced the figure.
+    inventory_context_nb_ids: dict[str, set[str]] = {}
     if inventory_figures_path is not None:
         inv_paths = parse_inventory_figures(inventory_figures_path)
+        inventory_context_nb_ids = parse_inventory_with_nb_ids(
+            inventory_figures_path)
     if not inv_paths and figures_dir is not None:
         inv_paths = scan_figures_dir(figures_dir)
 
     curated_idx = figures_by_nb_id(curated_paths)
     inventory_idx = figures_by_nb_id(inv_paths)
+
+    # v0.8 Tier G.9: merge inventory-context NB-ids into the indexes
+    # so figures whose path lacks NB-id still get matched via their
+    # generating-notebook reference.
+    for fig_path, ctx_ids in inventory_context_nb_ids.items():
+        for nbid in ctx_ids:
+            inventory_idx.setdefault(nbid, []).append(fig_path)
+    # Same for curated: a figure path may be in the curated set
+    # without an NB-id in its path; bridge via the inventory context.
+    for fig_path in curated_paths:
+        ctx_ids = inventory_context_nb_ids.get(fig_path, set())
+        for nbid in ctx_ids:
+            if fig_path not in curated_idx.setdefault(nbid, []):
+                curated_idx[nbid].append(fig_path)
 
     findings: list[FigureFloorFinding] = []
     n_with_candidates = 0
