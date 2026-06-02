@@ -248,6 +248,32 @@ def strip_orchestrator_metadata(slide: dict) -> dict:
     return cleaned
 
 
+# v0.8.0 (D-098): defensive belt-and-suspenders for the
+# duplicate-deck_close pattern. The per-substory composer MUST NOT
+# author a layout: deck_close slide; the dedicated stage_deck_close
+# stage owns that slide. Without this drop, the merged deck ships
+# two deck_close slides (final-substory's fragment + the dedicated
+# stage's fragment), which is what was observed on lanthanide
+# draft_1 (slide 25 of 31) and ibd draft_12. Extracted as helpers
+# so the drop logic is unit-testable.
+
+def is_per_substory_deck_close(slide: dict) -> bool:
+    """True if a per-substory fragment slide is a deck_close-layout
+    slide that must be dropped by the merger per D-098."""
+    return isinstance(slide, dict) and slide.get("layout") == "deck_close"
+
+
+def format_d098_drop_warning(sid: str, fragment_position: int) -> str:
+    """Format the stderr warning emitted when D-098 fires."""
+    return (
+        f"Warning: per-substory composer for {sid} emitted a "
+        f"layout: deck_close slide at fragment position "
+        f"{fragment_position}; dropping (D-098: deck_close is owned "
+        f"by stage_deck_close, not the per-substory composer). Check "
+        f"slide_compose.v3.x_overlay.md for prompt-side regression."
+    )
+
+
 # v0.3.3: image-manifest binding. The image-gen stage (between
 # speaker_notes and merge per V0_3_3_ARCHITECTURE.md §3) writes a
 # manifest at working/05_images/manifest.json; merge consumes it
@@ -720,6 +746,7 @@ def main() -> int:
     speaker_notes_dir = (Path(args.speaker_notes_dir)
                          if args.speaker_notes_dir else None)
     n_notes_injected = 0
+    n_per_substory_deck_close_dropped = 0
     for substory in substories:
         sid = substory["id"]
         fragment = fragments[sid]
@@ -730,6 +757,13 @@ def main() -> int:
             speaker_notes_dir, sid
         )
         for fragment_position, slide in enumerate(fragment["slides"]):
+            if is_per_substory_deck_close(slide):
+                n_per_substory_deck_close_dropped += 1
+                print(
+                    format_d098_drop_warning(sid, fragment_position),
+                    file=sys.stderr,
+                )
+                continue
             cleaned = strip_orchestrator_metadata(slide)
             # v0.3.3: image-manifest binding (approve / drop). Must
             # happen before global-id assignment so dropped slides
@@ -931,6 +965,12 @@ def main() -> int:
     if image_manifest is not None:
         print(f"  -> image-manifest: bound {n_images_bound} approved image(s); "
               f"dropped {n_slides_dropped} rejected/skipped slide(s)",
+              file=sys.stderr)
+    if n_per_substory_deck_close_dropped > 0:
+        print(f"  -> D-098: dropped {n_per_substory_deck_close_dropped} "
+              f"per-substory deck_close-layout slide(s); the dedicated "
+              f"stage_deck_close stage owns that slide. Check "
+              f"slide_compose.v3.x_overlay.md for prompt regression.",
               file=sys.stderr)
     print(f"     wrote {out_path}", file=sys.stderr)
     return 0

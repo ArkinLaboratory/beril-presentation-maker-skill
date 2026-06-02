@@ -3891,3 +3891,135 @@ scope expansion this is downstream of); D-008 / D-064 (the
 original concept_illustration semantics); D-096 (the now-
 default-on visual-QA that provides the safety net if the
 prompt rule alone is insufficient).
+
+---
+
+## D-098 — 2026-06-02 — v0.8.0: duplicate-deck_close root cause — per-substory composer ownership conflict with stage_deck_close
+
+**Context.** Lanthanide_methylotrophy_atlas draft_1 (the v0.8
+Tier-G validation deck) and ibd_phage_targeting draft_12 (the
+v0.8 Tier-G initial test deck) both shipped with TWO `layout:
+deck_close` slides — one templated from the final substory's
+fragment, one from the dedicated `stage_deck_close` stage.
+Adam flagged this on lanthanide draft_1 read: *"This deck
+duplicates an entire slide."* + during the v0.8 packaging
+discussion: *"We need to find why."*
+
+**Root cause (forensic investigation, 2026-06-02).** The v3.2
+slide_compose prompt and the orchestrator architecture
+contradict each other:
+
+- **Orchestrator design (D-086):** `stage_deck_close` is a
+  dedicated, standalone stage that runs `extract_deck_close.py`
+  to build a structured signal, then composes ONE deck_close
+  slide via `deck_close.v1.md`. The per-substory composer should
+  NOT emit a deck_close slide.
+- **v3.2 slide_compose overlay (lines 199-243, pre-fix):**
+  explicitly instructed the per-substory composer "Compose ONE
+  `deck_close` slide at the end of the deck (after the final
+  substory's C-slot, before references / acknowledgments)" — and
+  detailed the deck_close layout schema, composer rule, and
+  skip-on-non-STRONG semantics, all from the per-substory
+  composer's frame.
+
+Result: the LLM composing S3 (final substory of lanthanide;
+final substory of ibd) dutifully followed the v3.2 prompt
+instruction + emitted a deck_close-layout slide at the end of
+its fragment. Then `stage_deck_close` ALSO ran (per the
+orchestrator architecture), produced `deck_close.json`
+independently, and the merger spliced BOTH. On lanthanide
+draft_1 this produced slides 24 (substory composer) + 25
+(dedicated stage); on ibd draft_12 it produced the same
+pattern.
+
+**Why v3.2 acquired this contradiction.** D-086 (the original
+deck_close design) intended `deck_close.v1.md` as a standalone
+prompt. The v3.2 slide_compose overlay was authored later to
+document the closing-synthesis CONTRACT (so the LLM understood
+the broader deck shape it was composing within), but the
+overlay's wording crossed from "the deck ends with a deck_close
+slide" into "you, per-substory composer, should compose this
+slide." Probably an authoring mistake during D-086 → v3.2
+overlay propagation.
+
+**Decision.** Two-layer fix:
+
+1. **Prompt-layer (corrective, removes the contradiction):**
+   rewrite `slide_compose.v3.2_overlay.md`'s closing-synthesis
+   section to explicitly state that per-substory composition
+   STOPS at the final substory's C-slot; the dedicated
+   `stage_deck_close` stage owns the deck_close slide and the
+   per-substory composer must NOT author one. The failure-mode
+   entry shifts from "deck_close-skip" to
+   "deck_close-from-per-substory-composer" (the actual observed
+   regression). The header bullet (line 31-33) is reworded to
+   "Closing-synthesis awareness" (the composer is *aware* of the
+   closing slide but does not author it).
+
+2. **Merger-layer (defensive belt-and-suspenders):**
+   `merge_compose_fragments.py` gains a `is_per_substory_deck_close()`
+   predicate + `format_d098_drop_warning()` formatter. The
+   per-substory iteration drops any slide whose layout is
+   `deck_close` + emits a D-098 warning to stderr naming the
+   substory id, fragment position, and the prompt file to check
+   for regression. End-of-run summary includes the drop count
+   ("D-098: dropped N per-substory deck_close-layout slide(s)").
+
+The belt-and-suspenders mirrors the D-080 + D-085 + D-089 +
+D-093 pattern (prompt-side rule + validator-side defensive
+check). If a future prompt edit re-introduces the
+per-substory deck_close instruction, the merger drops the slide
++ surfaces the regression instead of silently shipping a
+duplicate.
+
+**Alternatives considered:**
+
+- **(a) Composer-layer detection (rejected).** Add a
+  post-composer-stage check that scans per-substory fragments for
+  layout:deck_close + fails. Rejected: too late — the LLM cost
+  is already paid; failing at this stage wastes the parallel-
+  compose batch. Better to drop at merge time + warn.
+
+- **(b) Allow per-substory deck_close + skip stage_deck_close
+  when present (rejected).** Lets the per-substory composer "win"
+  if it emits one. Rejected: the dedicated stage has the
+  structured signal (deck_close_signal.json) + the verbatim-fields
+  contract; the per-substory composer is improvising. Quality
+  asymmetry. Architecture should commit to the stronger source.
+
+- **(c) Merger-only fix without prompt change (rejected).** Drop
+  silently at merge time. Rejected: papers over the underlying
+  contradiction; next prompt edit re-introduces the bug. Adam:
+  *"We need to find why"* — the prompt-side rewrite is the why.
+
+- **(d) Prompt-only fix without merger guard (rejected).**
+  Cleans up the contradiction but provides no safety net against
+  future regression. The prompt is the source of truth, but
+  prompts drift (v3.x stack has accumulated multiple overlays
+  with subtle inter-overlay interactions; cf. D-095 v3.3
+  recency-bias fix). The merger guard catches drift at the
+  earliest point that doesn't cost an LLM call.
+
+**Test coverage.** 13 new tests in
+`test_merge_drops_per_substory_deck_close.py`:
+
+  - Predicate tests (5): true on deck_close layout; false on
+    claim_evidence, data_figure, missing-layout, non-dict.
+  - Warning-formatter tests (5): references D-098 string;
+    includes substory id + fragment position; names the
+    dropped layout; points at the prompt file; blames the
+    per-substory composer (not stage_deck_close).
+  - Main-loop integration pins (3): source-level checks that
+    the merger main() calls the predicate, emits the warning
+    via the formatter, and prints a drop-count summary at
+    end-of-run.
+
+Suite total: 1848 → 1861.
+
+**Related.** [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) Tier G
+duplicate-deck_close carry (now closed); D-086 (the deck_close
+design this fix preserves); D-095 (the v3.3 substory_design
+clean-overlay pattern that v3.2 slide_compose doesn't use —
+prompt-layering drift is endemic when overlays stack); D-080 /
+D-085 / D-089 / D-093 (the prompt-nudge + validator-check
+belt-and-suspenders pattern this follows).

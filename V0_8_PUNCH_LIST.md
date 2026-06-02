@@ -170,6 +170,24 @@ deferred to v0.8.1):**
   Tier-G runbook's invocation example uses the shell-direct
   path so this gap is bypassed.
 
+- **`extract_deck_close.py` captures REPORT.md HR separator
+  ("---") as `forward_call`.** Surfaced on lanthanide draft_1
+  (the deck_close.json fragment had `forward_call: "---"` with
+  a speaker_notes_seed self-confessing "the curator extractor
+  returned '---' for forward_call — the REPORT.md HR separator
+  was captured instead of Future Directions prose; verify and
+  patch forward_call before final render"). Separate from D-098
+  (duplicate-deck_close); D-098 prevented the rogue per-substory
+  slide but the stage_deck_close's own slide still consumed the
+  bad input on lanthanide. v0.8.1 fix: tighten
+  `extract_deck_close.py`'s REPORT.md "Future directions"
+  section parser to skip lines matching `^\s*---+\s*$` (the
+  markdown HR pattern). Filed as v0.8.1 carry, NOT a v0.8.0
+  release-blocker — the revise-loop's invariance check + the
+  composer's free-text override means the rendered slide rarely
+  ships with raw "---" prose; the worst-case impact is one
+  cycle of revise spent fixing it.
+
 ## Tier G.10 — Deterministic layout-quality pass (v0.8.0 release-blocker)
 
 **Status:** scoped 2026-06-02 after lanthanide_methylotrophy_atlas
@@ -192,8 +210,16 @@ block above):**
 
 - **Duplicate deck_close-shaped slide with `forward_call: "---"`**
   — visible regression (slide 25 of 31 on lanthanide draft_1). Adam:
-  "We need to find why." Investigate path through `extract_deck_close.py`
-  / merger / composer before applying fix at correct layer.
+  "We need to find why." **CLOSED 2026-06-02 (D-098):** root cause
+  was a v3.2 slide_compose prompt instruction telling the
+  per-substory composer to author a deck_close slide, contradicting
+  the dedicated stage_deck_close stage. Two-layer fix: (a) prompt
+  rewrite to remove the per-substory composer's deck_close
+  responsibility; (b) merger drops layout:deck_close from
+  per-substory fragments + emits D-098 warning. The `---`
+  forward_call (extract_deck_close.py capturing a REPORT.md HR
+  separator) is a SEPARATE downstream issue — file as v0.8.1
+  carry if recurs after D-098 lands.
 - **install-skill smoke fixture gap** — required for clean install
   per v0.8.0 packaging criterion ("clean install for users").
 - **`draft` wrapper drops `--prompts-version`** — required for the

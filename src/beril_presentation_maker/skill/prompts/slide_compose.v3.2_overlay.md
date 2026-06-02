@@ -28,14 +28,22 @@
 >    authoring their first non-Q slot, using the
 >    `transition_from_prior` field emitted by substory_design
 >    v3.2.
-> 3. **Closing synthesis** (D-086) — talks at STRONG mode budget
->    (talk-30) should end with a `deck_close` slide that brings
->    the arcs together into a unified takeaway.
+> 3. **Closing-synthesis awareness** (D-086) — talks at STRONG
+>    mode budget (talk-30) end with a `deck_close` slide that
+>    brings the arcs together into a unified takeaway. This slide
+>    is composed by a **separate orchestrator stage**
+>    (`stage_deck_close`), NOT by the per-substory composer. The
+>    per-substory composer must NOT emit a `deck_close`-layout
+>    slide; doing so produces a duplicate-deck_close pattern that
+>    has been observed in v0.7/v0.8 runs (lanthanide draft_1
+>    slide 25 of 31; ibd draft_12). See "deck_close ownership"
+>    below.
 >
 > Authoritative sources: D-085 (figure-relevance refinement;
 > Adam-direction *"if useful use them, no budget"*); D-086
 > (deck_close layout); D-087 (substory_design transition_from_prior
-> field).
+> field); D-098 (v0.8.0 deck_close ownership fix — separate-stage
+> only).
 
 ## v3.2 failure modes ADDED on top of v3.1
 
@@ -58,12 +66,18 @@ drift, figure under-use — all still apply. v3.2 adds three.)
   (when present) to open non-first substories with a callback to
   the prior arc's conclusion before stating this substory's
   question.
-- **Closing-synthesis absence.** A STRONG-mode talk ends with the
-  final substory's C-slide and nothing else, leaving the audience
-  to assemble the unified takeaway themselves. → Compose a
-  `deck_close` slide that pulls unified_point + per-arc
-  key_takeaways + a forward_call from the curator's
-  `deck_close_signal.json`.
+- **Closing-synthesis duplication.** The per-substory composer
+  for the FINAL substory appends a `deck_close`-layout slide to
+  its fragment, **in addition to** the separate `stage_deck_close`
+  orchestrator stage that owns this slide. Result: two
+  `deck_close`-shaped slides in the merged deck (one templated
+  from the substory composer's understanding of the contract; one
+  from the dedicated stage reading `deck_close_signal.json`). →
+  **The per-substory composer does NOT author deck_close.** The
+  separate `stage_deck_close` stage handles deck-spanning closing
+  synthesis. Each substory's final slot is its own
+  `claim_evidence` C-slide (per the Q/A/R/C role model); the
+  deck_close slide is appended deck-level, not per-substory.
 
 ## v3.2 contract specifics — Figure-relevance (D-085, refines D-080)
 
@@ -196,51 +210,43 @@ The field is free-text; structured references (e.g.,
 `references_claim: <substory-id.claim-id>`) are a v0.8+ design
 surface if v0.7 reads show free-text transitions drift.
 
-## v3.2 contract specifics — Closing synthesis (D-086)
+## v3.2 contract specifics — deck_close ownership (D-086; D-098 fix)
 
-For STRONG-mode talks (talk-30; mode budget 18-32 slides), the
-deck must end with a `deck_close` slide. The composer does NOT
-author this slide ad-hoc; the curator produces a structured
-`working/deck_close_signal.json` artifact and the composer reads
-its fields verbatim.
+**The per-substory composer does NOT author the `deck_close`
+slide.** A separate orchestrator stage (`stage_deck_close`) owns
+this slide end-to-end:
 
-**deck_close layout schema:**
+1. `extract_deck_close.py` pulls the structured signal from
+   substory C-slot conclusions + throughline + REPORT.md
+   future-directions into `working/deck_close_signal.json`.
+2. The `deck_close.v1.md` prompt composes ONE `deck_close` slide
+   reading the signal fields verbatim.
+3. The merger splices that ONE slide at deck-level (between the
+   final substory's C-slot and the metadata block).
 
-```yaml
-layout: deck_close
-content:
-  unified_point: <string>      # the deck's overall takeaway (1-2 sentences)
-  key_takeaways: <list[str]>   # 3-5 bullets, each tying to one arc/substory
-  forward_call: <string>       # implication / next-step / open question
-  data_source: <string>        # cited substories or REPORT sections grounding the synthesis
-```
+**v0.8.0 fix (D-098):** earlier v3.2 prompt wording instructed
+the per-substory composer to "compose ONE deck_close slide at the
+end of the deck." That wording produced a duplicate-deck_close
+regression: the final-substory composer (S3 on lanthanide draft_1;
+final substory on ibd draft_12) emitted a deck_close-layout slide
+in its fragment, AND `stage_deck_close` separately emitted one,
+AND the merger spliced both. Two `layout: deck_close` slides
+landed in the rendered deck. The fix: clarify in this overlay
+that per-substory composition stops at the final substory's
+C-slot; the dedicated stage handles deck-spanning closure.
 
-**Composer rule:**
+**Per-substory composer rule (final substory):** the FINAL
+substory's last slot is its own `claim_evidence` C-slide (per the
+v3 Q/A/R/C role model) summarizing that substory's conclusion.
+Do NOT append a `deck_close`-layout slide to your fragment. The
+separate stage will splice the closing-synthesis slide after your
+fragment, before metadata.
 
-- Read `working/deck_close_signal.json` if it exists.
-- Compose ONE `deck_close` slide at the end of the deck (after
-  the final substory's C-slot, before references /
-  acknowledgments).
-- Use the structured fields VERBATIM; do not embellish
-  `unified_point` or `key_takeaways` with composer interpretation.
-  The curator's structured artifact represents the deck's
-  agreed-upon synthesis.
-- The `forward_call` should be a forward-looking statement that
-  the audience can act on (next experiment, open question,
-  pending validation) — not a generic "thank you for your
-  attention" or "questions welcome."
-
-**Skip rule:** if mode is not STRONG (lightning-5, talk-15
-BRIEF), the deck_close slide is OPTIONAL. The validator gates
-presence-required-iff-mode-≥-STRONG (the orchestrator passes the
-mode value into the cascade). Below STRONG, the deck's
-per-substory C-slots already provide sufficient closure.
-
-**If `deck_close_signal.json` is absent:** emit a warning in
-speaker notes of the final substory's C-slot and compose without
-a deck_close slide. The curator should always emit this artifact
-on STRONG-mode talks; absence is a curator-stage bug to surface
-at Tier-F.
+**Skip semantic:** stage_deck_close mode-gates on STRONG (talk-30).
+Below STRONG (lightning-5, talk-15 BRIEF), the stage skips and no
+deck_close slide is added — per-substory C-slots provide
+sufficient closure at those talk lengths. This is the orchestrator's
+responsibility, not the per-substory composer's.
 
 ## v3.2 anti-patterns (additive to v3 + v3.1 failure-mode catalog)
 
@@ -257,16 +263,24 @@ at Tier-F.
   the current substory's claim. → Transitions are one phrase / one
   sentence at the start; the slide's body is the current
   substory's content.
-- **deck_close-as-generic-thanks.** The `forward_call` field
-  contains audience-management language ("thank you for your
-  attention," "I'm happy to take questions") instead of a
-  forward-looking actionable statement. → forward_call must
-  carry substantive content (next experiment / open question /
-  validation gap / cohort expansion).
+- **deck_close-from-per-substory-composer.** A per-substory
+  composer (especially for the FINAL substory) appends a
+  `layout: deck_close` slide to its fragment. → Per-substory
+  composer NEVER authors deck_close. The separate
+  `stage_deck_close` stage owns this slide. The merger now drops
+  any per-substory deck_close-layout slide it sees + emits a
+  warning (defensive belt-and-suspenders for D-098).
+- **deck_close-as-generic-thanks.** (Applies to the deck_close
+  stage's composition, not the per-substory composer.) The
+  `forward_call` field contains audience-management language
+  ("thank you for your attention," "I'm happy to take questions")
+  instead of a forward-looking actionable statement. →
+  forward_call must carry substantive content (next experiment /
+  open question / validation gap / cohort expansion).
 - **deck_close-skip-on-STRONG.** A talk-30 STRONG deck without a
-  `deck_close` slide. → Always compose deck_close for talk-30+
+  `deck_close` slide. → stage_deck_close always runs on talk-30+
   STRONG; the cascade validator P-check enforces presence per
-  D-086.
+  D-086. Per-substory composer is not involved.
 
 ## v3.2 inviolable rules (additive to v3 + v3.1 inviolable-rules list)
 
