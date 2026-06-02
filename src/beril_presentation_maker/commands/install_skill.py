@@ -27,7 +27,11 @@ from beril_presentation_maker import __version__, discovery
 
 
 # Directories inside the shipped skill/ dir that should be overwritten on install
-_SHIPPED_SUBDIRS = ("commands", "prompts", "references", "tools")
+# v0.8.0: "tests" added so smoke_v3 fixtures ship to the installed layout
+# (single source of truth: fixtures live in the package tree, not the repo
+# root; smoke_v3_prompt.py resolves them under <skill_dir>/tests/fixtures/
+# in installed mode).
+_SHIPPED_SUBDIRS = ("commands", "prompts", "references", "tools", "tests")
 
 # Directories that must exist in the installed skill dir but are install-local
 # (never shipped, never overwritten)

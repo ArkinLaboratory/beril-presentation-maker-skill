@@ -86,17 +86,20 @@ SMOKE_FRESHNESS_DAYS = 7
 #     <repo_root>/
 #       src/beril_presentation_maker/skill/tools/smoke_v3_prompt.py
 #       src/beril_presentation_maker/skill/prompts/*.md
-#       tests/fixtures/smoke_v3/
+#       src/beril_presentation_maker/skill/tests/fixtures/smoke_v3/
 #       audit/   (← pass record lands here)
 #
 #   INSTALLED LAYOUT (after `install-skill .`):
 #     <beril_root>/.claude/skills/beril-presentation-maker/
 #       tools/smoke_v3_prompt.py
 #       prompts/*.md
+#       tests/fixtures/smoke_v3/   (v0.8.0 — shipped via
+#                                   _SHIPPED_SUBDIRS)
 #       audit/   (← pass record SHOULD land here)
-#       (no tests/fixtures — `install-skill` doesn't ship them;
-#        smoke can only run from the dev repo today, v0.8.1 fix
-#        will ship fixtures via `_SHIPPED_SUBDIRS`)
+#
+# v0.8.0 fix (single source of truth): fixtures live INSIDE the
+# package tree (under skill/tests/fixtures/) so they ship via
+# `install-skill` rather than being a repo-only artifact.
 #
 # Auto-detection: walk up from __file__ until we find a directory
 # containing either `src/beril_presentation_maker/skill/` (dev) OR
@@ -155,13 +158,18 @@ def _resolve_prompts_dir(root: Path, layout: str) -> Path:
 
 
 def _resolve_fixture_dir(root: Path, layout: str) -> Path:
-    """Fixtures live under tests/fixtures/ in dev. Not shipped in
-    install today (v0.8.1 fix). For installed layout we return the
-    expected path — the smoke will fail loudly with a clear error
-    pointing operators to run from the dev repo until v0.8.1."""
+    """Fixtures ship inside the package at
+    src/beril_presentation_maker/skill/tests/fixtures/smoke_v3/ (v0.8.0
+    fix). In dev layout the package path is under the repo root; in
+    installed layout the skill dir IS the package root.
+
+    Single source of truth: only one copy of the fixtures exists,
+    inside the package. install-skill copies tests/ via the
+    _SHIPPED_SUBDIRS list (v0.8.0)."""
     if layout == "installed":
         return root / "tests" / "fixtures" / "smoke_v3"
-    return root / "tests" / "fixtures" / "smoke_v3"
+    return (root / "src" / "beril_presentation_maker" / "skill"
+            / "tests" / "fixtures" / "smoke_v3")
 
 
 SMOKE_DIR = SKILL_REPO_ROOT / "audit"

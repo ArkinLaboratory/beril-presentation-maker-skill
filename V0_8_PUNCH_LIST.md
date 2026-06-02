@@ -89,20 +89,21 @@ deferred to v0.8.1):**
 - **install-skill doesn't ship smoke fixtures.** Discovered at
   Tier G 2026-05-31: running `smoke_v3_prompt.py` from the
   installed-skill path fails with `smoke fixture missing at
-  .../tests/fixtures/smoke_v3`. `install_skill.py`'s
-  `_SHIPPED_SUBDIRS` covers only `commands`, `prompts`,
-  `references`, `tools` — not `tests/fixtures/`. SKILL_REPO_ROOT
-  resolution via `parents[4]` of the script also assumes dev-repo
-  layout (`src/beril_presentation_maker/skill/tools/`), not the
-  installed shallow layout (`.claude/skills/beril-presentation-maker/
-  tools/`); from the installed path, `parents[4]` walks to
-  `$BERIL_ROOT` itself. Tier-G workaround: run smoke from dev
-  repo, copy pass record to installed `audit/` dir. v0.8.1 fix
-  is two pieces: (a) add `tests/fixtures/smoke_v3` to
-  `_SHIPPED_SUBDIRS` (or add a new `_SHIPPED_FIXTURE_DIRS`
-  category to keep the semantic separation), (b) rework
-  SKILL_REPO_ROOT to auto-detect dev-vs-install layout (search
-  upward for a marker file like `SKILL.md` or `pyproject.toml`).
+  .../tests/fixtures/smoke_v3`. **CLOSED 2026-06-02 (v0.8.0):**
+  fixed via package-internal SoT — fixtures moved from repo-root
+  `tests/fixtures/smoke_v3/` to in-package
+  `src/beril_presentation_maker/skill/tests/fixtures/smoke_v3/`
+  (single source of truth; ships through the wheel + travels with
+  install-skill). `install_skill._SHIPPED_SUBDIRS` extended to
+  include `"tests"`. `smoke_v3_prompt._resolve_fixture_dir()`
+  updated to point at the in-package path in dev layout and at
+  `<skill_dir>/tests/fixtures/smoke_v3/` in installed layout.
+  SKILL_REPO_ROOT auto-detect already landed earlier in Tier G
+  (`_resolve_skill_repo_root()`). Verified end-to-end: install
+  into a tmp BERIL root, fixture tree lands at expected path,
+  smoke_v3_prompt.py runs from installed location. 7 new tests
+  pin behavior (package SoT, _SHIPPED_SUBDIRS includes tests,
+  resolver behavior in both layouts, repo-root path retired).
 - **v3.3 validator's edge-case rules demoted to advisory.**
   Tier-G live smoke caught the LLM emitting Conclusion-for-next
   on the single-substory fixture (which is both first AND
