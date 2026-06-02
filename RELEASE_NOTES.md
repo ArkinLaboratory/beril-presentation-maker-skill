@@ -1,5 +1,229 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.8.0 (2026-06-02) — content discipline + deterministic layout pass
+
+First full release since `v0.4.0-experimental`. Covers the
+v0.4-v0.8 arc consolidated as a single ship: nine architectural
+milestones across content discipline, composer ergonomics, figure
+utilization, deck_close composition, AI image grounding, visual-
+QA defaults, and the Tier G.10 deterministic layout pass.
+
+Per the cycle history (D-066 / D-079 / D-084 / D-092 lineage),
+each prior cycle (v0.5 / v0.5.1 / v0.6 / v0.7) was Adam-vetoed
+at Tier-I despite mechanical-PASS results — those vetoes
+identified the content + visual-quality gaps that v0.8.0 closes.
+The v0.4 architecture pivot remains opt-in via
+`--architecture-pipeline v0_4`; v0.3 sequential composition
+stays default.
+
+### Prompt stack: v3.3 (default = v2)
+
+`--prompts-version v3.3` opts into the full v3 stack. Default
+remains v2 for backward compatibility. The v3 chain stacks
+overlays:
+
+  substory_design.v1 + .v3_overlay + .v3.3_overlay  (D-095 clean
+    overlay; v3.3 supersedes v3.2 via "recency bias" mitigation)
+  slide_compose.v2 + .v3_overlay + .v3.1_overlay
+    + .v3.2_overlay                                  (figure-relevance,
+    deck_close ownership, arc-transition; D-080/D-085/D-086/
+    D-087/D-098)
+
+Live-LLM smoke gate (D-076) at
+`tools/smoke_v3_prompt.py --check-recent` rejects v3.x
+invocations without a fresh pass record (sha-tracked); bypass
+with `--force-v3-smoke-stale` for prompt-editing iterations.
+
+### Content discipline (v0.5 / v0.5.1)
+
+- **D-072 register discipline** — verb softening (over-confident
+  → REPORT-register-matched); cascade Tier-1 `P11_register_drift`
+  validator at advisory P1.
+- **D-073 substory shape** — Q-A-R-C role model (Question, Answer,
+  Reasoning, Conclusion); `check_substory_shape.py` validator
+  surfaces missing C-slides + reordering.
+- **D-074 hard-cap content lengths** — slide_spec.py
+  per-layout char caps (qa_anticipated answer_summary 1100,
+  data_figure caption 260, etc.). Renderer shrink-to-fit absorbs;
+  validator surfaces the cap-hit so the operator sees it before
+  Adam does.
+- **D-075 / D-077 / D-078 concat-overlay pattern** — v3 prompts
+  apply as additive overlays rather than rewrites; ladder of
+  overlays survives prompt drift without regressing v2 callers.
+
+### Figure utilization + deck_close (v0.6 / v0.7)
+
+- **D-080 figure-provenance contract** — per-substory:
+  ≥1 `data_figure` slide for any substory with a curated figure
+  for one of its critical analyses. `check_figure_provenance.py`
+  validator enforces; cascade Tier-1 `figure_provenance:*` at P1.
+- **D-081 strict NB-id counting** — curated figure ↔ analysis
+  matching by NB-id prefix (case-insensitive; both NB-prefix and
+  G.9 numeric-prefix conventions supported).
+- **D-085 per-figure refinement** — for EACH curated figure
+  whose NB-id matches a substory's analyses, the substory MUST
+  use that specific figure (`relevant_figure_not_used` finding).
+- **D-086 deck_close layout** — closing-synthesis slide with
+  unified_point + key_takeaways + forward_call + data_source,
+  composed by dedicated `stage_deck_close` (separate from per-
+  substory composer).
+- **D-087 transition_from_prior** — v3.2 substory_design adds
+  arc-transition field; v3.2 slide_compose uses it on the first
+  non-Q slot of non-first substories.
+- **D-089 cross_tenant_grounding** — `check_cross_tenant_grounding.py`
+  validates the K-BERDL signal extraction's database/cohort
+  enumeration vs. the project's reference databases.
+
+### v0.8 cycle: AI-image grounding + visual-QA defaults + content overflow
+
+- **D-093 curator figure-floor** — belt-and-suspenders: curator
+  agent nudge + new `check_curator_figure_floor.py` validator
+  (cascade-integrated tier-1 reader). Mirrors D-080 / D-085 /
+  D-089 pattern.
+- **D-094 deck_close data_source → speaker_notes** — renderer
+  drops data_source from slide face + promotes to speaker_notes
+  "Sources:" section. Schema preserved.
+- **D-095 substory_design v3.3** — clean overlay on v1 directly
+  (NOT stacked on v3/v3.2) consolidating Q-A-R-C + transition
+  field with explicit "v3.3 supersedes" recency-bias mitigation.
+- **D-096 visual-QA mode-aware default-on** — talk-30 STRONG +
+  talk-15 STRONG/BRIEF auto-on; `--no-visual-qa` opt-out flag.
+- **D-097 AI image content-grounding** — `ai_image_prompt.v1.md`
+  gains DECK_POSITION input + intro-slide spoiler rule + PA-9
+  anti-pattern; prevents the v0.7 "intro shows section-7
+  statistics" failure mode.
+- **D-098 duplicate-deck_close fix** — Root-caused: v3.2 prompt
+  contradicted stage_deck_close architecture (told per-substory
+  composer to author a deck_close slide, in addition to the
+  dedicated stage). Two-layer fix: prompt rewrite + merger
+  guard that drops `layout: deck_close` slides from per-substory
+  fragments with a D-098 warning. Closes a regression visible on
+  lanthanide draft_1 (slide 25 of 31) + ibd draft_12.
+
+### Tier G live discovery (v0.8 stack: G.1 through G.10)
+
+Each Tier-G item is a live-discovery fix promoted from "would
+have shipped broken" to "operator-experienced regression":
+
+- **G.1 NB-id parser fallback** — v3.3 substory_design emits
+  bare-token analyses (NB02, NB04b) rather than full filenames;
+  parser falls back to bare-token regex when full-filename match
+  comes up empty.
+- **G.2 qa_anticipated answer_summary hard cap (1100)** —
+  projection-illegibility cliff; emits 'error' (not soft-warning)
+  past the cap.
+- **G.3 --auto-advance implies --auto-approve-images** — fixes
+  the silent EOF-quit at the per-slide image approval gate during
+  unattended runs.
+- **G.4 image_gen_decision PATH diagnostics** — stderr
+  instrumentation when `claude` binary not on PATH (transient
+  shell-init issue).
+- **G.5 curator figure-budget drop** — when substory_analyses
+  are supplied, the curator's per-substory inventory mode
+  includes EVERY figure matching ANY substory NB-id (no budget
+  cap; Adam clarification: "if useful, use them").
+- **G.6 revise_loop severity-floor default P1** — was hard-pinned
+  P0; that floor caused the revise loop to skip all findings when
+  the only P0 finding was a SURFACE_ONLY class. P1 default now
+  processes both P0 + P1.
+- **G.7 visual-QA as final gate** — `stage_visual_qa_final` runs
+  visual-QA AFTER the first revise pass, writes
+  `audit/visual_qa_final.{json,md}`, merges into a standalone
+  `adversarial_review_vq_only.json`, then runs a 2nd revise pass
+  on JUST those findings.
+- **G.8 2nd revise reads VQ-only review** — `--review-path` flag
+  on revise_loop.py; without this, the 2nd pass re-iterated
+  F-prefixed adversarial findings and exhausted max_revisions
+  before reaching any VQ finding.
+- **G.9 NB-id matcher numeric-prefix support** — projects using
+  `03_h1_formal_test.ipynb` + `h1_*.png` figure naming (instead
+  of `NB03_*`) now match correctly; figures_inventory.md context
+  blocks parsed via new `parse_inventory_with_nb_ids()`.
+
+### Tier G.10 — deterministic layout-quality pass (v0.8.0 release-blocker)
+
+Three coupled workstreams that move layout decisions out of
+PowerPoint's runtime guess and into our deterministic compose
+path. Adam's lanthanide draft_1 Tier-I read identified visual-
+quality as the load-bearing remaining complaint:
+
+- **G.10-A bounding-box overlap detector** —
+  `tools/check_slide_layout_overlaps.py`. Pure-geometry walk of
+  every shape on every slide via python-pptx; pairwise overlap
+  + container-breach detection with configurable padding tolerance.
+  Emits `text_box_overlap` / `image_text_overlap` /
+  `footer_title_collision` / `container_breach` findings; the
+  P0 container_breach was previously caught (high-mis-attribution
+  rate) by visual-QA. Runs in `stage_visual_qa_final` BEFORE
+  visual-QA so the deterministic findings join the same revise
+  channel.
+- **G.10-B geometry-aware fontScale** — Fixes the "touch the
+  textbox to trigger resize" symptom Adam reported on lanthanide
+  draft_1 slide 25. The previous code wrote a fixed 80%
+  fontScale via the char-only ladder, which under-shrunk long
+  content; PowerPoint then displayed un-shrunk text until
+  interactive refit. New `_fontscale_for_geometry` helper
+  computes the actual required scale from
+  `(chars × glyph_w × line_h × pt²) vs (box_w × box_h × pt²)`,
+  writes it explicitly, and PowerPoint renders correctly on open.
+- **G.10-C content_overflow finding emission** — When G.10-B
+  clamps at the projection-legibility floor (60%), the geometry
+  fitter emits an `OverflowFinding` to a module-level collector;
+  the assembler persists `audit/content_overflow.json`; the
+  cascade Tier-1 reader lifts findings at P1; revise_loop's new
+  `content_overflow` class routes them to revise_slide.v1 which
+  rewrites the slot shorter instead of leaving it permanently
+  illegible.
+
+### Operational + packaging fixes
+
+- **install-skill ships smoke fixtures** — fixtures moved from
+  repo-root `tests/fixtures/smoke_v3/` to in-package
+  `src/beril_presentation_maker/skill/tests/fixtures/smoke_v3/`
+  (single source of truth); `_SHIPPED_SUBDIRS` extended;
+  `smoke_v3_prompt._resolve_fixture_dir` handles both dev +
+  installed layouts. `smoke_v3_prompt.py` now runs from the
+  installed location.
+- **draft wrapper forwards full flag surface** — `--prompts-version`,
+  `--force-v3-smoke-stale`, `--architecture-pipeline`,
+  `--resume-from`, `--draft-dir`, `--revise-severity-floor`,
+  `--visual-qa`, `--no-visual-qa`, `--image-provider`,
+  `--max-image-approvals`. Pre-v0.8.0 these were silently dropped.
+- **SKILL_REPO_ROOT auto-detect** — `_resolve_skill_repo_root`
+  walks upward for layout markers; works in both dev and
+  installed contexts (no more `parents[4]` brittleness).
+
+### Behavioral notes for operators
+
+- **Default pipeline**: still v0_3 (sequential per-substory).
+  v0_4 (parallel-compose) opt-in via `--architecture-pipeline v0_4`.
+- **Default prompts**: still v2. v3.3 opt-in via
+  `--prompts-version v3.3` (requires fresh smoke-gate pass).
+- **Visual-QA**: ON by default for talk-30 STRONG and
+  talk-15 STRONG/BRIEF. Opt-out with `--no-visual-qa`.
+- **Revise severity-floor**: P1 by default (was hard-pinned P0
+  pre-v0.8). Override with `--revise-severity-floor P0` for
+  blockers-only.
+- **Image approvals**: capped at 4 per run by default
+  (`--max-image-approvals N` to override).
+
+### Coverage
+
+1946 unit tests passing (up from 861 at v0.3.8). Decisions
+D-070 through D-098 documented in `DECISIONS.md`. Per-cycle
+punch lists archived under `archive/punch-lists/`; v0.8.0
+operator state lives in `V0_8_PUNCH_LIST.md` with v0.8.1
+carries clearly marked.
+
+### Migration from v0.3.x / v0.4.0-experimental
+
+No breaking changes. The default pipeline is identical to v0.3
+(sequential composition) + v2 prompts. v0.4 / v3.x stacks
+remain opt-in. Existing drafts can be resumed via
+`--resume-from <stage> --draft-dir <path>` (now forwardable
+through the `draft` wrapper, fixing the v0.5+ silent
+flag-drop bug).
+
 ## v0.4.0-experimental (2026-05-25) — architecture pivot + cut-over decision
 
 Ships the v0.4 architectural pivot (architect-then-parallel-compose)

@@ -1,7 +1,7 @@
 """beril-presentation-maker-skill — scientific presentation drafter for BERIL projects.
 
 See SPEC.md for design intent; LAYOUT.md for runtime contracts;
-RELEASE_NOTES.md for v0.3 capabilities.
+RELEASE_NOTES.md for the v0.4 → v0.8 capabilities arc.
 """
 
-__version__ = "0.3.8"
+__version__ = "0.8.0"

@@ -1,63 +1,42 @@
 ####################################################################
 # beril-presentation-maker-skill — pyproject.toml
 #
-# Status: v0.3.8 — process-detail-bleed post-checker. Mechanical
-# scan over slide_spec content + speaker_notes for internal-artifact
-# references (notebook IDs, file paths, REPORT.md sections,
-# analysis-layer codes) that consistently leak into shipped decks
-# despite slide_compose / revise_slide prompts.
+# Status: v0.8.0 — content-discipline + parallel-compose + content-
+# grounding pipeline with deterministic layout-quality pass.
 #
-# Surfaced by 2026-05-06 ibd_phage_targeting talk-45 review:
-# memoryless peer-scientist flagged ~11 of 37 slides leaking
-# patterns like "REPORT.md §Pillar 2 opener #6;
-# NB04h_hmp2_external_replication.ipynb", "L13", "data/nb05.tsv".
-# Reads as internal jargon to fresh audiences.
+# Major arc from v0.4.0-experimental (the last tagged release) to
+# v0.8.0: nine architectural milestones across content discipline
+# (v0.5), composer ergonomics (v0.5.1), figure-utilization +
+# deck_close composition (v0.6), AI image content-grounding +
+# visual-QA defaults + v3 prompt stack (v0.7), and the v0.8 cycle
+# that ships everything as a coherent release.
 #
-# v0.3.8 changes:
-#   - NEW tools/check_no_artifact_refs.py — mechanical regex scan
-#     mirroring check_quantitative_grounding.py architecture. Six
-#     ArtifactPattern categories (notebook-id, notebook-file,
-#     data-tsv-path, report-md-section, pillar-section, analysis-
-#     layer-code). Per-slide grouped output with location labels
-#     ('bullets[2]', 'caption', 'speaker_notes'). Whitelists TL\d /
-#     S\d as legitimate project structure. Writes
-#     audit/no_artifact_refs.{md,json}. Advisory by default (rc=0
-#     even with hits); --strict mode for CI/orchestrator use.
-#   - presentation_maker.sh: wired into stage_merge_and_assemble
-#     immediately after the existing check_quantitative_grounding
-#     call. Same pattern (advisory; never halts the pipeline; output
-#     to stderr with sed-prefix indentation).
-#   - Tests: 74 new unit tests covering pattern hit/miss for every
-#     category, slide traversal across all field shapes (text,
-#     list, dict-bullets, speaker_notes), report aggregation,
-#     markdown rendering, CLI exit codes (advisory vs strict),
-#     error paths (missing draft_dir / slide_spec / malformed JSON),
-#     and a regression test against the actual ibd_phage_targeting
-#     slide_spec.json (asserts ≥10 slides flagged + 4 specific
-#     pattern categories fire).
+# v0.8.0 scope (see RELEASE_NOTES.md for the full narrative):
+#   - Prompt stack v3.3 (D-095 substory_design clean overlay +
+#     v3.2 slide_compose figure-relevance / deck_close / arc-
+#     transition contract); D-076 live-LLM smoke gate.
+#   - D-098 duplicate-deck_close fix (prompt + merger guard).
+#   - Tier G.10 deterministic layout-quality pass:
+#       G.10-A bounding-box overlap detector (geometric, replaces
+#         visual-QA's overlap-class raster judgment).
+#       G.10-B geometry-aware fontScale (fixes "touch the textbox
+#         to refit" by writing the actual required scale, not a
+#         fixed 80%).
+#       G.10-C content_overflow finding emission + revise-loop
+#         routing so floor-clamped slots get rewritten shorter
+#         instead of staying illegible.
+#   - install-skill ships smoke_v3 fixtures (single source of
+#     truth in package); draft wrapper forwards the full
+#     v0.5/v0.6/v0.7/v0.8 flag surface.
+#   - Visual-QA default-on for STRONG modes (D-096); AI-image
+#     content-grounding (D-097); curator figure-floor (D-093);
+#     cross-tenant grounding (D-089); deck_close speaker-notes
+#     promotion (D-094); revise severity-floor P1 (G.6); visual-
+#     QA as final gate with standalone VQ-only revise (G.7/G.8).
 #
-# Smoke verified on real ibd_phage_targeting slide_spec.json:
-# 30 of 37 slides flagged with 496 total hits; pattern distribution
-# (266 analysis-layer-code, 158 notebook-id, 37 report-md-section,
-# 21 pillar-section, 13 notebook-file, 1 data-tsv-path) matches
-# the deck's actual artifact-reference density. The 30-slide flag
-# count is higher than the reviewer's manual ~11 because the
-# reviewer was selective; the post-checker is exhaustive (correct
-# for an audit log).
-#
-# What this is NOT (v0.3.8 scope):
-#   - NOT prompt-rule edits to slide_compose.v1.md or
-#     revise_slide.v1.md. Those are taste-level prompt engineering
-#     deferred to v0.3.9 / v0.4.x to bound pre-event ship risk.
-#   - NOT a citation_pool validator (any citation entry whose only
-#     source is a filename). Same risk argument; deferred to v0.4.x.
-#   - NOT a behavioral change. The check is advisory; existing
-#     pipelines see one extra audit/ file and a one-line stderr
-#     summary. No regressions in prior tests.
-#
-# 787 → 861 unit tests passed. v0.3.7 features (image_gen_decision
-# LLM-judgment layer, --pick TLN halt-and-handoff, strict-mode bash
-# patch) unchanged.
+# Suite: 1946 unit tests (vs 861 at v0.3.8). Decisions D-070
+# through D-098. Per-cycle punch lists archived under
+# archive/punch-lists/.
 ####################################################################
 
 [build-system]
@@ -70,7 +49,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beril-presentation-maker-skill"
-version = "0.3.8"
+version = "0.8.0"
 description = "BERIL Presentation Maker — drafts beautiful, evidence-grounded scientific presentations (talks + posters) from BERDL analysis projects, in KBase brand. Distributed as a Claude Code skill."
 readme = "README.md"
 requires-python = ">=3.10"
