@@ -118,6 +118,23 @@ deferred to v0.8.1):**
   whether to keep the advisory or land a prompt-side fix in
   v0.8.1.
 
+- **Duplicate deck_close-shaped slide with `forward_call: "---"`
+  (extraction artifact).** Live discovery on ibd_phage_targeting
+  draft_12 (Adam-noted) + lanthanide_methylotrophy_atlas draft_1
+  (adversarial F001) — both decks produced a SECOND deck_close-
+  shaped slide near the end with `forward_call: "---"` and
+  key_takeaways recycled as substory-transition questions. Per
+  draft_1 speaker_notes self-confessed: "this needs patching."
+  Likely cause: `extract_deck_close.py` or the merger splices a
+  fallback deck_close stub when one is missing OR runs the splice
+  TWICE when the substory list contains transition-marker text the
+  extractor matches as a synthesis section. The duplicate is
+  PROMINENT (slide 25 of 31) so a Tier-I read catches it
+  immediately. v0.8.1 fix path: (a) detect duplicate
+  forward_call: "---" + drop the duplicate at merge time; (b)
+  audit extract_deck_close.py for double-splice; (c) prevent the
+  composer from emitting "---" as a placeholder forward_call.
+
 - **Visual-QA prompt over-confident on cause attribution.**
   Tier-G live discovery: visual-QA on draft_8 slides 25/26/27
   correctly flagged `illegible_scale` but mis-attributed the
