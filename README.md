@@ -31,58 +31,76 @@ drafter). The fourth in the BERIL drop-in skill quartet.
 | **[LAYOUT.md](LAYOUT.md)** | Maintainer | Directory and file organization, runtime contracts (file paths, exit codes, state-file shapes). |
 | **[DECISIONS.md](DECISIONS.md)** | Schema designer / consumer wanting design rationale | Why the slide_spec / layout vocabulary / draft-zone partition look the way they do. |
 | Cross-skill: **[`docs/cross-skill/PARTICIPANT-RUNBOOK.md`](docs/cross-skill/PARTICIPANT-RUNBOOK.md)** | Researcher using ANY of the 4 BERIL plug-in skills (paper-writer / presentation-maker / adversarial / atlas) | Hub workflow integration (`/berdl_start` → install → configure → run any skill), cohort cheat-sheets, recovery, cost. Hosted here for event timing; will relocate post-event. |
-| Historical: [V0_2_0_PUNCH_LIST.md](V0_2_0_PUNCH_LIST.md), [V0_3_1_PUNCH_LIST.md](V0_3_1_PUNCH_LIST.md), [V0_3_3_ARCHITECTURE.md](V0_3_3_ARCHITECTURE.md) | Archaeology — design rationale for older releases | Each carries historical context for the version it was written for. |
+| Historical: [`archive/punch-lists/`](archive/punch-lists/), [`archive/runbooks/`](archive/runbooks/), [`archive/V0_4_ARCHITECTURE.md`](archive/V0_4_ARCHITECTURE.md) | Archaeology — per-cycle punch lists and runbooks (M1-V0_7), v0.4 architecture pivot doc | Each carries historical context for the cycle it was written for; relocated at v0.8.0 packaging. |
+| Active: [V0_8_PUNCH_LIST.md](V0_8_PUNCH_LIST.md) | Operator state for the current release | Current v0.8.0 release-blockers + v0.8.1 carries. Replaced per-cycle as each release ships. |
 
 ## Status
 
-**v0.3.4.4 — production-ready, hub-deployable.** Builds on:
+**v0.8.0 — production-ready, hub-deployable.** Consolidates the
+v0.4-v0.8 architecture/discipline/quality arc as a single
+release. See [RELEASE_NOTES.md](RELEASE_NOTES.md#v080-2026-06-02--content-discipline--deterministic-layout-pass)
+for the full per-decision narrative. Key v0.8.0 features:
 
-- v0.3.0 — Stream A (revise loop + add_slide.v1) + Stream B
-  (image_gen calibration; CBORG-Gemini at $0.014/image).
-- v0.3.1 — BREAKING 4-zone draft layout (deliverable / narrative /
-  working / audit).
-- v0.3.2 — `data_table` layout (16th in production vocabulary).
-- v0.3.3 — image-gen orchestrator stage (Channel A end-to-end:
-  per-slide decision + ai_image_prompt + approval gate +
-  image_client + manifest binding through merge).
-- v0.3.3.1 — adversarial v0.7.0.1 schema migration
-  (`central_objection` rename, `citation_reality` routing).
-- v0.3.3.2 — image-gen efficiency (request-cache reuse +
-  worst-case-cost recalibration).
-- v0.3.4 — hub-readiness docs (SKILL.md rewrite + slash commands +
-  HUB_INSTALL.md).
-- v0.3.4.1 — `prune` CLI subcommand for cleaning up old drafts.
-- v0.3.4.2 — `audit/runs/run-N/summary.json` + `audit/stage-metadata.json`
-  consolidations via finalize_run.py + bash trap-EXIT hook.
-- v0.3.4.3 — CONTRACT.md cross-skill interop pinning.
-- v0.3.4.4 — README + RELEASE_NOTES rollup; pre-hub-install cleanup.
+- **Prompt stack v3.3** (opt-in via `--prompts-version v3.3`;
+  default remains v2). v3 chain adds register discipline,
+  figure-utilization contract, deck_close ownership,
+  arc-transition support. Live-LLM smoke gate (D-076).
+- **Tier G.10 deterministic layout pass** — bounding-box overlap
+  detector (G.10-A) + geometry-aware fontScale that fixes the
+  "touch the textbox to refit" symptom (G.10-B) + content_overflow
+  finding emission with revise-loop routing (G.10-C).
+- **Visual-QA mode-aware default-on** (D-096) for talk-30 STRONG
+  + talk-15 STRONG/BRIEF. Opt-out with `--no-visual-qa`.
+- **D-098 duplicate-deck_close fix** — root-caused as a
+  prompt/architecture contradiction; two-layer fix (prompt
+  rewrite + merger guard with D-098 warning).
+- **AI image content-grounding** (D-097): DECK_POSITION input +
+  intro-slide spoiler rule.
+- **Curator figure-floor** (D-093): belt-and-suspenders for
+  per-substory figure coverage.
+- **install-skill ships smoke fixtures** + draft wrapper forwards
+  the full v0.5-v0.8 flag surface (`--prompts-version`,
+  `--resume-from`, `--revise-severity-floor`, etc.).
 
-726 unit tests + 1 marker-gated live integration test, all passing.
-Multi-project smoke + KBERDL hub install (#50) is the v1.0 gate.
+1946 unit tests passing (up from 726 at v0.3.4.4). v0.4
+architecture pivot (parallel-compose) remains opt-in via
+`--architecture-pipeline v0_4`. Default pipeline = v0_3
+(sequential per-substory) + v2 prompts; existing v0.3.x runbooks
+continue to work unchanged.
 
 ## What it does
 
-Reads BERDL project artifacts and runs a 14-stage drafting pipeline:
+Reads BERDL project artifacts and runs a multi-stage drafting
+pipeline. v0.8.0 talk-30 STRONG runs through 17 stages (additional
+stages relative to v0.3.x: `deck_close`, `visual_qa_final` +
+optional 2nd revise pass per Tier G.7/G.8):
 
 ```
-1.  plan.v1                  triage tier + scope                   ~$0.20
-2.  throughline.v1           2-3 candidates → user picks           ~$0.25
-3.  substory_design.v1       partition into substories             ~$0.20
-4.  curate_figures           inventory + shortlist (Python)        ~$0
-5.  citation_pool.v1         verify-by-resolution pool             ~$0.30
-6.  cross_tenant.v1          K-BERDL signal (optional)             ~$0-0.10
-7.  intro.v1                 opening framing slides                ~$0.15
-8.  slide_compose.v1         per-substory composition              ~$0.30-0.50
-9.  qa_prep.v1               anticipated Q&A slides                ~$0.20
-10. speaker_notes.v1         per-slide speaker notes               ~$0.20-0.40
-11. image_gen                concept_illustration → AI image       ~$0-0.50
-12. merge_and_assemble       slide_spec + .pptx render             ~$0
-13. adversarial_review       v0.7.0.1 v3 schema review             ~$0.50
-14. revise_slides            review-rewrite loop (capped)          ~$0-5
+ 1. plan.v1                   triage tier + scope                  ~$0.20
+ 2. throughline.v1            2-3 candidates → user picks          ~$0.25
+ 3. substory_design.v1        partition into substories            ~$0.20
+ 4. curate_figures            inventory + shortlist (Python)       ~$0
+ 5. citation_pool.v1          verify-by-resolution pool            ~$0.30
+ 6. cross_tenant.v1           K-BERDL signal (optional)            ~$0-0.10
+ 7. intro.v1                  opening framing slides               ~$0.15
+ 8. slide_compose.v1          per-substory composition             ~$0.30-0.50
+ 9. qa_prep.v1                anticipated Q&A slides               ~$0.20
+10. deck_close                closing-synthesis (talk-30 only)     ~$0.10
+11. speaker_notes.v1          per-slide speaker notes              ~$0.20-0.40
+12. image_gen                 concept_illustration → AI image      ~$0-0.50
+13. merge_and_assemble        slide_spec + .pptx render            ~$0
+14. adversarial_review        v0.7.0.8 v3 schema review            ~$0.50
+15. revise_slides (1st pass)  review-rewrite loop (capped)         ~$0-5
+16. visual_qa_final           overlap detector + visual-QA gate    ~$0.50
+17. revise_slides (2nd pass)  VQ-only review loop (capped)         ~$0-2
 ```
 
-Total typical: ~$2-4 on Sonnet for `talk-30 STRONG`. ~$5-7 if the
-revise loop fires heavily.
+Total typical: ~$3-6 on Sonnet for `talk-30 STRONG`. ~$8-15 if
+both revise passes fire heavily.
+
+Cost ceilings (configurable): `--max-revise-cost-usd` (default
+$5.00 per revise pass), `--max-image-cost-usd` (default $0.50
+cumulative), `--max-image-approvals` (default 4 per run).
 
 The pipeline:
 - Tiers project quality (STRONG / THIN / EXPLORATORY).

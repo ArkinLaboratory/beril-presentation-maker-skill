@@ -25,13 +25,35 @@ Stage-1 (plan) alone takes 8-15 min on dense projects with figure-rich REPORT.md
 
 **Per-revise-loop iteration:** $0.50-2 / 5-15 minutes per pass.
 
-**Per-image cost:** ~$0.014 (CBORG-Gemini) for AI illustrations on `concept_illustration` slides. v0.3.7+ uses an LLM-judgment layer to decide which deferred-layout slides should also get supplemental illustrations; expect 5-12 generated illustrations per talk-45 STRONG draft, adding ~$0.10-0.20 in image-gen cost plus ~30-60s of latency.
+**Per-image cost:** ~$0.03 (multi-provider mix; v0.4 M5b adds
+Google AI Studio + CBORG-Gemini path). v0.8.0 D-088 widens
+image-gen scope to claim_evidence slides (≥3 bullets) +
+technical-specificity judge; default cap `--max-image-approvals 4`.
+Expect 2-4 generated illustrations per talk-30 STRONG draft,
+adding ~$0.06-0.12 in image-gen cost plus ~30-60s of latency.
 
-**v0.3.6 known limitations** (planned for v0.4.x — set expectations now):
+**v0.8.0 known limitations** (planned for v0.9+ — set expectations
+now):
 
-- **The first draft is not presentation-ready; expect to hand-edit.** Slide bullets and captions tend to leak internal artifact references (notebook names, REPORT.md section refs, file paths) where peer-readable evidence (cohort name, sample size, primary citation) belongs. See [Known Limitations](#known-cosmetic-issues--hand-fix-list) below for the full hand-edit checklist.
-- **Concept illustrations may be sparse or absent.** The image-gen decision layer currently defers a large fraction of candidate slides to an LLM-judgment layer that hasn't shipped yet, defaulting them to "no image." A figure-rich project (lots of `figures/*.png` in the project tree) can produce a 30+ slide deck with zero AI illustrations. Workaround: hand-add 1-2 conceptual slides post-draft if your topic needs them.
-- **Wall-clock varies widely on the hub.** Expect 60-120 min for talk-30 STRONG, 90-150 min for talk-45 STRONG. Stage-1 (plan) alone can take 8-10 min on dense projects. Don't kill the run if it's "too quiet" for 10 minutes.
+- **Hand-editing remains useful, mostly cosmetic now.** v0.5
+  D-072 register discipline + v0.6 D-081 figure-utilization
+  contract + v0.8 G.10 deterministic layout pass close most of
+  the v0.3.6 hand-edit list. Remaining hand-fixes are stylistic
+  (operator preference: tighter title wording, slide reordering
+  for talk style). See [Known Limitations](#known-cosmetic-issues--hand-fix-list)
+  for the surviving checklist.
+- **The revise loop is a budgeted feedback loop, not a guarantee.**
+  Adversarial review identifies findings; the revise loop
+  rewrites the slot per `revise_slide.v1`. Both phases cap at
+  `--max-revisions` (default 6) and `--max-revise-cost-usd`
+  (default $5.00). If a finding's class is in SURFACE_ONLY (e.g.,
+  `throughline`, `central_objection`, `citation_reality`,
+  `unbacked_quantitative`) the loop surfaces it but doesn't
+  auto-fix.
+- **Wall-clock varies widely on the hub.** Expect 60-120 min for
+  talk-30 STRONG, 90-150 min for talk-45 STRONG. Stage-1 (plan)
+  alone can take 8-10 min on dense projects. Don't kill the run
+  if it's "too quiet" for 10 minutes.
 
 ---
 
@@ -53,7 +75,7 @@ talks/draft_N/
 │   ├── citation_pool.md   #   ← references the writer found
 │   └── stage_metadata.json#   ← per-stage cost + timing
 └── audit/                 # everything the writer did and why
-    ├── stages/            #   ← per-stage logs (one dir per of 14 stages)
+    ├── stages/            #   ← per-stage logs (one dir per stage; 17 on talk-30 STRONG)
     ├── runs/              #   ← per-run summaries, cost, adversarial review output
     └── manual-edits/      #   ← (only created after you hand-edit the .pptx)
 ```

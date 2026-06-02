@@ -22,9 +22,10 @@ The hub user environment must have:
    echoes the value.
 4. **Read access to BERIL_ROOT/projects/** — at least one project
    with `REPORT.md`, `RESEARCH_PLAN.md`, `figures/`, `notebooks/`.
-5. **Optional but recommended: `beril-adversarial`** v0.7.0.1+ —
-   for the review-rewrite loop. Skip with `--no-adversarial` if
-   absent.
+5. **Optional but recommended: `beril-adversarial`** v0.7.0.8+ —
+   for the review-rewrite loop (v0.8.0 consumes the v3 schema's
+   `central_objection` rename + `citation_reality` routing). Skip
+   with `--no-adversarial` if absent.
 
 Verify each:
 
@@ -33,7 +34,7 @@ which pipx                 # /opt/conda/bin/pipx or similar
 which claude               # ~/.local/bin/claude or similar
 ls "$BERIL_ROOT/.env"      # exists; contains CBORG_API_KEY
 ls "$BERIL_ROOT/projects/" # at least one project_id
-which beril-adversarial    # optional; v0.7.0.1+
+which beril-adversarial    # optional; v0.7.0.8+
 ```
 
 ## Install — three steps
@@ -57,13 +58,13 @@ Alternative URL forms:
 - **Specific version (recommended for production):**
 
   ```bash
-  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4
+  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.8.0
   ```
 
 Verify the install:
 
 ```bash
-beril-presentation-maker --version    # should print 0.3.4.4 or later
+beril-presentation-maker --version    # should print 0.8.0 or later
 ```
 
 ### Step 2 — Deploy the skill into BERIL_ROOT
@@ -126,31 +127,43 @@ If any check fails, fix it and re-run. Common issues:
 - **CBORG_API_KEY not found:** add to `BERIL_ROOT/.env`. The orchestrator
   reads it at startup; if absent, the `image_gen` stage will skip
   with `CBORG_API_KEY not set`.
-- **adversarial CLI < v0.7.0.1:** upgrade or pass `--no-adversarial`
-  on every run. v0.6.x produces v2 schema; presentation-maker
-  consumes v3 (since v0.3.3.1; v2 audit files still readable for
-  forensic compat).
+- **adversarial CLI < v0.7.0.8:** upgrade or pass `--no-adversarial`
+  on every run. v0.7.0.8 produces the v3 schema with the
+  `central_objection` rename + `citation_reality` routing the
+  v0.8.0 revise loop expects.
 - **soffice / pdftoppm missing:** install only if you want PDF
-  output OR the opt-in `--visual-qa` pass. macOS: `brew install
+  output OR the visual-QA pass. macOS: `brew install
   --cask libreoffice && brew install poppler`. Linux:
   distro-appropriate `libreoffice` + `poppler-utils` packages.
-  Without them, the default v0.4 pipeline runs unchanged; the
-  affected verbs emit a stub report and rc=0.
+  Without them, visual-QA stages emit a stub report and rc=0
+  (the default pipeline still runs).
 
-### Optional: enable `--visual-qa` (M4a Tier C)
+### Visual-QA (v0.8.0: default-ON for talk-30 STRONG + talk-15 STRONG/BRIEF)
 
-The opt-in `--visual-qa` flag renders the assembled deck to per-slide
-PNGs and runs a vision-capable `claude -p` over them, flagging render-
-quality defects (text overflow, element overlap, footer collisions,
-illegible scale, headline↔body coherence). Output: advisory
+Per D-096, `--visual-qa` is now ON by default for audience-mode
+talks (talk-30 STRONG + talk-15 STRONG/BRIEF). Opt out via
+`--no-visual-qa`. The flag renders the assembled deck to per-slide
+PNGs and runs a vision-capable `claude -p` over them, flagging
+render-quality defects (illegible scale, headline↔body coherence,
+AI-image spoiler patterns). Output: advisory
 `audit/visual_qa.{md,json}` (never blocks assembly; always rc=0).
 
-Cost: ~$0.6–0.8 per 28-slide deck (Sonnet 4.6 vision). Time: ~30s
-LibreOffice render + ~60s vision pass.
+v0.8.0 Tier G.10-A moved deterministic overlap detection out of
+visual-QA into `tools/check_slide_layout_overlaps.py` — visual-QA's
+remaining job is the genuinely-visual cases. Geometry findings
+(overlap, container_breach) now land in
+`audit/layout_overlaps.json` deterministically.
 
-Requires both system binaries above. Without them the flag is a
-no-op with a stub report explaining what's missing. Skill ships
-portable; the deps are host-only and don't affect any other verb.
+v0.8.0 Tier G.7 adds a SECOND visual-QA pass after the first revise
+loop completes, writing `audit/visual_qa_final.{json,md}` + a
+standalone `audit/adversarial_review_vq_only.json` that the 2nd
+revise pass consumes.
+
+Cost: ~$0.6-0.8 per 28-slide deck per pass (Sonnet 4.6 vision).
+Time: ~30s LibreOffice render + ~60s vision pass per pass.
+
+Requires both system binaries above. Without them the visual-QA
+stages emit stub reports.
 
 ### Review cascade (M4b, auto-runs by default)
 
@@ -223,7 +236,7 @@ auto-discover after install-skill. Type:
 
 The Claude Code agent should:
 
-1. Verify `beril-presentation-maker --version` returns 0.3.4+.
+1. Verify `beril-presentation-maker --version` returns 0.8.0+.
 2. Walk the 4-signal project resolution tree (explicit arg → git
    branch `projects/<id>` → cwd → ask user).
 3. Confirm with the user before invoking.
@@ -240,7 +253,7 @@ exists and has the `user-invocable: true` frontmatter line.
 Re-run pipx install with the new version tag:
 
 ```bash
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4   # or any later v0.3.x.y tag
+pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.8.0   # or any later v0.8.x.y tag
 beril-presentation-maker install-skill "$BERIL_ROOT"   # refresh skill files
 beril-presentation-maker --version                      # confirm
 ```
@@ -248,7 +261,12 @@ beril-presentation-maker --version                      # confirm
 The skill files in `<BERIL_ROOT>/.claude/skills/beril-presentation-maker/`
 get refreshed to match the new package version. Existing draft
 directories under `projects/<id>/talks/draft_N/` are unchanged
-(forward-compat: v0.3.1+ layout is stable through v0.3.x).
+(forward-compat: the v0.3.1+ 4-zone layout is stable through v0.8.x).
+
+**Fresh install troubleshooting:** `pipx install --force` keeps
+the existing venv; if you see stale behavior after an upgrade,
+do `pipx uninstall beril-presentation-maker-skill` followed by
+a clean `pipx install ...` to rebuild from scratch.
 
 ## Uninstalling
 
@@ -299,16 +317,18 @@ The image_gen stage needs the key. Either:
 ### "image-gen worst-case $X > remaining budget $Y"
 
 The `--max-image-cost-usd` cap is below the per-image bound.
-v0.3.3.2 set worst-case at $0.05 (calibrated mean: $0.014/image).
-Set `--max-image-cost-usd 0.10` or higher.
+v0.4 M5b set worst-case at $0.08 (calibrated mean ~$0.03 for the
+multi-provider mix). Set `--max-image-cost-usd 0.20` or higher
+for runs that may approve more than one image. v0.8.0 also caps
+approvals via `--max-image-approvals` (default 4 per run).
 
 ### "beril-adversarial review failed (rc=...)" / wrong schema
 
-The adversarial CLI is missing or on a pre-v0.7.0.1 version.
+The adversarial CLI is missing or on a pre-v0.7.0.8 version.
 Either:
 
 - Install / upgrade:
-  `pipx install --force git+https://github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.1`
+  `pipx install --force git+https://github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.8`
 - Run with `--no-adversarial` to skip the review loop.
 
 ### "v0.3.0-shape draft is incompatible"
@@ -319,6 +339,30 @@ is no migration tool. Either:
 - Start a fresh draft via `/beril-presentation-maker`.
 - Manually reorganize the old draft (move files into
   `deliverable/`, `narrative/`, `working/`, `audit/`).
+
+### "v3 smoke-pass record missing / stale" (v0.8.0+)
+
+When invoking with `--prompts-version v3.x`, the orchestrator
+gate-checks for a fresh `audit/v3_smoke_pass.json` record. If
+absent or sha-mismatched:
+
+- Run `tools/smoke_v3_prompt.py` once (~$0.60) to land the
+  pass record.
+- OR pass `--force-v3-smoke-stale` to bypass the gate (only when
+  you have just edited prompts and accept that the next run
+  isn't smoke-verified).
+
+### "Touch the textbox to fix text overflow" (fixed in v0.8.0)
+
+Pre-v0.8.0 the renderer wrote a fixed 80% fontScale via the
+char-only ladder; long titles would render un-shrunk until the
+user clicked the textbox + PowerPoint re-ran autofit. v0.8.0
+Tier G.10-B writes a geometry-derived fontScale that matches
+PowerPoint's interactive computation. If you still see this on
+v0.8.0+, check `audit/content_overflow.json` for a finding on
+that slide; if present, the renderer correctly clamped at 60%
+and the revise loop should rewrite the slot shorter on next
+iteration.
 
 ## Hub-specific notes
 
@@ -333,8 +377,9 @@ is no migration tool. Either:
   via filesystem-level race-safety. Multiple parallel runs against
   the same project will get distinct draft directories.
 - **Resumability:** `--resume-from <stage>` works across sessions
-  and across pipx upgrades (within the same v0.3.x major). State
-  is on-disk under `<draft_dir>/audit/state.json`.
+  and across pipx upgrades (within the same v0.8.x major). State
+  is on-disk under `<draft_dir>/audit/state.json`. v0.8.0 stages
+  list: `plan|throughline|substory_design|phase0_tooling|deck_outline|curate_figures|citation_pool|cross_tenant|intro|slide_compose|qa_prep|deck_close|speaker_notes|image_gen|merge|adversarial_review|revise_slides`.
 
 ## Drafts pile up — pruning old runs
 

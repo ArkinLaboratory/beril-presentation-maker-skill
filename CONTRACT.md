@@ -17,9 +17,35 @@ For operator install + first-run + troubleshooting, see
 For internal design rationale and decision history, see `SPEC.md` /
 `LAYOUT.md` / `DECISIONS.md`.
 
-**Status:** v0.3.4.3 — first canonical CONTRACT.md. Mirrors the
-adversarial v0.6.0+ CONTRACT.md pattern. Subject to schema-version
-bumps as v0.3.x → v0.4.x → v1.0 lands.
+**Status:** v0.8.0 — canonical CONTRACT.md, current as of the
+v0.8.0 release. Mirrors the adversarial v0.7.0.8 CONTRACT.md
+pattern. Consumer-schema dependency: beril-adversarial-skill
+v0.7.0.8 (`adversarial-review-presentation.v3` schema; v3
+`central_objection` rename + `citation_reality` routing). Subject
+to schema-version bumps as v0.8.x → v0.9.x → v1.0 lands.
+
+v0.8.0 contract additions over v0.3.4.3:
+
+- New audit artifact `audit/layout_overlaps.json`
+  (`layout-overlaps.v1`) — emitted by the Tier G.10-A
+  deterministic overlap detector.
+- New audit artifact `audit/content_overflow.json`
+  (`content-overflow.v1`) — emitted by the renderer's geometry-
+  aware fitter on floor-clamp.
+- New audit artifact `audit/visual_qa_final.{json,md}` — visual-
+  QA's post-revise pass (separate from the cascade's pre-revise
+  `audit/visual_qa.{json,md}`).
+- New audit artifact `audit/adversarial_review_vq_only.json` —
+  standalone VQ findings for the 2nd revise pass per Tier G.8.
+- New CLI flags forwardable through the `draft` Python wrapper:
+  `--prompts-version`, `--force-v3-smoke-stale`,
+  `--architecture-pipeline`, `--resume-from`, `--draft-dir`,
+  `--revise-severity-floor`, `--visual-qa`, `--no-visual-qa`,
+  `--image-provider`, `--max-image-approvals`.
+
+Backwards compatibility: all v0.3.x audit artifacts remain
+stable. New artifacts ship as additive (read-if-present); no
+existing consumer breaks.
 
 ---
 
