@@ -86,6 +86,11 @@ REVISE_CLASSES = (
     "claim_evidence",
     "qa_softball",
     "substory_arc",
+    # v0.8.0 Tier G.10-C: renderer-emitted finding when geometry-aware
+    # fontScale lands at FONTSCALE_FLOOR (60%) — content is too long
+    # for its slot at the legibility floor. Revise prompt rewrites
+    # the named slot shorter rather than leaving it clamped + illegible.
+    "content_overflow",
 )
 ADD_CLASSES = ("missing_slide",)
 # These classes don't have a per-slide fix; surface in next_actions only.

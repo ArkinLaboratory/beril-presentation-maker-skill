@@ -53,6 +53,7 @@ import json
 import shutil
 import subprocess
 import sys
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -110,12 +111,97 @@ def _load_slide_spec_module():
 # Result types
 # ---------------------------------------------------------------------------
 
+# v0.8.0 Tier G.10-C: structured overflow findings emitted by the
+# geometry-aware fitters when content forces a sub-floor shrink
+# (clamped at FONTSCALE_FLOOR). These are persisted to
+# audit/content_overflow.json alongside the deck so cascade Tier-1
+# can lift them as P1 findings + revise_loop can rewrite shorter.
+
+@dataclass
+class OverflowFinding:
+    """One content_overflow finding from the geometry-aware fitter."""
+    slot_kind: str          # "title" | "body" | "textbox"
+    layout_name: str        # e.g., "methods_summary"
+    slide_id: int | None    # 1-indexed; None if not known at emit time
+    where: str              # operator-readable slot label
+    chars: int              # content length
+    base_pt: int            # base font size in pt (before scale)
+    box_width_emu: int
+    box_height_emu: int
+    computed_scale: int     # what scale was committed (always FLOOR here)
+    message: str            # operator-visible one-line summary
+
+    def to_dict(self) -> dict:
+        return dataclasses.asdict(self)
+
+
+# v0.8.0 Tier G.10-C: module-level collector for OverflowFindings.
+# The geometry-aware fitters (_set_title, _enable_normautofit_by_geometry,
+# _fit_textbox_by_geometry) read this off the module to append findings
+# without needing a new positional parameter through every _fill_*
+# handler. assemble() pushes/pops a list per-run; the top of the stack
+# is the active collector. Stack support so nested assemble() calls
+# (e.g., revise_loop re-renders the same deck) don't leak findings
+# between contexts.
+_OVERFLOW_COLLECTOR_STACK: list[list] = []
+
+
+def _push_overflow_collector(collector: list) -> None:
+    _OVERFLOW_COLLECTOR_STACK.append(collector)
+
+
+def _pop_overflow_collector() -> None:
+    if _OVERFLOW_COLLECTOR_STACK:
+        _OVERFLOW_COLLECTOR_STACK.pop()
+
+
+def _current_overflow_collector():
+    """Return the active collector list, or None if no assemble() is
+    in progress. Fitters check this before constructing findings."""
+    if _OVERFLOW_COLLECTOR_STACK:
+        return _OVERFLOW_COLLECTOR_STACK[-1]
+    return None
+
+
+def _write_content_overflow_audit(
+    pptx_path: Path, findings: list,
+) -> Path | None:
+    """Persist content_overflow findings to audit/content_overflow.json
+    next to the deck. The path layout mirrors layout_overlaps.json
+    (audit/ lives one directory above the deliverable/ dir per the
+    draft_N/ convention).
+
+    Returns the json path on success, None if the layout was
+    unexpected (defensive — assembler shouldn't fail because the
+    audit dir convention drifted).
+    """
+    # Find the draft_N/audit dir. pptx is at draft_N/deliverable/draft.pptx.
+    audit_dir = pptx_path.parent.parent / "audit"
+    if not audit_dir.is_dir():
+        # Operator's custom output path — write next to the pptx as
+        # a fallback so the data isn't lost.
+        audit_dir = pptx_path.parent
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    out = audit_dir / "content_overflow.json"
+    payload = {
+        "schema_version": "content-overflow.v1",
+        "pptx_path": str(pptx_path),
+        "findings": [f.to_dict() for f in findings],
+    }
+    out.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return out
+
+
 @dataclass
 class AssemblyResult:
     """Returned by assemble(). Holds the output path + any non-fatal warnings."""
     out_path: Path
     n_slides: int
     warnings: list[str] = field(default_factory=list)
+    overflow_findings: list[OverflowFinding] = field(default_factory=list)
 
 
 class AssemblyError(Exception):
@@ -231,7 +317,8 @@ _TITLE_BASE_PT_BY_LAYOUT: dict[str, int] = {
 _TITLE_BASE_PT_DEFAULT = 28
 
 
-def _set_title(slide, text: str, warnings: list[str] | None = None) -> None:
+def _set_title(slide, text: str, warnings: list[str] | None = None,
+               overflow_findings: list[OverflowFinding] | None = None) -> None:
     if not slide.shapes.title:
         return
     title_shape = slide.shapes.title
@@ -261,8 +348,8 @@ def _set_title(slide, text: str, warnings: list[str] | None = None) -> None:
             box_width_emu=box_w, box_height_emu=box_h,
             base_pt=base_pt,
         )
-        if scale == FONTSCALE_FLOOR and warnings is not None:
-            warnings.append(
+        if scale == FONTSCALE_FLOOR:
+            _msg = (
                 f"slide title ({layout_name}): {len(text or '')} chars "
                 f"at base {base_pt}pt in "
                 f"{box_w/_EMU_PER_INCH:.2f}×{box_h/_EMU_PER_INCH:.2f} in "
@@ -270,6 +357,23 @@ def _set_title(slide, text: str, warnings: list[str] | None = None) -> None:
                 f"{FONTSCALE_FLOOR/1000:.0f}%; title-length cap "
                 f"recommended (G.10-C content_overflow)"
             )
+            if warnings is not None:
+                warnings.append(_msg)
+            _collector = (overflow_findings
+                          if overflow_findings is not None
+                          else _current_overflow_collector())
+            if _collector is not None:
+                _collector.append(OverflowFinding(
+                    slot_kind="title",
+                    layout_name=layout_name,
+                    slide_id=getattr(slide, "_deck_id", None),
+                    where=f"slide title ({layout_name})",
+                    chars=len(text or ""),
+                    base_pt=base_pt,
+                    box_width_emu=box_w, box_height_emu=box_h,
+                    computed_scale=scale,
+                    message=_msg,
+                ))
         _ensure_slide_text_autofit(title_shape.element, font_scale=scale)
     else:
         # Geometry unavailable (placeholder may inherit from layout
@@ -684,6 +788,7 @@ def _enable_normautofit_by_geometry(
     content_chars: int | None = None,
     ln_spc_reduction: int = 20000,
     warnings: list[str] | None = None,
+    overflow_findings: list[OverflowFinding] | None = None,
     where: str = "",
 ) -> int:
     """v0.8.0 Tier G.10-B: write a geometry-derived explicit fontScale
@@ -717,8 +822,8 @@ def _enable_normautofit_by_geometry(
         box_width_emu=box_w, box_height_emu=box_h,
         base_pt=base_pt,
     )
-    if scale == FONTSCALE_FLOOR and warnings is not None:
-        warnings.append(
+    if scale == FONTSCALE_FLOOR:
+        _msg = (
             f"{where or f'placeholder idx={idx}'}: content "
             f"{content_chars} chars at base {base_pt}pt in "
             f"{box_w/_EMU_PER_INCH:.2f}×{box_h/_EMU_PER_INCH:.2f} in "
@@ -726,6 +831,25 @@ def _enable_normautofit_by_geometry(
             f"{FONTSCALE_FLOOR/1000:.0f}%; content-length cap "
             f"recommended (G.10-C content_overflow finding)"
         )
+        if warnings is not None:
+            warnings.append(_msg)
+        _collector = (overflow_findings
+                      if overflow_findings is not None
+                      else _current_overflow_collector())
+        if _collector is not None:
+            layout_name = str(getattr(getattr(slide, "slide_layout", None),
+                                      "name", "") or "")
+            _collector.append(OverflowFinding(
+                slot_kind="body",
+                layout_name=layout_name,
+                slide_id=getattr(slide, "_deck_id", None),
+                where=where or f"placeholder idx={idx}",
+                chars=content_chars,
+                base_pt=base_pt,
+                box_width_emu=box_w, box_height_emu=box_h,
+                computed_scale=scale,
+                message=_msg,
+            ))
     # Reuse _enable_normautofit's bodyPr-manipulation by inlining the
     # OOXML write. We can't call _enable_normautofit(slide, idx, font_scale=...)
     # because that helper takes font_scale as a kwarg with default 80000;
@@ -2267,26 +2391,41 @@ def assemble(slide_spec_path: str | Path,
     # warnings (DQ4) so they appear alongside handler warnings in the
     # AssemblyResult and on the assembler banner.
     warnings: list[str] = list(soft_warning_messages)
+    # v0.8.0 Tier G.10-C: structured overflow findings emitted by the
+    # geometry-aware fitters. Module-level reference set per-assembly
+    # so handlers don't need a new positional parameter; the fitters
+    # read this list off the module and append when they clamp at
+    # the floor.
+    overflow_findings: list[OverflowFinding] = []
+    _push_overflow_collector(overflow_findings)
 
-    for slide_data in spec["slides"]:
-        layout_name = slide_data["layout"]
-        layout = _get_layout_by_name(prs, layout_name)
-        slide = prs.slides.add_slide(layout)
+    try:
+        for slide_idx_1based, slide_data in enumerate(spec["slides"], start=1):
+            layout_name = slide_data["layout"]
+            layout = _get_layout_by_name(prs, layout_name)
+            slide = prs.slides.add_slide(layout)
+            # Stamp a 1-indexed deck-order id as a custom attr (we
+            # can't override python-pptx's read-only slide_id, which
+            # is a uuid-style internal id; use a sidecar attribute
+            # the fitters check via getattr).
+            slide._deck_id = slide_idx_1based  # type: ignore[attr-defined]
 
-        handler = LAYOUT_HANDLERS.get(layout_name)
-        if handler is None:
-            # Should be unreachable — slide_spec validator pins layout to vocab
-            raise AssemblyError(
-                f"no handler registered for layout {layout_name!r}"
-            )
-        handler(slide, slide_data["content"], draft_dir, warnings)
+            handler = LAYOUT_HANDLERS.get(layout_name)
+            if handler is None:
+                # Should be unreachable — slide_spec validator pins layout to vocab
+                raise AssemblyError(
+                    f"no handler registered for layout {layout_name!r}"
+                )
+            handler(slide, slide_data["content"], draft_dir, warnings)
 
-        # Only override handler-set notes when slide_data carries real
-        # notes content. `in` would let a present-but-empty/null
-        # speaker_notes clobber notes a layout handler set itself (e.g.
-        # qa_anticipated routes answer_detail to the notes pane).
-        if slide_data.get("speaker_notes"):
-            _set_speaker_notes(slide, slide_data["speaker_notes"])
+            # Only override handler-set notes when slide_data carries real
+            # notes content. `in` would let a present-but-empty/null
+            # speaker_notes clobber notes a layout handler set itself (e.g.
+            # qa_anticipated routes answer_detail to the notes pane).
+            if slide_data.get("speaker_notes"):
+                _set_speaker_notes(slide, slide_data["speaker_notes"])
+    finally:
+        _pop_overflow_collector()
 
     if strict and warnings:
         raise AssemblyError(
@@ -2298,10 +2437,17 @@ def assemble(slide_spec_path: str | Path,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)
 
+    # v0.8.0 Tier G.10-C: persist content_overflow findings to
+    # audit/content_overflow.json alongside the deck for the cascade
+    # reader + revise_loop to pick up.
+    if overflow_findings:
+        _write_content_overflow_audit(out_path, overflow_findings)
+
     return AssemblyResult(
         out_path=out_path,
         n_slides=len(spec["slides"]),
         warnings=warnings,
+        overflow_findings=overflow_findings,
     )
 
 

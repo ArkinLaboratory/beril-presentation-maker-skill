@@ -584,6 +584,53 @@ def _read_cross_tenant_grounding(draft_dir: Path) -> list[CascadeFinding]:
     return findings
 
 
+def _read_content_overflow(draft_dir: Path) -> list[CascadeFinding]:
+    """Read audit/content_overflow.json (v0.8.0 Tier G.10-C output)
+    if present. The renderer's geometry-aware fitter
+    (_set_title / _enable_normautofit_by_geometry) emits these
+    findings when content forces a sub-floor shrink (clamped at
+    FONTSCALE_FLOOR = 60%), which means PowerPoint cannot fit the
+    content even at the minimum legibility threshold. Routes via
+    REVISE_CLASSES so revise_loop rewrites the slide content
+    shorter instead of leaving it clamped + visibly illegible.
+
+    Mapped finding kind: `content_overflow` (P1 soft-warning).
+    Severity is P1, not P0, because the deck still renders — the
+    content is just clamped at floor; legibility is degraded but
+    the file opens cleanly.
+
+    Read-if-present per the figure_provenance pattern: the cascade
+    does NOT invoke the assembler. The assembler writes the audit
+    JSON as a side-effect of rendering.
+    """
+    payload = _load_json_safe(
+        draft_dir / "audit" / "content_overflow.json")
+    if payload is None:
+        return []
+    findings_raw = payload.get("findings") or []
+    if not findings_raw:
+        return []
+    findings: list[CascadeFinding] = []
+    for f in findings_raw:
+        findings.append(CascadeFinding(
+            tier="tier1",
+            kind="content_overflow",
+            severity="P1",
+            slide_id=f.get("slide_id"),
+            detail=f.get("message", "<no message>"),
+            evidence={
+                "slot_kind": f.get("slot_kind"),
+                "layout_name": f.get("layout_name"),
+                "chars": f.get("chars"),
+                "base_pt": f.get("base_pt"),
+                "computed_scale": f.get("computed_scale"),
+                "box_width_emu": f.get("box_width_emu"),
+                "box_height_emu": f.get("box_height_emu"),
+            },
+        ))
+    return findings
+
+
 def _read_layout_overlaps(draft_dir: Path) -> list[CascadeFinding]:
     """Read audit/layout_overlaps.json (v0.8.0 Tier G.10-A output)
     if present. Pure-geometry deterministic overlap detection over
@@ -768,6 +815,12 @@ def run_tier1(draft_dir: Path) -> TierResult:
         findings.extend(_read_layout_overlaps(draft_dir))
     except Exception as exc:  # noqa: BLE001
         notes.append(f"layout_overlaps read raised: {exc}")
+
+    # 11. Content overflow (v0.8.0 Tier G.10-C; read-if-present).
+    try:
+        findings.extend(_read_content_overflow(draft_dir))
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"content_overflow read raised: {exc}")
 
     duration = (datetime.now(timezone.utc) - t0).total_seconds()
     has_p0 = any(f.severity == "P0" for f in findings)

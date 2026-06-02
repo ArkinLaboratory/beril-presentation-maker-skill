@@ -58,7 +58,7 @@ either retries (bounded) or rolls back to the pre-revision slide.
     {
       "revised_at": "<ISO 8601 UTC>",
       "finding_id": "<F001 etc.>",
-      "finding_class": "<register_drift|claim_evidence|qa_softball|substory_arc>",
+      "finding_class": "<register_drift|claim_evidence|qa_softball|substory_arc|content_overflow>",
       "summary": "<one-sentence summary of what changed and why>"
     }
   ]
@@ -269,6 +269,57 @@ Apply:
 3. If the reviewer's reposition would put the slide in a different
    substory, HALT — that's a substory_design.v1 concern, not a
    slide_revise concern.
+
+### `content_overflow` (renderer-emitted; v0.8.0 Tier G.10-C)
+
+The slide's title or body text is longer than its slot can render at
+60% scale (the projection-legibility floor). The renderer committed
+at the floor + emitted this finding so the content gets rewritten
+shorter — instead of leaving a permanently illegible slide. This is
+NOT a register or content-fidelity issue; the wording is fine, just
+too long for the box.
+
+The finding's `evidence` carries:
+- `slot_kind`: `"title"` or `"body"` — which field to shorten.
+- `layout_name`: confirms the slot's geometry (e.g.,
+  `methods_summary` has a 0.63in title band — extremely tight).
+- `chars`: current length.
+- `base_pt`: the master font size before scale (28 for titles,
+  14 for most body placeholders).
+- `box_width_emu`, `box_height_emu`: the slot dimensions.
+
+Apply:
+1. Identify the slot from `slot_kind` + `layout_name`. For
+   `slot_kind: "title"`, edit `content.title` (or
+   `content.unified_point` for deck_close, `content.headline` for
+   big_idea, etc. — match the field the layout's schema uses for
+   the title-band).
+2. For `slot_kind: "body"`, edit the body-region field
+   (`content.bullets` for most layouts, `content.key_takeaways` for
+   deck_close, `content.answer_summary` for qa_anticipated).
+3. **Shorten by ~30-50%** for titles clamped at 60% (rule of thumb:
+   the box can fit ~half the content at the base pt size; current
+   length is roughly double the legible cap). Preserve the
+   substantive claim; cut hedges, qualifiers, prepositional pile-ups,
+   parenthetical asides.
+4. Title-specific: a title should be one tight clause, not a
+   summary paragraph. If the title is currently 200+ chars, you're
+   almost certainly looking at a `unified_point` or other deck-level
+   synthesis miswritten as a title — collapse to a single
+   declarative sentence (≤120 chars for talk-30 mode).
+5. Body-specific: if `bullets` are individually long, the fix is
+   shorter bullets, not fewer bullets (preserve the arc; tighten
+   the prose).
+
+Do NOT modify register, citations, or claim semantics. The
+content_overflow class is a length issue, not a register or
+evidence issue. If shortening would lose a load-bearing caveat,
+move the caveat into `speaker_notes` rather than dropping it.
+
+Do NOT just edit the slot field and skip the revision_log entry —
+the log entry should record what was cut + where it went (notes,
+discarded, etc.) so a future reviewer can verify the rewrite
+preserved meaning.
 
 ### Other classes (throughline, central_objection, citation_reality)
 
