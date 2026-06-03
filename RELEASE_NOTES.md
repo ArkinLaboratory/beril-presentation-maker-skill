@@ -1,5 +1,73 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v0.8.1 (2026-06-03) — Tier-H carries: content_overflow routing + line-wrap calibration
+
+Three small fixes closing the gaps Adam's Tier-I read of
+lanthanide draft_2 surfaced on the v0.8.0 release. All three
+target the visible-overflow class of regressions the v0.8.0 deck
+still showed:
+
+- **content_overflow → adversarial_review merger** —
+  `merge_content_overflow_into_review.py` folds the renderer's
+  G.10-C content_overflow findings into adversarial_review.json
+  with synthetic IDs `CO001..CO999`. The 1st revise loop then
+  processes them as `class="content_overflow"` findings (routed
+  to revise_slide.v1's G.10-C section). Closes the wiring gap:
+  v0.8.0 emitted the findings + lifted them to cascade Tier-1
+  but revise_loop never saw them. Verified on lanthanide draft_2:
+  4 CO findings (slides 16/27/28/32 — the 4 surviving title
+  overflows) now route to the revise queue.
+
+- **Line-wrap fontScale model + 0.62 glyph-ratio calibration** —
+  Replaces the v0.8.0 area model (`sqrt(target_area / required_area)`)
+  with a line-wrap model that bisects over fontScale to find the
+  largest scale where wrapped text fits the box height. Adds
+  `n_paragraphs` parameter to account for multi-bullet body slots
+  (each bullet starts on a new line; per-paragraph waste). The
+  glyph-width ratio bumps 0.55 → 0.62 to cover proportional-font
+  variability + word-wrap raggedness in dense academic prose.
+  Behavioral impact on lanthanide draft_2: content_overflow
+  findings grew 4 → 8 (adds slides 10/21/30/31 — titles the area
+  model said fit at 100% but visually overflowed).
+
+- **methods_summary body total-chars soft cap** — slide_spec
+  validator adds a soft-warning above 700 chars total across
+  body bullets ("borderline legible at the geometry-derived
+  scale"), and a distinct soft-warning above 900 chars ("revise
+  loop will rewrite"). Catches the lanthanide slide-23 case (864
+  chars across 6 bullets) at validation time so the operator
+  sees the warning before render.
+
+### Combined v0.8.1 effect on lanthanide draft_2
+
+The three fixes compose:
+
+1. Tighter calibration catches more borderline overflows at
+   render (4 → 8 content_overflow findings).
+2. Merger routes them all into the 1st revise loop.
+3. Validator surfaces dense methods_summary bodies at the
+   slide_spec layer.
+
+Net: the revise loop now sees + acts on the title-length issues
+that Adam called out, instead of leaving them as visible-on-deck
+regressions. The fontScale committed to OOXML matches PowerPoint's
+interactive computation more accurately, reducing the "looks fine
+in our renderer but renders oversized in PowerPoint" gap.
+
+### Coverage
+
+1967 unit tests passing (up from 1948 at v0.8.0 ship; +19 new).
+No behavioral changes default-off; existing v0.8.0 invocations
+continue to work unchanged.
+
+### Migration from v0.8.0
+
+No flag changes; no schema changes. New audit artifact
+(`audit/content_overflow.json` schema unchanged — same
+content-overflow.v1 from G.10-C). Operators on v0.8.0 should
+see fewer "very very close" Tier-I findings without changing
+how they invoke the skill.
+
 ## v0.8.0 (2026-06-02) — content discipline + deterministic layout pass
 
 First full release since `v0.4.0-experimental`. Covers the

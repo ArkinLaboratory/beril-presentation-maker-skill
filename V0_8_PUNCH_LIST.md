@@ -342,6 +342,15 @@ orchestrator-stage changes; landing together amortizes both.
 
 ## v0.8.1 carries from Tier H live A/B (lanthanide draft_2 read 2026-06-03)
 
+**ALL CLOSED 2026-06-03 in v0.8.1 ship.** The four carries below
+documented the state at v0.8.0 release; v0.8.1 shipped fixes for
+#1 (routing), #2 (calibration), #3 (validator). #4 (draft_2's
+pre-existing `---` artifact) remains cosmetic + hand-fixable; no
+v0.8.1 fix needed since the extractor HR-filter (v0.8.0 Tier-H
+fix #3) already closed the root cause for future runs.
+
+
+
 Adam Tier-I read of lanthanide draft_2 was "very very close +
 diminishing returns." Two small in-flight fixes landed
 (methods_summary body 3.15→2.85, extract_deck_close HR filter).
