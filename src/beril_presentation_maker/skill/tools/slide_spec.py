@@ -502,6 +502,15 @@ BIG_NUMBER_SUBTITLE_MAX_CHARS = 80          # ~one short sentence
 WORKFLOW_STEP_CAPTION_MAX_CHARS = 70        # per step (3 steps)
 QA_ANSWER_SUMMARY_MAX_CHARS = 600           # one glance; depth lives in answer_detail
 QA_ANSWER_SUMMARY_HARD_MAX_CHARS = 1100     # projection-legibility cliff (v0.8 Tier G.2)
+
+# v0.8.1 Tier-H carry: methods_summary body bullet total-char soft cap.
+# Above ~700 chars across all bullets the geometry sizer predicts
+# fontScale ~88% which is borderline legible; above 800 chars
+# overflow into the footer band becomes visible. Soft-warning,
+# advisory only — the operator can choose to ignore + accept the
+# tight rendering, or shorten the bullets.
+METHODS_SUMMARY_BODY_SOFT_CAP_CHARS = 700
+METHODS_SUMMARY_BODY_HARD_CAP_CHARS = 900
 DIAGRAM_NODE_LABEL_MAX_CHARS = 40           # short phrase, not a sentence
 
 # v0.8 Tier G.2 rationale for QA_ANSWER_SUMMARY_HARD_MAX_CHARS:
@@ -740,6 +749,36 @@ def _check_methods_summary(content: dict, path: str) -> list[ValidatorIssue]:
     _check_required_str(content, "title", path, iss)
     _check_str_list(content, "bullets", path, iss,
                     required=True, min_len=5, max_len=10)
+    # v0.8.1: total-char soft cap on body bullets. Tier-H surfaced
+    # that dense academic prose (584-864 chars across 6 bullets)
+    # overflows the body region even at the geometry-aware
+    # fontScale. The line-wrap model predicts ~88% at 700 chars +
+    # ~81% at 864; the soft cap warns above 700 + hard caps above 900.
+    bullets = content.get("bullets")
+    if isinstance(bullets, list):
+        total_chars = sum(
+            len(str(b)) for b in bullets
+            if isinstance(b, (str, int, float))
+        )
+        if total_chars > METHODS_SUMMARY_BODY_HARD_CAP_CHARS:
+            iss.append(ValidatorIssue(
+                f"{path}.bullets",
+                f"total {total_chars} chars exceeds hard cap "
+                f"{METHODS_SUMMARY_BODY_HARD_CAP_CHARS}; renderer will "
+                f"emit content_overflow + revise loop will rewrite "
+                f"shorter. Consider tightening bullets directly.",
+                severity="soft-warning",
+            ))
+        elif total_chars > METHODS_SUMMARY_BODY_SOFT_CAP_CHARS:
+            iss.append(ValidatorIssue(
+                f"{path}.bullets",
+                f"total {total_chars} chars above soft cap "
+                f"{METHODS_SUMMARY_BODY_SOFT_CAP_CHARS}; the body region "
+                f"will render at ~85-90% font scale (borderline "
+                f"legible on projection). Consider shortening if the "
+                f"slide reads dense.",
+                severity="soft-warning",
+            ))
     if "tools_versions" in content:
         tv = content["tools_versions"]
         if not isinstance(tv, list):

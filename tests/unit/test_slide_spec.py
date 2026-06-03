@@ -592,6 +592,66 @@ def test_methods_summary_bullets_min_5(ss):
     assert any("bullets" in i.path for i in issues)
 
 
+def test_methods_summary_body_total_chars_under_soft_cap_clean(ss):
+    """v0.8.1 Tier-H carry: methods_summary body bullets at total
+    chars ≤ soft cap (700) emit NO length warning. Sanity guard:
+    we shouldn't warn on typical talk-30 STRONG body content."""
+    slide = ss.example_slide("methods_summary")
+    # Build 6 bullets totaling ~500 chars (typical)
+    slide["content"]["bullets"] = ["Short bullet " + "x" * 70] * 6
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    body_warnings = [i for i in issues
+                     if "bullets" in i.path and "soft cap" in i.message]
+    assert body_warnings == [], (
+        f"500-char body should not trigger soft-cap warning; got "
+        f"{[i.message for i in body_warnings]}"
+    )
+
+
+def test_methods_summary_body_total_chars_above_soft_cap_warns(ss):
+    """v0.8.1 Tier-H carry: total bullets ≥ soft cap (700) emit a
+    soft-warning advising the operator to shorten. Severity must be
+    'soft-warning' (advisory; never gates assembly)."""
+    slide = ss.example_slide("methods_summary")
+    # 6 bullets totaling ~750 chars (above soft cap)
+    slide["content"]["bullets"] = ["A bullet " + "z" * 115] * 6
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    body_warnings = [i for i in issues if "bullets" in i.path]
+    assert len(body_warnings) == 1
+    assert body_warnings[0].severity == "soft-warning"
+    assert "soft cap" in body_warnings[0].message
+
+
+def test_methods_summary_body_total_chars_above_hard_cap_warns_distinctly(ss):
+    """v0.8.1: total bullets above hard cap (900) emit a soft-warning
+    referring to content_overflow + revise loop (the renderer will
+    catch this at fontScale time)."""
+    slide = ss.example_slide("methods_summary")
+    # 6 bullets totaling ~950 chars (above hard cap)
+    slide["content"]["bullets"] = ["A bullet " + "z" * 150] * 6
+    spec = ss.example_slide_spec()
+    spec["slides"][0] = slide
+    spec["substories"] = [{"id": "S1", "punchline": "x",
+                            "slide_ids": [s["id"] for s in spec["slides"]
+                                          if s["substory_id"] == "S1"]}]
+    issues = ss.validate_slide_spec(spec)
+    body_warnings = [i for i in issues if "bullets" in i.path]
+    assert len(body_warnings) == 1
+    assert body_warnings[0].severity == "soft-warning"
+    assert "hard cap" in body_warnings[0].message
+    assert "content_overflow" in body_warnings[0].message
+
+
 def test_methods_summary_tools_versions_option_a(ss):
     """Option A: list of {tool, version} objects, not strings."""
     slide = ss.example_slide("methods_summary")
