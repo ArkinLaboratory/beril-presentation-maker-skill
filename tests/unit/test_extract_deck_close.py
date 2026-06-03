@@ -359,6 +359,45 @@ def test_report_forward_call_bulleted_section(edc, tmp_path):
     assert "Next directions" in sections
 
 
+def test_report_forward_call_skips_horizontal_rule_lines(edc, tmp_path):
+    """v0.8.0 Tier H carry: REPORT.md sections that open with a
+    markdown HR (---, ***, ___) under the heading used to capture the
+    HR string literally as forward_call. Adam-flagged on lanthanide
+    draft_1 + draft_2: the deck_close slide rendered a tiny dash-only
+    textbox at the bottom with `forward_call: "---"`. The fix: skip
+    HR lines in `_first_paragraph` (CommonMark thematic-break rule).
+    """
+    project_dir = tmp_path / "p"
+    project_dir.mkdir()
+    _write_report(project_dir,
+        "# REPORT\n\n## Next directions\n\n"
+        "---\n\n"
+        "Validate Tier-1 targets in murine colitis models.\n")
+    text, sections = edc.parse_report_forward_call(project_dir / "REPORT.md")
+    assert "---" not in text, (
+        f"forward_call must not capture the HR separator; got {text!r}"
+    )
+    assert "Tier-1" in text
+    assert "Next directions" in sections
+
+
+def test_report_forward_call_skips_hr_variants(edc, tmp_path):
+    """Defensive: skip *** and ___ HR variants too (CommonMark §4.1
+    accepts any of -, *, _ in groups of 3+)."""
+    for hr in ("---", "***", "___", "- - -", "* * *"):
+        project_dir = tmp_path / f"p_{hr.replace(' ', '_').replace('*', 'a').replace('_', 'u')}"
+        project_dir.mkdir()
+        _write_report(project_dir,
+            f"# REPORT\n\n## Next directions\n\n"
+            f"{hr}\n\n"
+            "Real forward-call prose here.\n")
+        text, sections = edc.parse_report_forward_call(project_dir / "REPORT.md")
+        assert hr.replace(" ", "") not in text.replace(" ", ""), (
+            f"HR variant {hr!r} should be skipped; got {text!r}"
+        )
+        assert "Real forward-call" in text
+
+
 def test_report_forward_call_ranks_next_directions_above_synthesis(edc, tmp_path):
     """When both 'Next directions' AND 'Synthesis' exist, prefer
     'Next directions' (more operationally actionable)."""

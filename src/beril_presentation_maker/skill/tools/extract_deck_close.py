@@ -548,6 +548,19 @@ def _first_paragraph(body: str) -> str:
                 paragraphs.append(" ".join(current))
                 current = []
             continue
+        # v0.8.0 Tier H carry: skip horizontal-rule lines (---, ***, ___)
+        # which `_first_paragraph` previously captured as if they were
+        # prose. Adam-flagged on lanthanide draft_1 + draft_2: the
+        # extracted forward_call became the literal string "---" which
+        # then rendered as a tiny dash-only textbox on the deck_close
+        # slide. Match per CommonMark §4.1: a line of 3+ matching - / *
+        # / _ characters (optionally interspersed with spaces) is a
+        # thematic break.
+        if re.match(r"^(\s*[-*_]\s*){3,}$", stripped):
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
         current.append(stripped)
     if current:
         paragraphs.append(" ".join(current))

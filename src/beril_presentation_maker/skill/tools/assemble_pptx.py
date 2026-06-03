@@ -1891,16 +1891,24 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
     if _mp is not None:
         # All four dims — see the big_number note: top/height-only on an
         # inheriting placeholder zero-widths the text.
+        # v0.8.0 Tier H carry: height 3.15 → 2.85 (bottom 4.45 → 4.15)
+        # to widen the gap to the tools_versions footer band (T=4.52).
+        # Adam's lanthanide draft_2 read flagged visible overlap on
+        # slides 6/12/18/23 even though the geometry-aware fontScale
+        # was writing scales in the 76-93% range — the avg-glyph-width
+        # approximation under-estimates wrapping for dense academic
+        # prose. The 0.30in geometric margin is a belt-and-suspenders
+        # fix; v0.8.1 will also tighten the calibration constant.
         _mp.left = Inches(0.34)
         _mp.top = Inches(1.30)
         _mp.width = Inches(9.32)
-        _mp.height = Inches(3.15)   # bottom 4.45
+        _mp.height = Inches(2.85)   # bottom 4.15; gap 0.37 to footer at 4.52
     # 2026-04-28 (v0.2.1): normAutofit at slide level so dense methods
     # content (5-7 bullets, 600-800 chars) shrinks to fit. The layout-
     # level body_pr autofit from LAYOUT_FIXES gets overridden when
     # python-pptx creates a fresh slide-level txBody during fill.
     # v0.8.0 Tier G.10-B: geometry-aware fontScale instead of fixed 80%.
-    # Master body base = 14pt; box ~9.32×3.15 in. The geometry sizer
+    # Master body base = 14pt; box 9.32×2.85 in (Tier H carry). The geometry sizer
     # computes the actual scale needed for the bullet content,
     # preventing the "touch the textbox to refit" symptom.
     _body_chars = sum(len(str(b or "")) for b in content["bullets"])
