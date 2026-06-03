@@ -340,6 +340,64 @@ orchestrator-stage changes; landing together amortizes both.
   resolve via G.10-B's commit-the-shrink, the LLM-patch path
   may not be needed at all.
 
+## v0.8.1 carries from Tier H live A/B (lanthanide draft_2 read 2026-06-03)
+
+Adam Tier-I read of lanthanide draft_2 was "very very close +
+diminishing returns." Two small in-flight fixes landed
+(methods_summary body 3.15→2.85, extract_deck_close HR filter).
+These four remain as v0.8.1:
+
+- **content_overflow → revise_loop routing.** The 4 surviving
+  title-overflow findings (slides 16, 27, 28, 32 on draft_2)
+  emit cleanly from G.10-C's audit/content_overflow.json and
+  the cascade lifts them to Tier-1 — but revise_loop.py reads
+  ONLY audit/adversarial_review.json. So content_overflow
+  findings reach the cascade summary but never trigger a
+  revise pass. v0.8.1 fix: extend revise_loop.py to load
+  audit/content_overflow.json + fold its findings into the
+  processing queue with class="content_overflow" (already in
+  REVISE_CLASSES; routes to revise_slide.v1's G.10-C section).
+  ~30-40 line change; high leverage on the visible content-
+  overflow regressions Adam called "fine for user to adjust."
+
+- **`_AVG_GLYPH_WIDTH_RATIO` calibration tightening (0.55 → ~0.62).**
+  Tier-H surfaced that the geometry-aware fontScale writes
+  scales in the 76-93% range for dense academic-prose body
+  bullets, but visually the bullets still overflow into the
+  footer band on methods_summary (slides 6/12/18/23). The
+  0.55 ratio under-estimates wrap for long technical terms
+  (e.g. "Acidobacteriota", "lanthanide-dependent methanol
+  dehydrogenase"). v0.8.0 shipped a belt-and-suspenders fix
+  (body height 3.15→2.85, +0.30in geometric margin); v0.8.1
+  should tighten the calibration so the geometry-derived
+  scale itself accounts for the real wrap. Validation: re-run
+  lanthanide and confirm methods_summary body bullets fit
+  cleanly at the geometry-derived scale without needing the
+  margin.
+
+- **Tier-H Fix #1 (methods_summary body 2.85) may need further
+  trimming.** Adam's verification of the reassembled deck after
+  Fix #1 was "no change" — the dense body content still
+  overlaps visually. Possible causes: (a) the slide_spec.json
+  is frozen from the original LLM run, so body bullets weren't
+  re-shrunk against the new geometry; (b) the body content
+  itself is over-budget at any reasonable scale. v0.8.1
+  validation path: re-run lanthanide from scratch with the
+  v0.8.0 stack + observe whether the geometry+content combo
+  actually fits, OR add a validator-side hard-cap on body
+  char-count for methods_summary (parallel to qa_anticipated's
+  G.2 answer_summary cap).
+
+- **draft_2 deck_close `---` artifact (cosmetic, hand-fixable).**
+  The HR-filter fix in extract_deck_close.py works for fresh
+  runs (verified: re-extracting from lanthanide draft_2's
+  REPORT.md returns real "Sequence-level resolution of..."
+  prose). But draft_2's saved working/03_slides/deck_close.json
+  has the `---` baked in from its original LLM stage. Any new
+  draft from v0.8.0 onward is clean; users with pre-v0.8.0
+  drafts can hand-fix the deck_close forward_call slot. No
+  v0.8.1 fix needed; tracking here for awareness.
+
 **Carries from v0.7 (still real; deferred again):**
 
 - **Per-arc figure clustering / per-arc-distribution metric** —
