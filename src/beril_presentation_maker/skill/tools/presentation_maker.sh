@@ -3257,6 +3257,16 @@ stage_revise_slides() {
     return 0
   fi
 
+  # v0.8.1: fold content_overflow findings (G.10-C renderer output)
+  # into adversarial_review.json so revise_loop processes them in the
+  # 1st pass. No-op when audit/content_overflow.json is missing (the
+  # renderer only writes it when at least one overflow finding emits).
+  if [[ -f "$AUDIT_DIR/content_overflow.json" ]]; then
+    echo "  merging content_overflow findings into adversarial_review.json..." >&2
+    "$PYTHON_BIN" "$TOOLS_DIR/merge_content_overflow_into_review.py" \
+      "$OUTDIR" 2>&1 | sed 's/^/    /' >&2
+  fi
+
   local stream_flag=""
   if [[ $NO_STREAM -eq 1 ]]; then stream_flag="--no-stream"; fi
 

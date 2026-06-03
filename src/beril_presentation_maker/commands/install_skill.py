@@ -67,6 +67,8 @@ _EXECUTABLE_FILES = (
     "tools/draft_paths.py",
     # v0.8.0 Tier G.10-A: deterministic layout-overlap detector
     "tools/check_slide_layout_overlaps.py",
+    # v0.8.1: content_overflow → revise_loop routing merger
+    "tools/merge_content_overflow_into_review.py",
 )
 
 
