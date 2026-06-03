@@ -614,12 +614,48 @@ FONTSCALE_FULL = 100000        # 100% (no shrink)
 # proportional fonts (empirically tuned vs python-pptx renderings).
 # This is intentionally a heuristic — the real measurement would
 # require fonttools+PIL+actual font files, which is non-trivial to
-# bundle. The approximation is good enough to catch the high-char-
-# count slots that the char-only ladder undershoots.
+# bundle.
+#
+# v0.8.1 line-wrap model (replaces the area model): Tier-H surfaced
+# that the area model under-estimates the vertical space needed
+# because it doesn't account for the discrete-line-wrap effect.
+# Text wraps at line boundaries, not at proportional shrinks. A
+# body slot with 6 bullets × 100 chars/bullet at 14pt in a 9.32-in
+# wide box: each bullet is ~755pt wide / 671pt available ≈ wraps to
+# 2 lines, so 6 bullets × 2 lines × 14pt × 1.2 = ~202 pt vertical,
+# which is right at the edge of a 2.85-in (205-pt) box. The area
+# model said this fit at 100% scale; reality showed it overflowing.
+#
+# The line-wrap model:
+#   1. Estimate chars-per-line at the requested scale:
+#        chars_per_line = box_width_pt / (scale × glyph_ratio × base_pt)
+#   2. Estimate total wrapped lines:
+#        n_lines = ceil(chars / chars_per_line)  (rough)
+#      For multi-bullet content the actual line count is higher
+#      because each bullet starts on a new line (no cross-bullet
+#      wrap). We approximate by adding a small per-paragraph
+#      surcharge proportional to estimated bullet count.
+#   3. Estimate vertical space used:
+#        v_used = n_lines × (scale × base_pt × line_height_ratio)
+#   4. Find the largest scale where v_used ≤ box_height_pt.
+#      Bisection over fontScale in [FONTSCALE_FLOOR, FONTSCALE_FULL].
 
 # Average glyph width as a fraction of font pt size for the master's
 # default fonts (Oxygen). Calibrated empirically.
-_AVG_GLYPH_WIDTH_RATIO = 0.55
+#
+# v0.8.1 calibration bump 0.55 → 0.62: Tier-H Adam-read of lanthanide
+# draft_2 surfaced that methods_summary body bullets at ~580-625
+# chars were overflowing into the footer band even though the
+# v0.8.0 model predicted 100% scale fits. Bump accounts for: (a)
+# proportional-font variability (the longest glyphs in academic
+# prose like "Acidobacteriota" are wider than the 0.55 ratio
+# predicts); (b) word-wrap raggedness (real lines don't fill the
+# box width; "ragged-right" wastes 5-15% of available width
+# depending on word lengths). Combined with the v0.8.1 line-wrap
+# model (vs the v0.8.0 area model), this tightening should be
+# enough to catch dense academic prose without forcing all decks
+# to clamp at floor.
+_AVG_GLYPH_WIDTH_RATIO = 0.62
 
 # Line-height multiplier (line spacing / font pt size). PowerPoint
 # defaults to ~1.2 for proportional fonts.
@@ -638,47 +674,91 @@ def _fontscale_for_geometry(
     base_pt: int,
     avg_glyph_ratio: float = _AVG_GLYPH_WIDTH_RATIO,
     line_height_ratio: float = _LINE_HEIGHT_RATIO,
+    n_paragraphs: int = 1,
 ) -> int:
     """Compute the fontScale needed to fit `chars` chars at `base_pt`
     into a box of `box_width_emu × box_height_emu`.
 
     Returns a fontScale in [FONTSCALE_FLOOR, FONTSCALE_FULL] (×1000
-    units per OOXML convention). The scale is the geometry-derived
-    answer — what fontScale would just-fit the text. PowerPoint
-    accepts the scale verbatim at render time; no "touch to refit"
-    needed.
+    units per OOXML convention).
+
+    v0.8.1 line-wrap model: the previous area model
+    (target_area / required_area sqrt) under-estimated the vertical
+    space needed because it didn't account for discrete line-wrap.
+    Now: estimate chars-per-line at the requested scale, compute
+    total wrapped lines including per-paragraph surcharge, and
+    bisect for the largest scale where the wrapped text fits the
+    box height.
+
+    Args:
+      chars: total content character count (sum across bullets/paragraphs).
+      box_width_emu, box_height_emu: slot dimensions in EMU.
+      base_pt: master/layout-defined base font size in pt.
+      avg_glyph_ratio: glyph width / pt (default 0.55 for Oxygen).
+      line_height_ratio: line spacing / pt (default 1.2).
+      n_paragraphs: estimated number of paragraphs/bullets. Each
+        paragraph starts on a new line (no cross-paragraph wrap),
+        so each adds a partial-line surcharge. Default 1 (single
+        paragraph). For body bullet slots pass len(bullets).
 
     Algorithm:
-      1. Compute target text area (box width × height in pt²).
-      2. Compute required text area at full scale (chars ×
-         avg_glyph_width × line_height × base_pt²).
-      3. The scale is sqrt(target_area / required_area) (text area
-         scales as scale² since both width and line-height shrink).
-      4. Clamp into [FLOOR, FULL].
-
-    This is approximate — we ignore word-wrap raggedness, font
-    metrics variance, and language-specific glyph widths. The
-    approximation is calibrated for the master's Oxygen font and
-    holds within ~10% for English prose in the char-count range
-    (50-2000) the deck slots actually hit.
+      1. Convert box to pt.
+      2. For scale s ∈ [FLOOR/FULL, 1.0]:
+           glyph_w = s × base_pt × avg_glyph_ratio
+           chars_per_line = floor(box_width_pt / glyph_w)
+           n_lines = ceil(chars / chars_per_line) + (n_paragraphs - 1)
+           v_used = n_lines × s × base_pt × line_height_ratio
+           fits iff v_used ≤ box_height_pt
+      3. Return the largest s that fits (or FLOOR if none fit).
     """
     if chars <= 0:
         return FONTSCALE_FULL
     box_width_pt = box_width_emu * _PT_PER_INCH / _EMU_PER_INCH
     box_height_pt = box_height_emu * _PT_PER_INCH / _EMU_PER_INCH
-    # Available text area (pt²)
-    target_area = max(box_width_pt * box_height_pt, 1.0)
-    # Required text area at full scale (chars × glyph_w × line_h × pt²)
-    required_area = (chars * avg_glyph_ratio * line_height_ratio
-                     * base_pt * base_pt)
-    if required_area <= 0:
+    if box_width_pt <= 0 or box_height_pt <= 0 or base_pt <= 0:
         return FONTSCALE_FULL
-    # Scale²: target / required → scale = sqrt(...)
-    ratio = target_area / required_area
-    if ratio >= 1.0:
+
+    n_paragraphs = max(1, n_paragraphs)
+
+    def fits(scale: float) -> bool:
+        """True if `chars` fits in the box at this fontScale."""
+        if scale <= 0:
+            return False
+        glyph_w = scale * base_pt * avg_glyph_ratio
+        if glyph_w <= 0:
+            return False
+        # Chars per line (rounded down — partial lines don't fit)
+        chars_per_line = int(box_width_pt / glyph_w)
+        if chars_per_line <= 0:
+            return False
+        # Lines needed (ceil); add per-paragraph surcharge:
+        # the last line of each paragraph is partial on average,
+        # so n_paragraphs - 1 "fractional" lines of waste.
+        import math
+        n_lines = math.ceil(chars / chars_per_line) + (n_paragraphs - 1)
+        v_used = n_lines * scale * base_pt * line_height_ratio
+        return v_used <= box_height_pt
+
+    # Fast path: does it fit at full scale?
+    if fits(1.0):
         return FONTSCALE_FULL
-    scale = ratio ** 0.5
-    scaled_int = int(scale * FONTSCALE_FULL)
+
+    # Bisect for the largest scale that fits, in [FLOOR, FULL]
+    lo = FONTSCALE_FLOOR / FONTSCALE_FULL  # 0.60
+    hi = 1.0
+    if not fits(lo):
+        return FONTSCALE_FLOOR
+
+    # Bisect to ~0.1% precision (10 iterations is plenty over a 0.4 range)
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid
+
+    # Return the largest scale that fits (lo)
+    scaled_int = int(lo * FONTSCALE_FULL)
     if scaled_int < FONTSCALE_FLOOR:
         return FONTSCALE_FLOOR
     if scaled_int > FONTSCALE_FULL:
@@ -786,6 +866,7 @@ def _enable_normautofit_by_geometry(
     *,
     base_pt: int,
     content_chars: int | None = None,
+    n_paragraphs: int = 1,
     ln_spc_reduction: int = 20000,
     warnings: list[str] | None = None,
     overflow_findings: list[OverflowFinding] | None = None,
@@ -821,6 +902,7 @@ def _enable_normautofit_by_geometry(
         content_chars,
         box_width_emu=box_w, box_height_emu=box_h,
         base_pt=base_pt,
+        n_paragraphs=n_paragraphs,
     )
     if scale == FONTSCALE_FLOOR:
         _msg = (
@@ -1463,6 +1545,7 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
         _ce_bw_chars = sum(len(str(b or "")) for b in bullets)
         _enable_normautofit_by_geometry(
             slide, 1, base_pt=14, content_chars=_ce_bw_chars,
+            n_paragraphs=len(bullets),
             warnings=warnings,
             where=f"claim_evidence body w/figure "
                   f"(slide {getattr(slide, 'slide_id', '?')})",
@@ -1526,6 +1609,7 @@ def _fill_claim_evidence(slide, content, draft_dir, warnings):
         _ce_nofig_chars = sum(len(str(b or "")) for b in bullets)
         _enable_normautofit_by_geometry(
             slide, 1, base_pt=14, content_chars=_ce_nofig_chars,
+            n_paragraphs=len(bullets),
             warnings=warnings,
             where=f"claim_evidence body no-figure "
                   f"(slide {getattr(slide, 'slide_id', '?')})",
@@ -1914,6 +1998,7 @@ def _fill_methods_summary(slide, content, draft_dir, warnings):
     _body_chars = sum(len(str(b or "")) for b in content["bullets"])
     _enable_normautofit_by_geometry(
         slide, 1, base_pt=14, content_chars=_body_chars,
+        n_paragraphs=len(content["bullets"]),
         warnings=warnings,
         where=f"methods_summary body (slide {getattr(slide, 'slide_id', '?')})",
     )
@@ -2179,9 +2264,11 @@ def _fill_deck_close(slide, content, draft_dir, warnings):
     # v0.8.0 Tier G.10-B: geometry-aware fontScale. Master body base
     # = 14pt; box 9.32×2.85 in. Computes the actual scale needed for
     # this slide's key_takeaways content vs. the trimmed body region.
-    _kt_chars = sum(len(str(b or "")) for b in content.get("key_takeaways", []))
+    _kt_list = content.get("key_takeaways", []) or []
+    _kt_chars = sum(len(str(b or "")) for b in _kt_list)
     _enable_normautofit_by_geometry(
         slide, 1, base_pt=14, content_chars=_kt_chars,
+        n_paragraphs=len(_kt_list),
         warnings=warnings,
         where=f"deck_close key_takeaways (slide {getattr(slide, 'slide_id', '?')})",
     )
