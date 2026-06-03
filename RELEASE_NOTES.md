@@ -1,5 +1,45 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v1.0.0 (2026-06-03) — production-handoff milestone
+
+First stable release. Captures v0.8.1's full feature surface +
+adds the production-team-handoff framing artifact
+(`HANDOFF.md`). v1.0.0 is the deliberate "ready to hand to a
+production engineering team" milestone — the v0.8.1 ship line
+content is unchanged; the v1.0 designation is a positioning
+statement.
+
+What v1.0.0 means operationally:
+
+- **Stable surface**: CLI flags, 4-zone draft layout, schemas
+  (slide_spec.v1, adversarial-review-presentation.v3,
+  compose-fragment.v1/v2, layout-overlaps.v1,
+  content-overflow.v1, review-cascade.v1) are committed to
+  through the v1.x line. Schema additions remain non-breaking;
+  schema-version bumps require dual support windows.
+- **Documented deferred work**: HANDOFF.md §3 enumerates v0.8.1
+  Tier-H carries (cosmetic) + v0.9+ work (per-arc figure
+  clustering, retraction-aware composer, compression heuristics,
+  LLM layout patches, real font-metrics, multi-language). None
+  are blockers.
+- **Documented ownership boundaries**: HANDOFF.md §5 splits
+  production-team-owns (deployment, per-tenant config,
+  monitoring, first-line support) from vendor-side-owns (code
+  maintenance, prompt engineering, image-gen provider integration,
+  new layouts). §6 covers release cadence + escalation.
+- **Cross-skill argument closed**: the augmentation-stream
+  retrospective at the workspace level documents the
+  architectural answer (yes, BERIL's skill-layer absorbs the
+  capability stack).
+
+No code changes from v0.8.1 → v1.0.0. Suite remains at 1967
+unit tests passing.
+
+The v1.x line continues from here; v1.x patch releases when
+Tier-I surfaces actionable carries; v1.x minor releases for
+new pipeline stages, prompt-stack versions, or layout additions.
+A v2.0 would imply a deliberate re-evaluation of stable surface.
+
 ## v0.8.1 (2026-06-03) — Tier-H carries: content_overflow routing + line-wrap calibration
 
 Three small fixes closing the gaps Adam's Tier-I read of

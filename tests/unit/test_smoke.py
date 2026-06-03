@@ -13,7 +13,12 @@ from beril_presentation_maker import cli
 
 
 def test_version_attribute_exists():
-    assert beril_presentation_maker.__version__.startswith("0.")
+    # v0.x line OR v1.x line (post v1.0.0 production-handoff tag,
+    # 2026-06-03). Pin is on the SemVer shape, not the major.
+    v = beril_presentation_maker.__version__
+    assert v[0].isdigit() and "." in v, (
+        f"__version__ must be SemVer-shaped; got {v!r}"
+    )
 
 
 def test_cli_parser_builds_and_handles_version():
