@@ -1,5 +1,25 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v1.0.1 (2026-06-03) — docs: terminology + URL migration
+
+**Docs-only.** No code change.
+
+- README + pyproject description: "BERDL analysis projects" →
+  "BERIL analysis projects". BERDL has been deprecated as the
+  co-scientist name; the data layer is "KBase Lakehouse" and
+  the co-scientist is "BERIL". Operational artifacts (prompts,
+  audit messages, code identifiers like
+  `berdl_query`/`berdl_start`) keep BERDL by design.
+- README stage table: pipeline stage 6 description "K-BERDL
+  signal" → "KBase Lakehouse signal" (table column alignment
+  preserved).
+- README install command: URL updated to
+  `kbaseincubator/beril-presentation-maker-skill`; install pin
+  bumped from `@v0.3.4.4` to `@v1.0.0` (the stale example pin
+  was many releases behind).
+
+CRAFT submodule pin bumps from v1.0.0 → v1.0.1 in CRAFT v0.2.2.
+
 ## v1.0.0 (2026-06-03) — production-handoff milestone
 
 First stable release. Captures v0.8.1's full feature surface +

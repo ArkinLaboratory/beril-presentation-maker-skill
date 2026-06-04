@@ -1,6 +1,6 @@
 # beril-presentation-maker-skill
 
-A scientific presentation drafter for BERDL analysis projects. Takes
+A scientific presentation drafter for BERIL analysis projects. Takes
 a finished project (research plan, report, notebooks, figures,
 optional adversarial review, optional paper-writer outputs) and
 produces a beautiful, evidence-grounded slide deck (talk) or poster,
@@ -71,7 +71,7 @@ continue to work unchanged.
 
 ## What it does
 
-Reads BERDL project artifacts and runs a multi-stage drafting
+Reads BERIL project artifacts and runs a multi-stage drafting
 pipeline. v0.8.0 talk-30 STRONG runs through 17 stages (additional
 stages relative to v0.3.x: `deck_close`, `visual_qa_final` +
 optional 2nd revise pass per Tier G.7/G.8):
@@ -82,7 +82,7 @@ optional 2nd revise pass per Tier G.7/G.8):
  3. substory_design.v1        partition into substories            ~$0.20
  4. curate_figures            inventory + shortlist (Python)       ~$0
  5. citation_pool.v1          verify-by-resolution pool            ~$0.30
- 6. cross_tenant.v1           K-BERDL signal (optional)            ~$0-0.10
+ 6. cross_tenant.v1           KBase Lakehouse signal (optional)    ~$0-0.10
  7. intro.v1                  opening framing slides               ~$0.15
  8. slide_compose.v1          per-substory composition             ~$0.30-0.50
  9. qa_prep.v1                anticipated Q&A slides               ~$0.20
@@ -144,7 +144,7 @@ directory. Old drafts are pruned via
 # Run from BERIL_ROOT. Steps in order: install package → verify CLI loads →
 # configure dependencies → deploy skill files into BERIL.
 cd <BERIL_ROOT>
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.3.4.4 \
+pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git@v1.0.0 \
   && beril-presentation-maker --version \
   && beril-presentation-maker configure \
   && beril-presentation-maker install-skill .
