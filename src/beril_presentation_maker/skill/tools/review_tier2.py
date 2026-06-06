@@ -41,6 +41,7 @@ Exit code: always 0 (advisory). The cascade JSON consumer reads
 audit/review_tier2.json; missing audit file → cascade emits no Tier-2
 findings (cascade Tier C → Tier-2 dispatcher returns empty findings).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -59,11 +60,15 @@ VERSION = "0.4.0-m4b-tierC"
 _THIS_DIR = Path(__file__).resolve().parent
 _PROMPT_PATH = _THIS_DIR.parent / "prompts" / "review_tier2.v1.md"
 
-# Default model: Haiku 4.5 (vision-capable, fast, ~$0.05 per
-# slide_spec-sized review on a 27-slide deck). Tier-2's value is
-# fast pattern detection at low cost — Sonnet would be ~10x more
-# expensive without proportional uplift on these 4 classes.
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# CRAFT-CONTRACT §3.4 / Round 2a fixup (2): Tier-2 review is the
+# narrative-light Haiku pass by design — DQ3 "Haiku 4.5 ~$0.05/run
+# target" stays in force; this is the cheap mechanical review, not
+# the high-leverage critique tier. Claude Code resolves the alias
+# via ANTHROPIC_DEFAULT_HAIKU_MODEL in
+# <BERIL_ROOT>/.claude/settings.json (written by `configure`).
+# Operators wanting to escalate can pin `--model sonnet` on the call
+# site; the floor default stays fast/haiku.
+DEFAULT_MODEL = "haiku"
 
 # Allowed tools for the claude -p subprocess. Tier 2 reads structured
 # inputs (slide_spec.json, throughline.md, substories.md, the Tier 1
@@ -77,6 +82,7 @@ _ALLOWED_TOOLS = "Read,Write"
 # render pipeline)
 # ---------------------------------------------------------------------------
 
+
 def _which(binary: str) -> str | None:
     """Return absolute path to binary on PATH, or None."""
     return shutil.which(binary)
@@ -85,6 +91,7 @@ def _which(binary: str) -> str | None:
 @dataclass
 class ToolchainStatus:
     """Result of probing the Tier-2 dependencies (just claude)."""
+
     claude: str | None
 
     @property
@@ -103,6 +110,7 @@ def probe_toolchain(claude_bin: str = "claude") -> ToolchainStatus:
 # ---------------------------------------------------------------------------
 # claude -p invocation
 # ---------------------------------------------------------------------------
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -184,11 +192,16 @@ def invoke_tier2_review(
     )
 
     cmd = [
-        claude_bin, "-p",
-        "--model", model,
-        "--system-prompt", system_prompt,
-        "--allowedTools", _ALLOWED_TOOLS,
-        "--output-format", "json",
+        claude_bin,
+        "-p",
+        "--model",
+        model,
+        "--system-prompt",
+        system_prompt,
+        "--allowedTools",
+        _ALLOWED_TOOLS,
+        "--output-format",
+        "json",
         "--dangerously-skip-permissions",
         user_prompt,
     ]
@@ -228,6 +241,7 @@ def invoke_tier2_review(
 # Stub-report writer (degrades gracefully on missing deps / missing spec)
 # ---------------------------------------------------------------------------
 
+
 def write_stub_reports(
     out_json_path: Path,
     out_md_path: Path,
@@ -260,6 +274,7 @@ def write_stub_reports(
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
+
 def run_tier2(
     draft_dir: Path,
     *,
@@ -281,27 +296,34 @@ def run_tier2(
     status = probe_toolchain(claude_bin)
     if not status.ok:
         write_stub_reports(
-            out_json, out_md, draft_dir,
+            out_json,
+            out_md,
+            draft_dir,
             note=f"Tier 2 toolchain incomplete (missing: "
-                 f"{', '.join(status.missing())}); install Claude Code CLI "
-                 f"to enable narrative-light review.",
+            f"{', '.join(status.missing())}); install Claude Code CLI "
+            f"to enable narrative-light review.",
         )
         if not quiet:
-            print(f"  review-tier2: skipped — missing dependencies: "
-                  f"{', '.join(status.missing())}", file=sys.stderr)
+            print(
+                f"  review-tier2: skipped — missing dependencies: {', '.join(status.missing())}",
+                file=sys.stderr,
+            )
         return 0
 
     # --- 2. Locate slide_spec.json + the narrative artifacts ---
     slide_spec_path = draft_dir / "working" / "slide_spec.json"
     if not slide_spec_path.is_file():
         write_stub_reports(
-            out_json, out_md, draft_dir,
-            note=f"slide_spec.json not found at {slide_spec_path} — "
-                 f"nothing to review.",
+            out_json,
+            out_md,
+            draft_dir,
+            note=f"slide_spec.json not found at {slide_spec_path} — nothing to review.",
         )
         if not quiet:
-            print(f"  review-tier2: skipped — no slide_spec.json at "
-                  f"{slide_spec_path}", file=sys.stderr)
+            print(
+                f"  review-tier2: skipped — no slide_spec.json at {slide_spec_path}",
+                file=sys.stderr,
+            )
         return 0
 
     # Optional inputs — pass the paths even if absent; the system
@@ -333,8 +355,9 @@ def run_tier2(
         )
         write_stub_reports(out_json, out_md, draft_dir, note=note)
         if not quiet:
-            print(f"  review-tier2: failed (rc={diag['exit_status']}); "
-                  f"see {out_md}", file=sys.stderr)
+            print(
+                f"  review-tier2: failed (rc={diag['exit_status']}); see {out_md}", file=sys.stderr
+            )
         return 0
 
     if not quiet:
@@ -343,16 +366,19 @@ def run_tier2(
             n = len(payload.get("findings", []))
             n_reviewed = payload.get("n_slides_reviewed", 0)
             if n == 0:
-                print(f"  review-tier2: no findings across {n_reviewed} "
-                      f"slide(s) (${diag['cost_usd']:.4f})",
-                      file=sys.stderr)
+                print(
+                    f"  review-tier2: no findings across {n_reviewed} "
+                    f"slide(s) (${diag['cost_usd']:.4f})",
+                    file=sys.stderr,
+                )
             else:
-                print(f"  review-tier2: {n} finding(s) across {n_reviewed} "
-                      f"slide(s) — see {out_md} (${diag['cost_usd']:.4f})",
-                      file=sys.stderr)
+                print(
+                    f"  review-tier2: {n} finding(s) across {n_reviewed} "
+                    f"slide(s) — see {out_md} (${diag['cost_usd']:.4f})",
+                    file=sys.stderr,
+                )
         except (json.JSONDecodeError, OSError):
-            print(f"  review-tier2: completed (rc=0); see {out_md}",
-                  file=sys.stderr)
+            print(f"  review-tier2: completed (rc=0); see {out_md}", file=sys.stderr)
 
     return 0
 
@@ -361,23 +387,26 @@ def run_tier2(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="review_tier2",
         description="Tier 2 narrative-light review (advisory; v0.4 M4b). "
-                    "Haiku-pinned; 4 detection classes (register_drift, "
-                    "qa_softball, unbacked_quantitative, substory_arc); "
-                    "always advisory (cascade never short-circuits on "
-                    "Tier-2 findings).",
+        "Haiku-pinned; 4 detection classes (register_drift, "
+        "qa_softball, unbacked_quantitative, substory_arc); "
+        "always advisory (cascade never short-circuits on "
+        "Tier-2 findings).",
     )
     p.add_argument("draft_dir", help="v0.3.1+ draft directory (talks/draft_N/).")
-    p.add_argument("--quiet", action="store_true",
-                   help="Suppress the stderr summary line.")
-    p.add_argument("--model", default=DEFAULT_MODEL,
-                   help=f"Claude model for the Tier-2 review (default: "
-                        f"{DEFAULT_MODEL}).")
-    p.add_argument("--claude-bin", default="claude",
-                   help="Path to the claude CLI (default: claude on PATH).")
+    p.add_argument("--quiet", action="store_true", help="Suppress the stderr summary line.")
+    p.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Claude model for the Tier-2 review (default: {DEFAULT_MODEL}).",
+    )
+    p.add_argument(
+        "--claude-bin", default="claude", help="Path to the claude CLI (default: claude on PATH)."
+    )
     args = p.parse_args(argv)
 
     draft = Path(args.draft_dir)

@@ -14,6 +14,7 @@ Coverage:
 - score_quantitative_content: v0.1 stub returns 0.0.
 - CLI: missing key returns 3, budget exceeded returns 4.
 """
+
 from __future__ import annotations
 
 import base64
@@ -21,14 +22,12 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
-IC_PY = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
-         / "tools" / "image_client.py")
+IC_PY = REPO_ROOT / "src" / "beril_presentation_maker" / "skill" / "tools" / "image_client.py"
 
 
 def _import(name: str, path: Path):
@@ -44,9 +43,9 @@ def ic():
     return _import("image_client", IC_PY)
 
 
-def _mock_cborg_response(image_bytes: bytes = b"fake-png",
-                         input_tokens: int = 1000,
-                         output_tokens: int = 5000):
+def _mock_cborg_response(
+    image_bytes: bytes = b"fake-png", input_tokens: int = 1000, output_tokens: int = 5000
+):
     """Build a Mock for requests.Session.post that returns a CBORG-shape JSON."""
     b64 = base64.b64encode(image_bytes).decode("ascii")
     mock_resp = MagicMock()
@@ -63,7 +62,13 @@ def _mock_cborg_response(image_bytes: bytes = b"fake-png",
 # Construction
 # ---------------------------------------------------------------------------
 
-def test_image_client_defaults(ic):
+
+def test_image_client_defaults(ic, monkeypatch):
+    # Round 2a fixup (1): ImageClient.cborg() now reads CBORG_BASE_URL
+    # from the environment. Clear it so this test asserts the DEFAULT
+    # path (the user override is exercised by the dedicated tests
+    # below in the "CBORG_BASE_URL honored end-to-end" section).
+    monkeypatch.delenv("CBORG_BASE_URL", raising=False)
     client = ic.ImageClient.cborg(api_key="test-key")
     assert client.provider == "cborg"
     assert client.base_url == ic.DEFAULT_CBORG_BASE_URL
@@ -77,27 +82,79 @@ def test_image_client_custom_model(ic):
 
 
 # ---------------------------------------------------------------------------
+# CRAFT-CONTRACT §3.4 — CBORG_BASE_URL honored end-to-end
+#
+# Round 2a fixup (1): the user-facing CBORG_BASE_URL is the single
+# OpenAI-style base for the app-internal CBORG client. The default ends
+# in `/v1`; endpoint helpers append the path (no `/v1/...`). An override
+# (proxy, alternate gateway) flows through end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def test_default_base_url_includes_v1(ic):
+    """The contract: default base ends in /v1 (OpenAI-style)."""
+    assert ic.DEFAULT_CBORG_BASE_URL.endswith("/v1")
+
+
+def test_default_cborg_url_byte_identical(ic, monkeypatch):
+    """Round 2a fixup (1): default behavior must stay byte-identical.
+    Net request URL is still `…/v1/images/generations`."""
+    # Make sure CBORG_BASE_URL is NOT set in env, so the default fires.
+    monkeypatch.delenv("CBORG_BASE_URL", raising=False)
+    client = ic.ImageClient.cborg(api_key="x")
+    # base_url is the OpenAI-style default
+    assert client.base_url == "https://api.cborg.lbl.gov/v1"
+    # concatenated URL matches the pre-fixup byte-for-byte
+    assert (
+        f"{client.base_url}/images/generations" == "https://api.cborg.lbl.gov/v1/images/generations"
+    )
+
+
+def test_cborg_base_url_env_override_honored(ic, monkeypatch):
+    """A user CBORG_BASE_URL override (proxy, alternate gateway, /v2)
+    is now respected end-to-end."""
+    monkeypatch.setenv("CBORG_BASE_URL", "https://proxy.example.com/cborg/v1")
+    client = ic.ImageClient.cborg(api_key="x")
+    assert client.base_url == "https://proxy.example.com/cborg/v1"
+    # No double-/v1 — the path is just `/images/generations`.
+    assert (
+        f"{client.base_url}/images/generations"
+        == "https://proxy.example.com/cborg/v1/images/generations"
+    )
+
+
+def test_explicit_base_url_kwarg_still_wins(ic, monkeypatch):
+    """An explicit `base_url=...` kwarg overrides both env and default.
+    Used by tests that inject a mock URL."""
+    monkeypatch.setenv("CBORG_BASE_URL", "https://env.example.com/v1")
+    client = ic.ImageClient.cborg(api_key="x", base_url="https://kwarg.example.com/v1")
+    assert client.base_url == "https://kwarg.example.com/v1"
+
+
+# ---------------------------------------------------------------------------
 # Cost estimation
 # ---------------------------------------------------------------------------
+
 
 def test_estimate_cost_known_model(ic):
     cost = ic.ImageClient.estimate_cost_usd(
         "google/gemini-pro-image",
-        input_tokens=1_000_000, output_tokens=100_000,
+        input_tokens=1_000_000,
+        output_tokens=100_000,
     )
     # 1M * $2 + 100K * $12 = $2 + $1.20 = $3.20
     assert abs(cost - 3.20) < 0.01
 
 
 def test_estimate_cost_unknown_model_returns_zero(ic):
-    cost = ic.ImageClient.estimate_cost_usd("unknown/model",
-                                             input_tokens=10_000)
+    cost = ic.ImageClient.estimate_cost_usd("unknown/model", input_tokens=10_000)
     assert cost == 0.0
 
 
 # ---------------------------------------------------------------------------
 # Budget enforcement
 # ---------------------------------------------------------------------------
+
 
 def test_generate_raises_budget_exceeded(ic):
     """v0.3.3.2 (#62): worst-case is now $0.05 (was $0.404). With
@@ -131,6 +188,7 @@ def test_generate_clears_preflight_at_max_image_cost_default(ic):
     must clear at that level (and any reasonable user override above
     the worst-case bound)."""
     import requests
+
     sess = MagicMock()
     sess.post.side_effect = requests.RequestException("preflight passed")
     client = ic.ImageClient.cborg(api_key="test", request_session=sess)
@@ -147,6 +205,7 @@ def test_generate_preflight_borderline_at_worst_case(ic):
     """Budget exactly equal to worst-case: NOT exceeded (uses >, not ≥).
     Pins the comparison-strictness in case anyone refactors to ≥."""
     import requests
+
     sess = MagicMock()
     sess.post.side_effect = requests.RequestException("preflight passed")
     client = ic.ImageClient.cborg(api_key="test", request_session=sess)
@@ -160,6 +219,7 @@ def test_generate_within_budget_passes_preflight(ic):
     RequestException side_effect so the client catches it and wraps as
     ImageClientError."""
     import requests
+
     sess = MagicMock()
     sess.post.side_effect = requests.RequestException("preflight passed")
     client = ic.ImageClient.cborg(api_key="test", request_session=sess)
@@ -174,21 +234,26 @@ def test_generate_within_budget_passes_preflight(ic):
 # generate() with mocked CBORG
 # ---------------------------------------------------------------------------
 
-def test_generate_parses_cborg_response(ic):
+
+def test_generate_parses_cborg_response(ic, monkeypatch):
+    # Round 2a fixup (1): clear CBORG_BASE_URL so this test sees the
+    # DEFAULT base URL (the override is exercised separately above).
+    monkeypatch.delenv("CBORG_BASE_URL", raising=False)
     sess = MagicMock()
     sess.post.return_value = _mock_cborg_response(
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
     )
     client = ic.ImageClient.cborg(api_key="test", request_session=sess)
-    result = client.generate(prompt="test", budget_remaining_usd=10.00,
-                             channel="A")
+    result = client.generate(prompt="test", budget_remaining_usd=10.00, channel="A")
     assert result.image_bytes.startswith(b"\x89PNG")
     assert result.model == ic.DEFAULT_MODEL
     assert result.prompt == "test"
     assert result.channel == "A"
     assert result.cost_usd > 0
     assert result.elapsed_seconds >= 0
-    # CBORG was called with correct shape
+    # CBORG was called with correct shape — the FULL URL on the default
+    # path is byte-identical to pre-Round-2a (`/v1` lives in the base
+    # URL constant, not the path).
     args, kwargs = sess.post.call_args
     assert "/v1/images/generations" in args[0]
     assert kwargs["json"]["prompt"] == "test"
@@ -211,6 +276,7 @@ def test_generate_missing_b64_raises(ic):
 
 def test_generate_http_error_raises_image_client_error(ic):
     import requests
+
     sess = MagicMock()
     sess.post.side_effect = requests.RequestException("network error")
     client = ic.ImageClient.cborg(api_key="test", request_session=sess)
@@ -237,24 +303,40 @@ def test_generate_unsupported_provider_raises(ic):
 # Provenance
 # ---------------------------------------------------------------------------
 
+
 def test_image_result_to_provenance_dict_keys(ic):
     result = ic.ImageResult(
-        image_bytes=b"x", model="m", prompt="p",
-        cost_usd=0.18, elapsed_seconds=2.5,
-        channel="A", approved_at="2026-04-26T00:00:00Z",
+        image_bytes=b"x",
+        model="m",
+        prompt="p",
+        cost_usd=0.18,
+        elapsed_seconds=2.5,
+        channel="A",
+        approved_at="2026-04-26T00:00:00Z",
         quant_content_score=0.04,
     )
     d = result.to_provenance_dict()
-    expected_keys = {"model", "prompt", "cost_usd", "elapsed_seconds",
-                     "channel", "approved_at", "quant_content_score"}
+    expected_keys = {
+        "model",
+        "prompt",
+        "cost_usd",
+        "elapsed_seconds",
+        "channel",
+        "approved_at",
+        "quant_content_score",
+    }
     assert expected_keys.issubset(set(d.keys()))
 
 
 def test_append_provenance_creates_new_file(ic, tmp_path):
     out = tmp_path / "image_provenance.json"
     result = ic.ImageResult(
-        image_bytes=b"", model="m", prompt="p", cost_usd=0.10,
-        elapsed_seconds=1.0, channel="A",
+        image_bytes=b"",
+        model="m",
+        prompt="p",
+        cost_usd=0.10,
+        elapsed_seconds=1.0,
+        channel="A",
         approved_at="2026-04-26T00:00:00Z",
     )
     ic.append_provenance(out, result, image_path="ai_images/img01.png")
@@ -266,17 +348,33 @@ def test_append_provenance_creates_new_file(ic, tmp_path):
 
 def test_append_provenance_appends_existing(ic, tmp_path):
     out = tmp_path / "image_provenance.json"
-    out.write_text(json.dumps({
-        "version": "1.0",
-        "entries": [{"model": "old", "prompt": "old", "cost_usd": 0,
-                     "elapsed_seconds": 0, "channel": "A",
-                     "approved_at": "2026-04-26T00:00:00Z",
-                     "quant_content_score": None}],
-    }))
-    result = ic.ImageResult(image_bytes=b"", model="new", prompt="new",
-                             cost_usd=0.20, elapsed_seconds=1.0,
-                             channel="B",
-                             approved_at="2026-04-26T01:00:00Z")
+    out.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "entries": [
+                    {
+                        "model": "old",
+                        "prompt": "old",
+                        "cost_usd": 0,
+                        "elapsed_seconds": 0,
+                        "channel": "A",
+                        "approved_at": "2026-04-26T00:00:00Z",
+                        "quant_content_score": None,
+                    }
+                ],
+            }
+        )
+    )
+    result = ic.ImageResult(
+        image_bytes=b"",
+        model="new",
+        prompt="new",
+        cost_usd=0.20,
+        elapsed_seconds=1.0,
+        channel="B",
+        approved_at="2026-04-26T01:00:00Z",
+    )
     ic.append_provenance(out, result)
     parsed = json.loads(out.read_text())
     assert len(parsed["entries"]) == 2
@@ -287,6 +385,7 @@ def test_append_provenance_appends_existing(ic, tmp_path):
 # ---------------------------------------------------------------------------
 # Quant-content judge (v0.1 stub)
 # ---------------------------------------------------------------------------
+
 
 def test_score_quantitative_content_stub_returns_zero(ic):
     """v0.1 stub: always returns 0.0 (no quantitative content). Real
@@ -300,18 +399,18 @@ def test_score_quantitative_content_stub_returns_zero(ic):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def test_cli_missing_api_key_returns_3(ic, monkeypatch):
     monkeypatch.delenv("CBORG_API_KEY", raising=False)
-    rc = ic.main(["generate", "--prompt", "x", "--out", "/tmp/x.png",
-                  "--budget", "5.00"])
+    rc = ic.main(["generate", "--prompt", "x", "--out", "/tmp/x.png", "--budget", "5.00"])
     assert rc == 3
 
 
 def test_cli_budget_exceeded_returns_4(ic, monkeypatch, tmp_path):
     monkeypatch.setenv("CBORG_API_KEY", "test")
-    rc = ic.main(["generate", "--prompt", "x",
-                  "--out", str(tmp_path / "x.png"),
-                  "--budget", "0.0001"])
+    rc = ic.main(
+        ["generate", "--prompt", "x", "--out", str(tmp_path / "x.png"), "--budget", "0.0001"]
+    )
     assert rc == 4
 
 
@@ -328,12 +427,19 @@ def test_cli_generate_with_mocked_session_writes_image(ic, monkeypatch, tmp_path
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
     )
     monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
-    rc = ic.main([
-        "generate", "--prompt", "x",
-        "--out", str(out_img),
-        "--budget", "5.00",
-        "--provenance", str(prov),
-    ])
+    rc = ic.main(
+        [
+            "generate",
+            "--prompt",
+            "x",
+            "--out",
+            str(out_img),
+            "--budget",
+            "5.00",
+            "--provenance",
+            str(prov),
+        ]
+    )
     assert rc == 0
     assert out_img.is_file()
     assert prov.is_file()
@@ -346,11 +452,14 @@ def test_cli_generate_with_mocked_session_writes_image(ic, monkeypatch, tmp_path
 # AI Studio (M5b/D-062)
 # ---------------------------------------------------------------------------
 
-def _mock_ai_studio_response(image_bytes: bytes = b"fake-png",
-                              prompt_tokens: int = 100,
-                              candidates_tokens: int = 5000,
-                              mime_type: str = "image/png",
-                              include_text_part: bool = False):
+
+def _mock_ai_studio_response(
+    image_bytes: bytes = b"fake-png",
+    prompt_tokens: int = 100,
+    candidates_tokens: int = 5000,
+    mime_type: str = "image/png",
+    include_text_part: bool = False,
+):
     """Build a Mock for requests.Session.post returning AI Studio-shape JSON.
 
     AI Studio's :generateContent response shape:
@@ -377,6 +486,7 @@ def _mock_ai_studio_response(image_bytes: bytes = b"fake-png",
 
 # Construction + classmethod
 
+
 def test_ai_studio_classmethod_defaults(ic):
     """google_ai_studio classmethod sets provider, base URL, default model."""
     client = ic.ImageClient.google_ai_studio(api_key="test-ai")
@@ -387,8 +497,7 @@ def test_ai_studio_classmethod_defaults(ic):
 
 
 def test_ai_studio_classmethod_model_override(ic):
-    client = ic.ImageClient.google_ai_studio(
-        api_key="x", model="gemini-3-pro-image-preview")
+    client = ic.ImageClient.google_ai_studio(api_key="x", model="gemini-3-pro-image-preview")
     assert client.model == "gemini-3-pro-image-preview"
 
 
@@ -413,6 +522,7 @@ def test_ai_studio_fallback_chain_order(ic):
 
 
 # _size_to_ai_studio_config helper
+
 
 def test_size_helper_1024_square_to_1k_1to1(ic):
     """Common case: orchestrator passes (1024, 1024) → ('1:1', '1K')."""
@@ -445,6 +555,7 @@ def test_size_helper_zero_returns_safe_default(ic):
 
 # Rate card
 
+
 def test_ai_studio_rate_card_has_may_2026_models(ic):
     """All three models in the fallback chain must have rate-card entries
     so estimate_cost_usd doesn't silently return 0.0 (which would mask
@@ -461,6 +572,7 @@ def test_ai_studio_rate_card_has_may_2026_models(ic):
 
 # _call_google_ai_studio — request shape
 
+
 def test_ai_studio_request_shape(ic):
     """Pin the request shape against Google's v1beta discovery doc
     (verified 2026-05-24). M5b Tier A.1: the human-docs page suggested
@@ -475,10 +587,8 @@ def test_ai_studio_request_shape(ic):
     sess.post.return_value = _mock_ai_studio_response(
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
     )
-    client = ic.ImageClient.google_ai_studio(api_key="ai-key",
-                                              request_session=sess)
-    client.generate(prompt="A glowing brain", budget_remaining_usd=10.00,
-                    size=(1024, 1024))
+    client = ic.ImageClient.google_ai_studio(api_key="ai-key", request_session=sess)
+    client.generate(prompt="A glowing brain", budget_remaining_usd=10.00, size=(1024, 1024))
     args, kwargs = sess.post.call_args
     url = args[0]
     # Endpoint includes the model name + :generateContent
@@ -515,8 +625,7 @@ def test_ai_studio_request_shape_does_not_use_response_format_wrapper(ic):
     """
     sess = MagicMock()
     sess.post.return_value = _mock_ai_studio_response()
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     client.generate(prompt="x", budget_remaining_usd=10.00)
     body = sess.post.call_args[1]["json"]
     gen_cfg = body["generationConfig"]
@@ -541,16 +650,16 @@ def test_ai_studio_request_shape_does_not_use_response_format_wrapper(ic):
 
 # _call_google_ai_studio — response parsing
 
+
 def test_ai_studio_parses_image_bytes(ic):
     sess = MagicMock()
     sess.post.return_value = _mock_ai_studio_response(
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
-        prompt_tokens=200, candidates_tokens=8000,
+        prompt_tokens=200,
+        candidates_tokens=8000,
     )
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
-    result = client.generate(prompt="test", budget_remaining_usd=10.00,
-                              channel="A")
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
+    result = client.generate(prompt="test", budget_remaining_usd=10.00, channel="A")
     assert result.image_bytes.startswith(b"\x89PNG")
     assert result.model == ic.DEFAULT_AI_STUDIO_MODEL
     assert result.prompt == "test"
@@ -559,8 +668,8 @@ def test_ai_studio_parses_image_bytes(ic):
     assert result.cost_usd > 0
     # Token-count normalization: camelCase → input/output_tokens
     expected_cost = ic.ImageClient.estimate_cost_usd(
-        ic.DEFAULT_AI_STUDIO_MODEL,
-        input_tokens=200, output_tokens=8000)
+        ic.DEFAULT_AI_STUDIO_MODEL, input_tokens=200, output_tokens=8000
+    )
     assert abs(result.cost_usd - expected_cost) < 1e-9
 
 
@@ -572,8 +681,7 @@ def test_ai_studio_handles_text_part_alongside_image(ic):
         image_bytes=b"\x89PNG bytes",
         include_text_part=True,  # text part precedes image part
     )
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     result = client.generate(prompt="x", budget_remaining_usd=10.00)
     assert result.image_bytes == b"\x89PNG bytes"
 
@@ -588,8 +696,7 @@ def test_ai_studio_missing_inline_data_raises(ic):
     }
     bad_resp.raise_for_status = MagicMock()
     sess.post.return_value = bad_resp
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     with pytest.raises(ic.ImageClientError) as exc:
         client.generate(prompt="x", budget_remaining_usd=10.00)
     assert "inlineData" in str(exc.value)
@@ -603,8 +710,7 @@ def test_ai_studio_non_image_mime_refused(ic):
         image_bytes=b"some bytes",
         mime_type="audio/wav",
     )
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     with pytest.raises(ic.ImageClientError) as exc:
         client.generate(prompt="x", budget_remaining_usd=10.00)
     assert "non-image" in str(exc.value)
@@ -614,6 +720,7 @@ def test_ai_studio_429_surfaces_clearly(ic):
     """Per §14.2: AI Studio free-tier rate-limits aggressively; 429 must
     surface as a distinct, actionable error (not a generic HTTP failure)."""
     import requests
+
     sess = MagicMock()
     err_resp = MagicMock()
     err_resp.status_code = 429
@@ -622,8 +729,7 @@ def test_ai_studio_429_surfaces_clearly(ic):
     raise_err.response = err_resp
     err_resp.raise_for_status = MagicMock(side_effect=raise_err)
     sess.post.return_value = err_resp
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     with pytest.raises(ic.ImageClientError) as exc:
         client.generate(prompt="x", budget_remaining_usd=10.00)
     msg = str(exc.value)
@@ -633,10 +739,10 @@ def test_ai_studio_429_surfaces_clearly(ic):
 
 def test_ai_studio_generic_http_error_includes_endpoint(ic):
     import requests
+
     sess = MagicMock()
     sess.post.side_effect = requests.RequestException("connection refused")
-    client = ic.ImageClient.google_ai_studio(api_key="x",
-                                              request_session=sess)
+    client = ic.ImageClient.google_ai_studio(api_key="x", request_session=sess)
     with pytest.raises(ic.ImageClientError) as exc:
         client.generate(prompt="x", budget_remaining_usd=10.00)
     msg = str(exc.value)
@@ -646,9 +752,12 @@ def test_ai_studio_generic_http_error_includes_endpoint(ic):
 
 
 def test_ai_studio_no_api_key_raises(ic):
-    client = ic.ImageClient(provider="google_ai_studio", api_key=None,
-                            base_url=ic.DEFAULT_AI_STUDIO_BASE_URL,
-                            model=ic.DEFAULT_AI_STUDIO_MODEL)
+    client = ic.ImageClient(
+        provider="google_ai_studio",
+        api_key=None,
+        base_url=ic.DEFAULT_AI_STUDIO_BASE_URL,
+        model=ic.DEFAULT_AI_STUDIO_MODEL,
+    )
     with pytest.raises(ic.ImageClientError) as exc:
         client.generate(prompt="x", budget_remaining_usd=10.00)
     assert "GOOGLE_AI_STUDIO_API_KEY" in str(exc.value)
@@ -656,6 +765,7 @@ def test_ai_studio_no_api_key_raises(ic):
 
 # Dispatch — cborg path unchanged + google_ai_studio added; unknown provider
 # still names both supported options.
+
 
 def test_dispatch_unsupported_provider_names_both(ic):
     """The unsupported-provider error must name both supported providers
@@ -670,11 +780,22 @@ def test_dispatch_unsupported_provider_names_both(ic):
 
 # CLI — --provider flag
 
+
 def test_cli_ai_studio_missing_api_key_returns_3(ic, monkeypatch):
     monkeypatch.delenv("GOOGLE_AI_STUDIO_API_KEY", raising=False)
-    rc = ic.main(["generate", "--provider", "google_ai_studio",
-                  "--prompt", "x", "--out", "/tmp/x.png",
-                  "--budget", "5.00"])
+    rc = ic.main(
+        [
+            "generate",
+            "--provider",
+            "google_ai_studio",
+            "--prompt",
+            "x",
+            "--out",
+            "/tmp/x.png",
+            "--budget",
+            "5.00",
+        ]
+    )
     assert rc == 3
 
 
@@ -690,13 +811,21 @@ def test_cli_ai_studio_generate_with_mocked_session(ic, monkeypatch, tmp_path):
         image_bytes=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
     )
     monkeypatch.setattr(ic.requests, "Session", lambda: sess_mock)
-    rc = ic.main([
-        "generate", "--provider", "google_ai_studio",
-        "--prompt", "x",
-        "--out", str(out_img),
-        "--budget", "5.00",
-        "--provenance", str(prov),
-    ])
+    rc = ic.main(
+        [
+            "generate",
+            "--provider",
+            "google_ai_studio",
+            "--prompt",
+            "x",
+            "--out",
+            str(out_img),
+            "--budget",
+            "5.00",
+            "--provenance",
+            str(prov),
+        ]
+    )
     assert rc == 0
     assert out_img.is_file()
     assert prov.is_file()
@@ -712,17 +841,29 @@ def test_cli_unknown_provider_returns_3(ic, monkeypatch, tmp_path):
     Pin that the choice-list is exactly {cborg, google_ai_studio} so we
     don't accidentally accept 'openai' or similar."""
     with pytest.raises(SystemExit):
-        ic.main(["generate", "--provider", "openai",
-                 "--prompt", "x", "--out", str(tmp_path / "x.png"),
-                 "--budget", "5.00"])
+        ic.main(
+            [
+                "generate",
+                "--provider",
+                "openai",
+                "--prompt",
+                "x",
+                "--out",
+                str(tmp_path / "x.png"),
+                "--budget",
+                "5.00",
+            ]
+        )
 
 
 # ---------------------------------------------------------------------------
 # Tier C — AI Studio model-availability probe (D-063, D-064)
 # ---------------------------------------------------------------------------
 
-def _mock_list_models_response(image_model_names: list[str],
-                                non_image_names: list[str] | None = None):
+
+def _mock_list_models_response(
+    image_model_names: list[str], non_image_names: list[str] | None = None
+):
     """Build a Mock for requests.Session.get returning AI Studio's
     /v1beta/models response shape with the given model names.
 
@@ -734,15 +875,19 @@ def _mock_list_models_response(image_model_names: list[str],
     non_image_names = non_image_names or []
     models = []
     for n in image_model_names:
-        models.append({
-            "name": f"models/{n}",
-            "supportedGenerationMethods": ["generateContent", "countTokens"],
-        })
+        models.append(
+            {
+                "name": f"models/{n}",
+                "supportedGenerationMethods": ["generateContent", "countTokens"],
+            }
+        )
     for n in non_image_names:
-        models.append({
-            "name": f"models/{n}",
-            "supportedGenerationMethods": ["generateContent"],
-        })
+        models.append(
+            {
+                "name": f"models/{n}",
+                "supportedGenerationMethods": ["generateContent"],
+            }
+        )
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {"models": models}
@@ -752,11 +897,11 @@ def _mock_list_models_response(image_model_names: list[str],
 
 # probe_available_models
 
+
 def test_probe_returns_image_capable_models(ic):
     sess = MagicMock()
     sess.get.return_value = _mock_list_models_response(
-        image_model_names=["gemini-3.1-flash-image-preview",
-                            "gemini-3-pro-image-preview"],
+        image_model_names=["gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"],
         non_image_names=["gemini-2.0-flash", "gemini-2.0-pro"],
     )
     out = ic.probe_available_models(api_key="x", request_session=sess)
@@ -791,6 +936,7 @@ def test_probe_hits_v1beta_models_endpoint(ic):
 
 def test_probe_returns_empty_on_http_error(ic):
     import requests
+
     sess = MagicMock()
     sess.get.side_effect = requests.RequestException("network error")
     out = ic.probe_available_models(api_key="x", request_session=sess)
@@ -819,6 +965,7 @@ def test_probe_returns_empty_on_no_models_field(ic):
 
 
 # resolve_ai_studio_model
+
 
 def test_resolve_picks_first_chain_model_present(ic):
     """Walks AI_STUDIO_MODEL_FALLBACK_CHAIN in order; returns first
@@ -850,13 +997,13 @@ def test_resolve_returns_none_on_empty_available(ic):
 
 # load_or_probe_ai_studio_model — sidecar cache (D-063)
 
+
 def test_load_or_probe_writes_sidecar_on_fresh_probe(ic, tmp_path):
     sess = MagicMock()
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
-    record = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    record = ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     sidecar = tmp_path / "ai_image_gen_probe.json"
     assert sidecar.is_file()
     assert record["resolved_model"] == "gemini-3.1-flash-image-preview"
@@ -874,13 +1021,11 @@ def test_load_or_probe_hits_cache_on_repeat(ic, tmp_path):
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
     # First call: fresh probe.
-    r1 = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    r1 = ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     assert r1["from_cache"] is False
     assert sess.get.call_count == 1
     # Second call: cache hit; HTTP NOT called again.
-    r2 = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    r2 = ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     assert r2["from_cache"] is True
     assert r2["resolved_model"] == r1["resolved_model"]
     assert sess.get.call_count == 1  # unchanged — still 1
@@ -893,10 +1038,8 @@ def test_load_or_probe_re_probes_on_different_api_key(ic, tmp_path):
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
-    r1 = ic.load_or_probe_ai_studio_model(
-        api_key="key-A", audit_dir=tmp_path, request_session=sess)
-    r2 = ic.load_or_probe_ai_studio_model(
-        api_key="key-B", audit_dir=tmp_path, request_session=sess)
+    r1 = ic.load_or_probe_ai_studio_model(api_key="key-A", audit_dir=tmp_path, request_session=sess)
+    r2 = ic.load_or_probe_ai_studio_model(api_key="key-B", audit_dir=tmp_path, request_session=sess)
     assert r1["api_key_fingerprint"] != r2["api_key_fingerprint"]
     assert r2["from_cache"] is False
     assert sess.get.call_count == 2
@@ -907,11 +1050,10 @@ def test_load_or_probe_force_refresh_re_probes(ic, tmp_path):
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
-    ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     r2 = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess,
-        force_refresh=True)
+        api_key="x", audit_dir=tmp_path, request_session=sess, force_refresh=True
+    )
     assert r2["from_cache"] is False
     assert sess.get.call_count == 2
 
@@ -923,9 +1065,8 @@ def test_load_or_probe_override_skips_probe(ic, tmp_path):
     # Session GET should NOT be invoked when override is set.
     sess.get.side_effect = AssertionError("probe was called despite override")
     record = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path,
-        override_model="my-custom-model",
-        request_session=sess)
+        api_key="x", audit_dir=tmp_path, override_model="my-custom-model", request_session=sess
+    )
     assert record["resolved_model"] == "my-custom-model"
     assert record["from_override"] is True
     assert sess.get.call_count == 0
@@ -940,8 +1081,7 @@ def test_load_or_probe_recovers_from_corrupt_cache(ic, tmp_path):
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
-    record = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    record = ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     assert record["resolved_model"] == "gemini-3.1-flash-image-preview"
     assert record["from_cache"] is False  # re-probed; cache was unreadable
 
@@ -953,8 +1093,7 @@ def test_load_or_probe_records_none_when_no_chain_match(ic, tmp_path):
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["imagen-4"],  # not in our chain
     )
-    record = ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    record = ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     assert record["resolved_model"] is None
     assert record["available_models"] == ["imagen-4"]
     # Cache still written so we don't re-probe next call.
@@ -963,6 +1102,7 @@ def test_load_or_probe_records_none_when_no_chain_match(ic, tmp_path):
 
 
 # format_probe_failure_diagnostic — D-064
+
 
 def test_diagnostic_loud_when_no_cborg(ic):
     """No CBORG fallback → diagnostic must say 'image-gen DISABLED'
@@ -1015,6 +1155,7 @@ def test_diagnostic_notes_cborg_available_branch(ic):
 
 
 # CLI — probe subcommand
+
 
 def test_cli_probe_missing_api_key_returns_3(ic, monkeypatch, tmp_path):
     monkeypatch.delenv("GOOGLE_AI_STUDIO_API_KEY", raising=False)
@@ -1124,6 +1265,7 @@ def test_cli_probe_force_refresh(ic, monkeypatch, tmp_path):
 
 # Sidecar schema pin
 
+
 def test_probe_schema_version_pin(ic):
     """If the schema changes, the cache invalidates safely (old records
     skipped). Pin the schema version literal so any change is explicit."""
@@ -1135,12 +1277,17 @@ def test_sidecar_has_expected_keys(ic, tmp_path):
     sess.get.return_value = _mock_list_models_response(
         image_model_names=["gemini-3.1-flash-image-preview"],
     )
-    ic.load_or_probe_ai_studio_model(
-        api_key="x", audit_dir=tmp_path, request_session=sess)
+    ic.load_or_probe_ai_studio_model(api_key="x", audit_dir=tmp_path, request_session=sess)
     cached = json.loads((tmp_path / "ai_image_gen_probe.json").read_text())
-    expected = {"schema_version", "api_key_fingerprint", "probed_at",
-                "available_models", "resolved_model", "from_override",
-                "chain_walked"}
+    expected = {
+        "schema_version",
+        "api_key_fingerprint",
+        "probed_at",
+        "available_models",
+        "resolved_model",
+        "from_override",
+        "chain_walked",
+    }
     assert expected.issubset(set(cached.keys()))
     # api_key_fingerprint must NOT be the raw key
     assert cached["api_key_fingerprint"] != "x"

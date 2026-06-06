@@ -494,7 +494,10 @@ def emit_decisions(
 # Default model for per-slide judgment calls. Sonnet 4.6 is the cheap default;
 # overridable via the CLI / function argument. Each judgment call costs
 # ~$0.005-0.01, so 15 deferred slides per draft → ~$0.10-0.20 added cost.
-DEFAULT_JUDGE_MODEL = "claude-sonnet-4-6"
+# CRAFT-CONTRACT §3.4: judge is a compose/judge stage → standard tier (sonnet).
+# Claude Code resolves the alias via ANTHROPIC_DEFAULT_SONNET_MODEL in
+# <BERIL_ROOT>/.claude/settings.json (written by `configure`).
+DEFAULT_JUDGE_MODEL = "sonnet"
 
 # Per-call timeout (seconds). Sonnet typically returns in 2-5s for a short
 # prompt; 60s is generous and prevents a stuck call from hanging the whole

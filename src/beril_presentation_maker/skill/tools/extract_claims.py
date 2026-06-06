@@ -81,11 +81,12 @@ _ALLOWED_TOOLS = "Read,Write,Edit,Bash,Grep,Glob"
 # execution context (plain shell vs. nested Claude Code), and a
 # context-resolved model produced the draft_9 source_notebook
 # regression in paper-writer (their Tier G post-mortem, 2026-05-14).
-# claude-sonnet-4-6 matches presentation_maker.sh:79's MODEL pin so
-# the originate path is consistent with the rest of the orchestrator.
-# The M2 orchestrator wiring should pass --model "$MODEL" through;
-# this default is the floor, not a substitute for explicit pinning.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+# CRAFT-CONTRACT §3.4 / brief §5a: claim classification → fast (haiku).
+# Claude Code resolves the alias via ANTHROPIC_DEFAULT_HAIKU_MODEL in
+# <BERIL_ROOT>/.claude/settings.json (written by `configure`). The M2
+# orchestrator wiring should still pass --model when the caller pins one;
+# this default is the floor.
+_DEFAULT_MODEL = "haiku"
 
 
 # ---------------------------------------------------------------------------

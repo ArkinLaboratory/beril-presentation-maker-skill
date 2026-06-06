@@ -135,14 +135,13 @@ except ImportError:
 
 VERSION = "0.4.0-m1-tierF5"
 
-# Default model for the claim_inventory originate path. Threaded through
-# to extract_claims.py, which MUST pin the model (see extract_claims.py
-# B6 note — unpinned `claude -p` caused paper-writer's draft_9
-# regression). Mirrors presentation_maker.sh:79's MODEL pin and
-# extract_claims._DEFAULT_MODEL — intentionally duplicated (not imported)
-# so phase0_reuse stays decoupled from extract_claims' private surface;
-# the value is threaded through explicitly, never relied on as a default.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+# CRAFT-CONTRACT §3.4 / brief §5a: claim classification → fast (haiku).
+# Mirrors extract_claims._DEFAULT_MODEL — intentionally duplicated (not
+# imported) so phase0_reuse stays decoupled from extract_claims' private
+# surface; the value is threaded through explicitly, never relied on as a
+# default. Claude Code resolves the alias via ANTHROPIC_DEFAULT_HAIKU_MODEL
+# in <BERIL_ROOT>/.claude/settings.json (written by `configure`).
+_DEFAULT_MODEL = "haiku"
 
 # Artifact name -> filename. Paper-writer writes these flat at
 # papers/draft_N/<filename> (NOT in a 00_phase0/ subdir — verified
