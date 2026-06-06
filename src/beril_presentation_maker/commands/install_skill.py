@@ -17,8 +17,8 @@ step. This intentionally does NOT invoke `configure`: configure has
 side effects (extends `.env`, writes `.claude/settings.json`, runs a
 live `claude -p` ping) that must not run silently as a sub-step of
 install-skill. The user runs `beril-presentation-maker configure
---beril-root <root>` themselves, when they're ready (CRAFT-CONTRACT
-§3.4 requirement #5; canary round-2 fixup-2).
+<root>` themselves, when they're ready (CRAFT-CONTRACT §3.4
+requirement #5; canary round-2 fixup-2).
 
 Honors --no-smoke-test by skipping the post-install check entirely.
 """
@@ -188,7 +188,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"  [OK] claude — {claude_path}")
     print("")
     print(
-        f"Next: run `beril-presentation-maker configure --beril-root {beril_root}` "
+        f"Next: run `beril-presentation-maker configure {beril_root}` "
         "to bootstrap CRAFT runtime config."
     )
     return 0
