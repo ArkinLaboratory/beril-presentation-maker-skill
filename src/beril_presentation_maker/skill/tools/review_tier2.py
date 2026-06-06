@@ -60,10 +60,12 @@ _THIS_DIR = Path(__file__).resolve().parent
 _PROMPT_PATH = _THIS_DIR.parent / "prompts" / "review_tier2.v1.md"
 
 # Default model: Haiku 4.5 (vision-capable, fast, ~$0.05 per
-# slide_spec-sized review on a 27-slide deck). Tier-2's value is
-# fast pattern detection at low cost — Sonnet would be ~10x more
-# expensive without proportional uplift on these 4 classes.
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# CRAFT-CONTRACT §3.4 / brief §5a: Tier-2 review is "fast pattern
+# detection at low cost" → fast tier (haiku). Sonnet would be ~10x more
+# expensive without proportional uplift on these 4 classes. Override via
+# --model. Claude Code resolves the alias via ANTHROPIC_DEFAULT_HAIKU_MODEL
+# in <BERIL_ROOT>/.claude/settings.json (written by `configure`).
+DEFAULT_MODEL = "haiku"
 
 # Allowed tools for the claude -p subprocess. Tier 2 reads structured
 # inputs (slide_spec.json, throughline.md, substories.md, the Tier 1

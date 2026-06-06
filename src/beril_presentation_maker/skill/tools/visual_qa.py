@@ -65,10 +65,12 @@ VERSION = "0.4.0-m4a-tierC"
 _THIS_DIR = Path(__file__).resolve().parent
 _PROMPT_PATH = _THIS_DIR.parent / "prompts" / "visual_qa.v1.md"
 
-# Default model for the vision pass. Sonnet 4.6 is vision-capable and
-# substantially cheaper than Opus for a structured-output review — the
-# task is "scan and flag," not "compose." Override via --model.
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# CRAFT-CONTRACT §3.4 / brief §5a: vision QA is a compose/judge stage
+# (scan + flag, structured output) → standard tier (sonnet). Sonnet is
+# vision-capable; the task is "scan and flag," not deep reasoning.
+# Override via --model. Claude Code resolves the alias via
+# ANTHROPIC_DEFAULT_SONNET_MODEL in <BERIL_ROOT>/.claude/settings.json.
+DEFAULT_MODEL = "sonnet"
 
 # Allowed tools for the claude -p subprocess. Vision pass needs Read
 # (loads PNGs as vision inputs + reads slide_spec.json) + Write (emits

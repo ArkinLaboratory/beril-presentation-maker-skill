@@ -135,10 +135,15 @@ def test_invoke_tier2_review_builds_argv(rt2, tmp_path):
     assert "Read,Write" in captured
     assert "--dangerously-skip-permissions" in captured
     assert "--model" in captured
-    # Default model pinned to Haiku 4.5 per DQ3 ($0.05/run target)
+    # CRAFT §3.4 / brief §5a: Tier 2 review is fast pattern detection
+    # → fast tier (haiku). The on-disk literal is now the alias `haiku`;
+    # Claude Code resolves it via ANTHROPIC_DEFAULT_HAIKU_MODEL in
+    # settings.json at runtime (DQ3 cost discipline preserved by the
+    # configure-step discovery + pin).
     assert captured[captured.index("--model") + 1] == rt2.DEFAULT_MODEL
-    assert rt2.DEFAULT_MODEL.startswith("claude-haiku-4-5"), \
-        f"DEFAULT_MODEL must be Haiku 4.5 (~$0.05/run target); got {rt2.DEFAULT_MODEL}"
+    assert rt2.DEFAULT_MODEL == "haiku", (
+        f"DEFAULT_MODEL must be the haiku tier alias; got {rt2.DEFAULT_MODEL}"
+    )
     assert "--output-format" in captured
     assert captured[captured.index("--output-format") + 1] == "json"
 

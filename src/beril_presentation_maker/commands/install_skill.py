@@ -11,7 +11,16 @@ Sets executable bit on tools/*.sh and tools/*.py after copy
 (belt-and-suspenders even though hatchling should preserve it through
 the wheel).
 
-Mirrors `beril_paper_writer.commands.install_skill`.
+After copy succeeds: optionally runs a LIGHT post-install check —
+verifies the `claude` CLI is on PATH and prints a pointer to the next
+step. This intentionally does NOT invoke `configure`: configure has
+side effects (extends `.env`, writes `.claude/settings.json`, runs a
+live `claude -p` ping) that must not run silently as a sub-step of
+install-skill. The user runs `beril-presentation-maker configure
+--beril-root <root>` themselves, when they're ready (CRAFT-CONTRACT
+§3.4 requirement #5; canary round-2 fixup-2).
+
+Honors --no-smoke-test by skipping the post-install check entirely.
 """
 
 from __future__ import annotations
@@ -24,7 +33,6 @@ from importlib import resources
 from pathlib import Path
 
 from beril_presentation_maker import __version__, discovery
-
 
 # Directories inside the shipped skill/ dir that should be overwritten on install
 # v0.8.0: "tests" added so smoke_v3 fixtures ship to the installed layout
@@ -89,7 +97,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         help="Path to the BERIL checkout root (default: current directory).",
     )
     p.add_argument(
-        "--force", "-f",
+        "--force",
+        "-f",
         action="store_true",
         help=(
             "Overwrite shipped files without confirmation. Does NOT remove "
@@ -100,8 +109,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--no-smoke-test",
         action="store_true",
         help=(
-            "Skip the post-install configure smoke test. Default is to "
-            "run it advisory (non-fatal) so the user sees a config status."
+            "Skip the post-install light check (claude on PATH + next-step "
+            "hint). Default: run it advisory (non-fatal)."
         ),
     )
     p.set_defaults(func=run)
@@ -161,20 +170,27 @@ def run(args: argparse.Namespace) -> int:
     if args.no_smoke_test:
         return 0
 
-    # Advisory smoke test — non-fatal
+    # Light post-install check — advisory, NEVER invokes configure.
+    # configure has real side effects (extends .env, writes
+    # .claude/settings.json + settings.local.json, runs a live
+    # `claude -p` ping) and must not run silently as a sub-step of
+    # install-skill. CRAFT-CONTRACT §3.4 requirement #5 (canary
+    # round-2 fixup-2, adversarial main @37088d8).
     print("")
-    print("Running configure smoke test (advisory)...")
-    from beril_presentation_maker.commands import configure
-    smoke_args = argparse.Namespace(
-        beril_root=str(beril_root),
-        quiet=False,
+    claude_path = shutil.which("claude")
+    if claude_path is None:
+        print(
+            "  [WARN] claude CLI not found on PATH. Install Claude Code "
+            "(https://docs.claude.com) before running configure.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"  [OK] claude — {claude_path}")
+    print("")
+    print(
+        f"Next: run `beril-presentation-maker configure --beril-root {beril_root}` "
+        "to bootstrap CRAFT runtime config."
     )
-    smoke_rc = configure.run(smoke_args)
-    if smoke_rc != 0:
-        print("")
-        print("Configuration verification reported issues (above).")
-        print("The skill directory is in place; this is advisory.")
-        print("Run `beril-presentation-maker configure` to re-check.")
     return 0
 
 

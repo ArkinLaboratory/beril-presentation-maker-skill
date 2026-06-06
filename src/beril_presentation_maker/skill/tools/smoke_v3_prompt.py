@@ -67,9 +67,10 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Default model + tools mirror the orchestrator's settings. If the
-# orchestrator changes these, the smoke should follow.
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# CRAFT-CONTRACT §3.4: smoke harness exercises the standard-tier compose
+# path → standard (sonnet). Mirrors orchestrator default; resolves to the
+# concrete model via ANTHROPIC_DEFAULT_SONNET_MODEL in settings.json.
+DEFAULT_MODEL = "sonnet"
 DEFAULT_TOOLS = "Bash,Glob,Grep,Read,Write"
 
 # How fresh a pass record must be to satisfy the gate (D-076).

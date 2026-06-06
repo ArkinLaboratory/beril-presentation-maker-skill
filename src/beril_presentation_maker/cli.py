@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Optional
 
 from beril_presentation_maker import __version__
 from beril_presentation_maker.commands import (
@@ -35,6 +34,7 @@ from beril_presentation_maker.commands import (
     draft,
     install_skill,
     prune,
+    template_env,
 )
 
 
@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_skill.add_parser(subparsers)
     configure.add_parser(subparsers)
+    template_env.add_parser(subparsers)
     draft.add_parser(subparsers)
     continue_run.add_parser(subparsers)
     assemble.add_parser(subparsers)
@@ -65,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
 
     parser = build_parser()

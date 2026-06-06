@@ -221,7 +221,32 @@ TIER="STRONG"
 AUDIENCE="peer"
 AUTO_ADVANCE=0
 SKIP_ASSEMBLY=0
-MODEL="claude-sonnet-4-6"   # v0.3.2.4: bumped from claude-sonnet-4-20250514 (~12 mo old)
+# --- Tier-alias defaults (CRAFT-CONTRACT §3.4 v2; canary at adversarial@37088d8) ---
+# Per-tier defaults use Claude Code's native --model aliases (opus / sonnet /
+# haiku) which resolve through ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL pinned
+# in <BERIL_ROOT>/.claude/settings.json by `beril-presentation-maker configure`.
+# No concrete model id is hardcoded; a model swap is a settings.json re-pin.
+#
+# Per CRAFT-CONTRACT §3.4 / brief §5a, the stage→tier mapping is:
+#   reasoning (opus)  : plan, throughline, substory_design, deck_outline,
+#                       cross_tenant, deck_close
+#   standard  (sonnet): intro, slide_compose, citation_pool, qa_prep,
+#                       speaker_notes, ai_image_prompt
+#   fast      (haiku) : mechanical helpers (judge / classify / layout)
+#
+# Each stage function calls `_stage_set_model <tier>` at its top. If the caller
+# passed --model explicitly (MODEL_EXPLICIT=1), that override wins everywhere and
+# the helper is a no-op.
+CLAUDE_DEFAULT_MODEL_REASONING="opus"
+CLAUDE_DEFAULT_MODEL_STANDARD="sonnet"
+CLAUDE_DEFAULT_MODEL_FAST="haiku"
+# Back-compat: code paths that haven't been routed yet read MODEL; default it
+# to the standard tier (sonnet) — matches the old behavior of MODEL=sonnet.
+MODEL="$CLAUDE_DEFAULT_MODEL_STANDARD"
+# Tracks whether the caller passed --model explicitly. When 1, MODEL is pinned
+# for every claude -p invocation (main pass + recovery + repair). When 0,
+# _stage_set_model picks the tier alias per stage.
+MODEL_EXPLICIT=0
 NO_STREAM=0
 RESUME_FROM=""        # 2026-04-26 #58: skip earlier stages on prompt iteration
 DRAFT_DIR_OVERRIDE="" # required when RESUME_FROM is set
@@ -494,7 +519,7 @@ while [[ $# -gt 0 ]]; do
     --audience)          AUDIENCE="$2"; shift 2 ;;
     --auto-advance)      AUTO_ADVANCE=1; shift ;;
     --skip-assembly)     SKIP_ASSEMBLY=1; shift ;;
-    --model)             MODEL="$2"; shift 2 ;;
+    --model)             MODEL="$2"; MODEL_EXPLICIT=1; shift 2 ;;
     --no-stream)         NO_STREAM=1; shift ;;
     --resume-from)       RESUME_FROM="$2"; shift 2 ;;
     --architecture-pipeline) ARCH_PIPELINE="$2"; shift 2 ;;
@@ -1307,6 +1332,28 @@ claim_file() {
   fi
 }
 
+# Set the `MODEL` variable for the next claude -p invocation based on a tier
+# name. Honors the caller's --model override: if MODEL_EXPLICIT=1, the helper
+# is a no-op (the caller's pin wins for every stage). When 0, the helper
+# resolves the tier alias into MODEL.
+#
+# Tiers: reasoning (opus) | standard (sonnet) | fast (haiku).
+# Per CRAFT-CONTRACT §3.4 / brief §5a stage→tier mapping.
+_stage_set_model() {
+  local tier="$1"
+  if [[ "${MODEL_EXPLICIT:-0}" == "1" ]]; then
+    return 0
+  fi
+  case "$tier" in
+    reasoning) MODEL="$CLAUDE_DEFAULT_MODEL_REASONING" ;;
+    standard)  MODEL="$CLAUDE_DEFAULT_MODEL_STANDARD" ;;
+    fast)      MODEL="$CLAUDE_DEFAULT_MODEL_FAST" ;;
+    *)
+      echo "Warning: _stage_set_model: unknown tier '$tier', keeping MODEL=$MODEL" >&2
+      ;;
+  esac
+}
+
 # Invoke claude with the standard adversarial pattern, piped through the
 # stream parser for Write verification + cost summary.
 invoke_claude() {
@@ -1427,8 +1474,9 @@ ${base_user_prompt}"
 
 stage_plan() {
   local out="$PLAN_PATH"
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 1/4] plan" >&2
+  echo "[Stage 1/4] plan (tier=reasoning, model=$MODEL)" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 MODE=$MODE
@@ -1445,8 +1493,9 @@ Write the result to OUT_PATH."
 
 stage_throughline() {
   local out="$THROUGHLINE_CANDIDATES"
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 2/4] throughline (candidates)" >&2
+  echo "[Stage 2/4] throughline (candidates) (tier=reasoning, model=$MODEL)" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 PLAN_PATH=$PLAN_PATH
@@ -1593,8 +1642,9 @@ PYEOF
 
 stage_substory_design() {
   local out="$SUBSTORIES_PATH"
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 3/5] substory_design" >&2
+  echo "[Stage 3/5] substory_design (tier=reasoning, model=$MODEL)" >&2
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 PLAN_PATH=$PLAN_PATH
@@ -1653,8 +1703,9 @@ stage_phase0_tooling() {
 # 02_substories.md path (enriched, backward-compatible skeleton).
 stage_deck_outline() {
   local out="$SUBSTORIES_PATH"
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 3/5] deck_outline (v0.4 — M2-lite)" >&2
+  echo "[Stage 3/5] deck_outline (v0.4 — M2-lite) (tier=reasoning, model=$MODEL)" >&2
 
   # Phase-0 artifacts (v0.4 M3: produced upstream by stage_phase0_tooling,
   # stage_curate_figures, stage_citation_pool, stage_cross_tenant — the
@@ -1845,8 +1896,9 @@ stage_citation_pool() {
   # claim's source per its 9-field schema. Output:
   # {OUTDIR}/citation_pool.json. slide_compose's CITATION_POOL_PATH
   # points here; merge populates the references slide from it.
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 3.7/5] citation_pool" >&2
+  echo "[Stage 3.7/5] citation_pool (tier=standard, model=$MODEL)" >&2
 
   local pool_path="$CITATION_POOL_PATH"
 
@@ -1892,8 +1944,9 @@ stage_cross_tenant() {
   # (b) If signal present, run cross_tenant.v1.md to compose a single
   #     cross_tenant_integration slide (deck-level; spliced between
   #     last substory and acknowledgments at merge time).
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 3.8/5] cross_tenant" >&2
+  echo "[Stage 3.8/5] cross_tenant (tier=reasoning, model=$MODEL)" >&2
 
   local signal_md="$CROSS_TENANT_MD"
   local signal_json="$CROSS_TENANT_JSON"
@@ -1965,8 +2018,9 @@ stage_deck_close() {
   # SILENT (not "skipped advisory") because deck_close is optional
   # by design on sub-STRONG modes; the per-substory C-slots
   # provide sufficient closure at those talk lengths.
+  _stage_set_model reasoning
   echo "" >&2
-  echo "[Stage 4.5/5] deck_close" >&2
+  echo "[Stage 4.5/5] deck_close (tier=reasoning, model=$MODEL)" >&2
 
   if [[ "$MODE" != "talk-30" ]]; then
     echo "  mode=$MODE — deck_close is optional below talk-30 STRONG (D-086); skipping" >&2
@@ -2042,8 +2096,9 @@ JSON fragment with kind='deck_close_set' to OUT_PATH."
 
 stage_intro() {
   local out="$SLIDES_DIR/intro.json"
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 4/5] intro" >&2
+  echo "[Stage 4/5] intro (tier=standard, model=$MODEL)" >&2
 
   # Mode-aware short-circuit: lightning-5 and posters skip intro entirely.
   # Still emit a fragment with empty slides[] so the merge step has a
@@ -2329,8 +2384,9 @@ PYEOF
 
 stage_slide_compose() {
   local substories="$SUBSTORIES_PATH"
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 5/5] slide_compose (per substory)" >&2
+  echo "[Stage 5/5] slide_compose (per substory) (tier=standard, model=$MODEL)" >&2
 
   # Enumerate substory IDs from the clustering output (substory_design
   # for v0.3.x; the enriched deck_outline for v0.4 — both keep the
@@ -2358,8 +2414,9 @@ stage_qa_prep() {
   # (generalizability > methodology > limitation > consistency >
   # practical) per qa_prep.v1.md. Output is one fragment with
   # kind='qa_anticipated_set'; spliced at deck end before acks.
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 5.7/7] qa_prep" >&2
+  echo "[Stage 5.7/7] qa_prep (tier=standard, model=$MODEL)" >&2
 
   # Mode-aware QA budget: skip for posters (qa makes no sense in poster)
   if [[ "$MODE" == "poster-h" || "$MODE" == "poster-v" ]]; then
@@ -2417,8 +2474,9 @@ stage_speaker_notes() {
   # headers (`## position N — layout — `title``); parse_speaker_notes.py
   # converts to JSON keyed by position; merge_compose_fragments injects
   # into slide_spec.json's per-slide speaker_notes field.
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 5.5/7] speaker_notes (per substory)" >&2
+  echo "[Stage 5.5/7] speaker_notes (per substory) (tier=standard, model=$MODEL)" >&2
 
   local notes_dir="$SPEAKER_NOTES_DIR"
   mkdir -p "$notes_dir"
@@ -2488,10 +2546,26 @@ stage_image_gen() {
   # Decision (deterministic Python) → ai_image_prompt.v1 (LLM) → user
   # approval gate → image_client.py generate → manifest update +
   # fragment mutation. Architecture: V0_3_3_ARCHITECTURE.md.
+  # Tier: the ai_image_prompt LLM that drafts the image request is a
+  # composition task → standard (sonnet); the image_client.py path is
+  # app-internal CBORG (OpenAI-style) and independent of the tier.
+  _stage_set_model standard
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
-  echo "[Stage 11/14] image_gen (concept_illustration → AI image)" >&2
+  echo "[Stage 11/14] image_gen (concept_illustration → AI image) (tier=standard, model=$MODEL)" >&2
   echo "──────────────────────────────────────────────────" >&2
+
+  # CRAFT-CONTRACT §3.4 / brief §5a: image generation is OPTIONAL with
+  # graceful degrade. If neither GOOGLE_AI_STUDIO_API_KEY nor
+  # CBORG_API_KEY is present, IMAGE_PROVIDER stays empty at orchestrator
+  # init (around line 1086). Skip this stage cleanly; the deck draft
+  # continues with curated figures only — never hard-fail.
+  if [[ -z "${IMAGE_PROVIDER:-}" ]]; then
+    echo "  [image-gen] no image provider configured (no GOOGLE_AI_STUDIO_API_KEY," >&2
+    echo "              no CBORG_API_KEY in .env or shell); skipping image_gen." >&2
+    echo "              The draft continues with curated figures only." >&2
+    return 0
+  fi
 
   # M5b Tier C / D-064: AI Studio model probe + hybrid fallback.
   # Runs once per draft when IMAGE_PROVIDER=google_ai_studio. If the
@@ -3246,9 +3320,10 @@ print(f' (P0={sev.get(\"P0\", 0)} P1={sev.get(\"P1\", 0)} P2={sev.get(\"P2\", 0)
 }
 
 stage_revise_slides() {
+  _stage_set_model standard
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
-  echo "[Stage 13/13] revise_slides (review-rewrite loop)" >&2
+  echo "[Stage 13/13] revise_slides (review-rewrite loop) (tier=standard, model=$MODEL)" >&2
   echo "──────────────────────────────────────────────────" >&2
 
   local review_path="$ADVERSARIAL_REVIEW_JSON"

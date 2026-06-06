@@ -113,8 +113,12 @@ def test_invoke_claude_extract_builds_argv(tmp_path):
     assert "--dangerously-skip-permissions" in captured_argv
     # B6: the model MUST be pinned (unpinned `claude -p` resolves a
     # context-dependent model — paper-writer's draft_9 regression).
+    # CRAFT-CONTRACT §3.4 / brief §5a: claim extraction is a classify
+    # stage → fast tier (haiku). Claude Code resolves the alias via
+    # ANTHROPIC_DEFAULT_HAIKU_MODEL in settings.json (written by
+    # `configure`).
     assert "--model" in captured_argv
-    assert captured_argv[captured_argv.index("--model") + 1] == "claude-sonnet-4-6"
+    assert captured_argv[captured_argv.index("--model") + 1] == "haiku"
     # F5: --output-format json so the result envelope carries total_cost_usd.
     assert "--output-format" in captured_argv
     assert captured_argv[captured_argv.index("--output-format") + 1] == "json"
@@ -127,7 +131,9 @@ def test_invoke_claude_extract_builds_argv(tmp_path):
     assert "duration_sec" in diag
     assert "stdout_tail" in diag
     assert "stderr_tail" in diag
-    assert diag["model"] == "claude-sonnet-4-6"
+    # CRAFT §3.4 tier alias (fast); resolves to the concrete model via
+    # ANTHROPIC_DEFAULT_HAIKU_MODEL in settings.json at runtime.
+    assert diag["model"] == "haiku"
     # F5: cost parsed from the envelope.
     assert diag["cost_usd"] == 0.1234
     assert diag["cost_note"] is None

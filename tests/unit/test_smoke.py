@@ -30,17 +30,17 @@ def test_cli_parser_builds_and_handles_version():
 
 
 def test_cli_subcommands_registered():
-    """The six v0.3.4.1 subcommands are wired (added prune in v0.3.4.1)."""
+    """The seven subcommands are wired (template-env added in CRAFT Round 2)."""
     parser = cli.build_parser()
     sub_action = next(a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction")
     assert set(sub_action.choices.keys()) == {
-        "install-skill", "configure", "draft", "continue", "assemble",
+        "install-skill", "configure", "template-env", "draft", "continue", "assemble",
         "prune",
     }
 
 
 @pytest.mark.parametrize("subcmd", [
-    "install-skill", "configure", "draft", "continue", "assemble",
+    "install-skill", "configure", "template-env", "draft", "continue", "assemble",
     "prune",
 ])
 def test_each_subcommand_has_help(subcmd):
