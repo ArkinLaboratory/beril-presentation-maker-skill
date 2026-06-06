@@ -407,6 +407,26 @@ These four remain as v0.8.1:
   drafts can hand-fix the deck_close forward_call slot. No
   v0.8.1 fix needed; tracking here for awareness.
 
+## G.9 re-verification carries (lanthanide_methylotrophy_atlas draft_1, 2026-06-06)
+
+Re-checked the existing draft_1 cascade (completed 2026-06-02; no fresh run).
+Two carries surfaced:
+
+- **data_source / footer-band overlap persists across 9 slides.** visual_qa went
+  12→10 (resolved slides 11/20/24; new slide 23; persistent slides 2, 8, 14, 21,
+  25, 27, 28, 29, 31). The persistent cluster is the recurring on-slide-body
+  `data_source` text colliding with `FOOTER_SAFE_BOTTOM` + the logo strip — same
+  class as the Tier-I F2/F3 finding. This is exactly what G.10-A
+  (`footer_title_collision` detector) + the v0.8.1 content_overflow routing are
+  meant to clear; **track whether a fresh full run with the G.10 stack actually
+  drops this cluster** (draft_1 predates that stack).
+- **`audit/image_provenance.json` lacks a slide binding.** Entries carry
+  `image_path` but no `slide_id` / `bound_to_slide`, so the audit file doesn't
+  record which slide each AI image landed on. The slide-side binding is intact
+  (slide 2 `content.image_path` + provenance block drives the render), so this is
+  an audit/trace-fidelity gap, not a render bug. v0.8.1+ carry: have the merger
+  stamp `slide_id` onto each `image_provenance.json` entry.
+
 **Carries from v0.7 (still real; deferred again):**
 
 - **Per-arc figure clustering / per-arc-distribution metric** —
