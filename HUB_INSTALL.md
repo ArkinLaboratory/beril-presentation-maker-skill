@@ -44,7 +44,7 @@ which beril-adversarial    # optional; v0.7.0.8+
 From any cwd:
 
 ```bash
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git
+pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git
 ```
 
 Alternative URL forms:
@@ -52,13 +52,13 @@ Alternative URL forms:
 - **SSH (requires registered SSH key):**
 
   ```bash
-  pipx install --force git+ssh://git@github.com/ArkinLaboratory/beril-presentation-maker-skill.git
+  pipx install --force git+ssh://git@github.com/kbaseincubator/beril-presentation-maker-skill.git
   ```
 
 - **Specific version (recommended for production):**
 
   ```bash
-  pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.8.0
+  pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git@v1.1.0
   ```
 
 Verify the install:
@@ -95,28 +95,34 @@ ls "$BERIL_ROOT/.claude/skills/beril-presentation-maker/"
 # Expect: SKILL.md, commands/, prompts/, tools/, references/
 ```
 
-### Step 3 — Configure (verify dependencies)
+### Step 3 — Configure (bootstrap CRAFT runtime config)
 
 ```bash
-beril-presentation-maker configure
+beril-presentation-maker configure "$BERIL_ROOT"     # positional; omit to auto-discover
 ```
 
-This subcommand:
+`configure` wires `claude -p` (the reasoning + composition backend) to a
+CRAFT-contracted provider and confirms it works before your first deck. It
+extends `<BERIL_ROOT>/.env` with the CRAFT shared block + this skill's marker
+(additive, idempotent); selects the provider (`ACTIVE_PROVIDER` ∈ `anthropic
+| cborg | subscription`, inferred from existing keys if unset); discovers the
+model list and resolves the reasoning/standard/fast tier pins (interactive on
+a TTY, fail-loud under `--yes`); writes
+`<BERIL_ROOT>/.claude/settings.{json,local.json}`; and runs a validation ping
+(a real `claude -p` reply of exactly `ok`). It then runs the prerequisites
+preflight: `claude` on PATH (hard); advisory checks for the optional
+`beril-adversarial` reviewer and the optional `soffice` (LibreOffice; for
+`--format pdf` + `--visual-qa`) / `pdftoppm` (Poppler; for `--visual-qa`)
+binaries — all degrade gracefully when absent. Flags: `--no-discover`,
+`--no-ping`, `--yes`.
 
-- Confirms `claude` is on PATH and reports the version.
-- Confirms `python-pptx`, `Pillow`, `nbformat` are importable
-  (these ride in the pipx venv from `pyproject.toml`).
-- Reports CBORG_API_KEY status (set / not set in env / readable
-  from `BERIL_ROOT/.env`).
-- Reports adversarial CLI status (installed / version / has
-  `review` subcommand).
-- Reports optional binary status: `soffice` (LibreOffice) for
-  `--format pdf` + `--visual-qa`, `pdftoppm` (Poppler) for
-  `--visual-qa`. Both are runtime-only; the skill installs and
-  runs without them, and the affected verbs degrade gracefully
-  (`--format pdf` emits pptx-only with a message; `--visual-qa`
-  writes an advisory stub report and rc=0).
-- Does NOT make any LLM calls.
+**Image generation is a separate, optional provider** — NOT governed by
+`ACTIVE_PROVIDER` (CRAFT-CONTRACT §3.4). The `image_gen` stage uses
+CBORG-Gemini (the app-internal CBORG image client, which reads `CBORG_BASE_URL`
+and keeps the `/v1` suffix via `llm_config.app_internal_base_url`) or, if set,
+`GOOGLE_AI_STUDIO_API_KEY`. Absent → `image_gen` skips gracefully (curated
+figures only); it never hard-fails the run. One `CBORG_BASE_URL` drives both
+clients: `claude -p` gets the bare host, the image client gets `…/v1`.
 
 If any check fails, fix it and re-run. Common issues:
 
@@ -253,7 +259,7 @@ exists and has the `user-invocable: true` frontmatter line.
 Re-run pipx install with the new version tag:
 
 ```bash
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git@v0.8.0   # or any later v0.8.x.y tag
+pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git@v1.1.0   # or any later v1.1.x tag
 beril-presentation-maker install-skill "$BERIL_ROOT"   # refresh skill files
 beril-presentation-maker --version                      # confirm
 ```
@@ -286,7 +292,7 @@ artifacts.
 The pipx install is broken. Re-run:
 
 ```bash
-pipx install --force git+https://github.com/ArkinLaboratory/beril-presentation-maker-skill.git
+pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git
 ```
 
 ### "PYTHON_BIN: command not found" or "missing python deps"
@@ -328,7 +334,7 @@ The adversarial CLI is missing or on a pre-v0.7.0.8 version.
 Either:
 
 - Install / upgrade:
-  `pipx install --force git+https://github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.7.0.8`
+  `pipx install --force git+https://github.com/kbaseincubator/beril-adversarial-skill.git@v0.7.1`
 - Run with `--no-adversarial` to skip the review loop.
 
 ### "v0.3.0-shape draft is incompatible"
@@ -366,10 +372,12 @@ iteration.
 
 ## Hub-specific notes
 
-- **CBORG vs Anthropic:** the hub uses CBORG (LBL gateway) for
-  image generation. Text generation goes through whichever provider
-  the user's `claude` CLI is configured for. The orchestrator
-  doesn't manage Anthropic auth — that's `claude`'s concern.
+- **Providers:** `configure` wires `claude -p` (text / reasoning /
+  composition) to the CRAFT-contracted provider it writes into
+  `<BERIL_ROOT>/.claude/settings.json` — on the hub that's typically `cborg`.
+  Image generation is a *separate* optional provider (CBORG-Gemini or
+  `GOOGLE_AI_STUDIO_API_KEY`), unaffected by `ACTIVE_PROVIDER`. Re-run
+  `configure` after any provider / `.env` change.
 - **Per-user storage:** drafts live under `projects/<id>/talks/`
   in the user's BERIL working tree, not in `~/.beril-*` or
   user-level state. Multiple users on the same hub stay isolated.

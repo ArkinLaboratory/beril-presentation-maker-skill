@@ -141,17 +141,37 @@ directory. Old drafts are pruned via
 ## Install
 
 ```bash
-# Run from BERIL_ROOT. Steps in order: install package → verify CLI loads →
-# configure dependencies → deploy skill files into BERIL.
+# Run from BERIL_ROOT. In order: install package → verify CLI loads →
+# deploy skill files into BERIL → bootstrap CRAFT runtime config.
 cd <BERIL_ROOT>
-pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git@v1.0.0 \
+pipx install --force git+https://github.com/kbaseincubator/beril-presentation-maker-skill.git@v1.1.0 \
   && beril-presentation-maker --version \
-  && beril-presentation-maker configure \
-  && beril-presentation-maker install-skill .
+  && beril-presentation-maker install-skill . \
+  && beril-presentation-maker configure .
 ```
 
 For full operator runbook (prerequisites, troubleshooting, hub
 deployment), see [HUB_INSTALL.md](HUB_INSTALL.md).
+
+## Runtime configuration (provider + model tiers)
+
+`configure` (above) wires `claude -p` to a CRAFT-contracted provider and is safe to
+re-run when the environment changes (CRAFT-CONTRACT §3.4):
+
+- **Provider** — `ACTIVE_PROVIDER` ∈ `anthropic | cborg | subscription` in
+  `<BERIL_ROOT>/.env`; inferred from existing keys if unset, so an existing BERIL `.env`
+  works unchanged.
+- **Model tiers** — the skill maps its stages onto three tiers per the §3.4 default
+  policy (`reasoning` for high-leverage framing + the review-incorporating synthesis,
+  `standard` for high-volume composition, `fast` for classification/extraction/light
+  review); `configure` pins a concrete model per tier into `.claude/settings.json` (no
+  hardcoded ids). Override via `MODEL_{REASONING,STANDARD,FAST}` in `.env` or `--model`.
+- **Image generation is separate** — an optional provider (CBORG-Gemini via the
+  app-internal client, or `GOOGLE_AI_STUDIO_API_KEY`), NOT governed by `ACTIVE_PROVIDER`;
+  absent → `image_gen` skips gracefully. One `CBORG_BASE_URL` serves both `claude -p`
+  (bare host) and the image client (`/v1`, via `app_internal_base_url`).
+
+See [HUB_INSTALL.md](HUB_INSTALL.md) §"Step 3 — Configure" for detail.
 
 ## Development
 

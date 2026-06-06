@@ -1121,7 +1121,7 @@ loop. Cheaper but less harsh than the real adversarial skill.
 ## 19. Repo and release plan
 
 - Source dev: `spike/beril-presentation-maker-skill-draft/`.
-- Remote: `ArkinLaboratory/beril-presentation-maker-skill` (private
+- Remote: `kbaseincubator/beril-presentation-maker-skill` (private
   while in development).
 - v0.1.0-spec — this commit. Spec + scaffold + smoke tests only. No
   drafting code.

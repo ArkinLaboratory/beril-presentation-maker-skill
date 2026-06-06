@@ -402,7 +402,7 @@ non-breaking.
       "elapsed_seconds": 120,
       "input_tokens": 50000, "output_tokens": 1500,
       "estimated_cost_usd": 0.20,
-      "model": "claude-sonnet-4-6",
+      "model": "<tier-pinned model id>",
       "_source_path": "00_plan.md.metadata.json"
     },
     "slide_compose-S1": {...},
@@ -433,7 +433,7 @@ fan-out gets `<stage>-<sid>` labels (e.g., `slide_compose-S2`,
   "total_cache_read_tokens": 0,
   "total_cache_creation_tokens": 0,
   "total_elapsed_seconds": 1122,
-  "models_used": ["claude-sonnet-4-6"]
+  "models_used": ["<tier-pinned model id>"]
 }
 ```
 

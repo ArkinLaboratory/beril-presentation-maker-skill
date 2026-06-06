@@ -10,7 +10,7 @@ between this document and shipped code is expected for the v0.3.x
 trajectory; a v0.4 docs cycle will fold the actual production
 state back into this file.
 
-This document specifies the shape of `ArkinLaboratory/beril-presentation-
+This document specifies the shape of `kbaseincubator/beril-presentation-
 maker-skill`. The skill mirrors `beril-paper-writer-skill`'s pipx-
 installable, ships-the-skill-as-package-data pattern. Read [SPEC.md](SPEC.md)
 first for *what* the skill does and *why*; this document is *how* it's
@@ -19,7 +19,7 @@ packaged.
 ## 1. Repository tree (planned)
 
 ```
-ArkinLaboratory/beril-presentation-maker-skill/
+kbaseincubator/beril-presentation-maker-skill/
 ├── pyproject.toml                hatchling build, 4 runtime deps
 ├── README.md, LICENSE, .gitignore, .gitattributes
 ├── SPEC.md, LAYOUT.md, DECISIONS.md
@@ -774,7 +774,7 @@ Windows users run under WSL or Git Bash; PowerShell parity not promised.
 
 ## 19. Deliverables this document blocks
 
-1. Repo init: `gh repo create ArkinLaboratory/beril-presentation-maker-skill --private --clone`
+1. Repo init: `gh repo create kbaseincubator/beril-presentation-maker-skill --private --clone`
 2. Initial commit + tag `v0.1.0-spec` (spec + scaffold + smoke tests).
 3. Master template draft authored + Adam reviews layouts.
 4. After spec sign-off + master sign-off: implementation begins

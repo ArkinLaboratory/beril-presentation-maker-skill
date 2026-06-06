@@ -2,7 +2,7 @@
 
 A skill-specific guide for reading, iterating on, and hand-editing presentation drafts produced by `beril-presentation-maker`. Assumes you've already installed the four BERIL plug-in skills and have a project in BERIL ready to draft from.
 
-> **For install + configure + first-time setup**, start with the cross-skill **[PARTICIPANT-RUNBOOK.md](https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/docs/cross-skill/PARTICIPANT-RUNBOOK.md)** (covers all 4 plug-in skills end-to-end). This tutorial is the presentation-maker-specific layer that sits on top.
+> **For install + configure + first-time setup**, start with the cross-skill **[PARTICIPANT-RUNBOOK.md](https://github.com/kbaseincubator/beril-presentation-maker-skill/blob/main/docs/cross-skill/PARTICIPANT-RUNBOOK.md)** (covers all 4 plug-in skills end-to-end). This tutorial is the presentation-maker-specific layer that sits on top.
 
 > **For operator hub deployment**, see [HUB_INSTALL.md](HUB_INSTALL.md). For consumer integration with the adversarial reviewer, see [CONTRACT.md](CONTRACT.md).
 
@@ -217,10 +217,10 @@ For cross-skill troubleshooting (pipx install, configure, BERIL_ROOT detection, 
 
 ## Where to read more
 
-- **Cross-skill setup, BERIL workflow, cohort cheat-sheets, recovery patterns** → [PARTICIPANT-RUNBOOK.md](https://github.com/ArkinLaboratory/beril-presentation-maker-skill/blob/main/docs/cross-skill/PARTICIPANT-RUNBOOK.md).
+- **Cross-skill setup, BERIL workflow, cohort cheat-sheets, recovery patterns** → [PARTICIPANT-RUNBOOK.md](https://github.com/kbaseincubator/beril-presentation-maker-skill/blob/main/docs/cross-skill/PARTICIPANT-RUNBOOK.md).
 - **Hub deployment for operators** → [HUB_INSTALL.md](HUB_INSTALL.md).
 - **The 14 pipeline stages in detail (with prompts)** → [SPEC.md](SPEC.md) §5.
 - **Runtime contracts (file paths, draft layout, exit codes)** → [LAYOUT.md](LAYOUT.md).
 - **Cross-skill interop pinning (presentation-maker as adversarial consumer)** → [CONTRACT.md](CONTRACT.md).
 - **Version history** → [RELEASE_NOTES.md](RELEASE_NOTES.md).
-- **Adversarial reviewer for presentations (the v3 schema this skill consumes)** → [github.com/ArkinLaboratory/beril-adversarial-skill/blob/main/TUTORIAL.md](https://github.com/ArkinLaboratory/beril-adversarial-skill/blob/main/TUTORIAL.md).
+- **Adversarial reviewer for presentations (the v3 schema this skill consumes)** → [github.com/kbaseincubator/beril-adversarial-skill/blob/main/TUTORIAL.md](https://github.com/kbaseincubator/beril-adversarial-skill/blob/main/TUTORIAL.md).
