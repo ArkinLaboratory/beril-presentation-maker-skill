@@ -1,5 +1,65 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v1.1.0 (2026-06-06) — CRAFT runtime-config standardization (§3.4)
+
+**Coordinated CRAFT release.** Ships the CRAFT runtime-config arc
+(CRAFT-CONTRACT.md §3.4 v2). No slide-spec schema change; no
+slide-rendering, image-gen, or review-cascade behavior change.
+
+**What's new (operational, not schema-level):**
+
+- **Provider abstraction.** `ACTIVE_PROVIDER ∈ {anthropic, cborg,
+  subscription}` selects the reasoning backend for both `claude -p`
+  and the app-internal image client. Unset → **inferred** for
+  backward compatibility (`CBORG_API_KEY` → `cborg`;
+  `ANTHROPIC_API_KEY` → `anthropic`; neither → `subscription`).
+- **Three model tiers.** `MODEL_REASONING` / `MODEL_STANDARD` /
+  `MODEL_FAST` replace per-stage model env vars. The shell
+  orchestrator routes each stage through Claude Code's native
+  `--model` aliases (opus / sonnet / haiku) resolved against
+  `<BERIL_ROOT>/.claude/settings.json` written by `configure`.
+  Per-stage tier mapping (D-099): throughline / substory_design →
+  **reasoning**; slide_compose / judge / cross_tenant → **standard**;
+  Tier-2 narrative-light review → **fast**. A caller's explicit
+  `--model` still wins.
+- **`configure` is now CRAFT-bootstrap.** `beril-presentation-maker
+  configure` reads `.env`, discovers the provider's model list
+  (`/v1/models`), pins tier models (interactive picker on a TTY;
+  fail-loud non-interactive), writes
+  `<BERIL_ROOT>/.claude/settings.json` (+ gitignored
+  `settings.local.json`), runs a response-asserting validation ping
+  against the reasoning tier with auto-fallback if the pin fails.
+- **Additive-only `.env`.** Shared CRAFT block + per-skill marker
+  appended idempotently; existing keys (credentials, tier pins) are
+  **never re-declared** — re-declaration would shadow values BERIL
+  and other processes already set. `parse_env_text` strips inline
+  `#` comments from unquoted values.
+- **`app_internal_base_url()` canonical helper** (Stage 6) —
+  symmetric `/v1`-keeping sibling of `bare_host`. The image client
+  (`image_client.ImageClient.cborg`) routes through this helper, so
+  a user who sets `CBORG_BASE_URL` to the bare host no longer
+  silently 404s on image-gen calls — the helper appends `/v1`.
+  Verbatim in the canonical `llm_config.py` copy across all CRAFT
+  skills for cross-skill conformance parity (CI-enforced via the
+  craft-platform conformance fixture).
+
+**Backward compatibility.** Explicitly preserved: an old-style `.env`
+that only sets `CBORG_API_KEY` (no `ACTIVE_PROVIDER`, no `MODEL_*`)
+upgrades cleanly — `infer_provider` returns `cborg`,
+`compose_env_append` does NOT re-declare `CBORG_API_KEY`, discovery
+pins the tier models. Pinned by `test_old_style_env_upgrades_cleanly`
+in `tests/test_llm_config.py`. v1.0.x callers passing explicit
+`--model claude-opus-4-X` still bypass tier resolution as before.
+
+**Decision record.** `DECISIONS.md` D-099 captures the conformance
+choice; rationale in `CRAFT-CONTRACT.md §3.4`.
+
+**References.** `CRAFT-CONTRACT.md §3.4`;
+`handoffs/CRAFT-config-round2-CC-brief.md` (sub-round 2a
+presentation-maker brief);
+`handoffs/CRAFT-config-stage6-CC-brief.md`
+(`app_internal_base_url` + image-client migration).
+
 ## v1.0.1 (2026-06-03) — docs: terminology + URL migration
 
 **Docs-only.** No code change.

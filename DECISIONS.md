@@ -4023,3 +4023,57 @@ clean-overlay pattern that v3.2 slide_compose doesn't use —
 prompt-layering drift is endemic when overlays stack); D-080 /
 D-085 / D-089 / D-093 (the prompt-nudge + validator-check
 belt-and-suspenders pattern this follows).
+
+---
+
+## D-099 — 2026-06-06 — CRAFT runtime-config standardization (§3.4)
+
+**Decision (v1.1.0).** presentation-maker conforms to
+CRAFT-CONTRACT.md §3.4 (runtime configuration contract v2):
+
+- `configure` is the CRAFT runtime-config bootstrapper (provider
+  inference + tier-model discovery + `settings.{json,local.json}` +
+  response-asserting validation ping with tier fallback).
+- Per-stage tier mapping (Stage 6 → Stage 7): throughline /
+  substory_design → **reasoning**; slide_compose / judge /
+  cross_tenant → **standard**; Tier-2 narrative-light review →
+  **fast** (`fast/haiku`). Implementation routes through Claude
+  Code's native `--model` aliases resolved against
+  `<BERIL_ROOT>/.claude/settings.json`. A caller-explicit `--model`
+  still wins per §3.4.
+- The app-internal image client (`image_client.ImageClient.cborg`)
+  routes through the canonical `app_internal_base_url(env)` helper
+  rather than reading `CBORG_BASE_URL` raw — closes the bare-host
+  silent-404 bug from prior versions.
+
+**Rationale.** Each CRAFT skill (adversarial, paper-writer,
+presentation-maker) was independently reading `.env` and constructing
+provider/model wiring. That worked when one skill was the only
+consumer, but coexisting on a shared BERIL `.env` required additive-
+only conventions + a single resolver shape — otherwise skills shadow
+each other's keys via python-dotenv's last-write-wins. §3.4 codifies
+the convention and the canonical resolver shape; this skill is a
+**copy-not-share** consumer of that resolver (CI conformance fixture
+in craft-platform enforces the no-drift property). The image-client
+migration through `app_internal_base_url` is a strict bugfix on top
+of the consolidation: pre-1.1 the client read `CBORG_BASE_URL` raw and
+would 404 if the user set the bare host (no `/v1`).
+
+**Alternatives considered.** (a) Keep presentation-maker's bespoke
+env parsing — rejected; that's exactly what §3.4 prevents on a
+shared deployment. (b) Make the resolver a shared library —
+rejected per §3.4: the conformance fixture replaces a shared library
+and avoids inter-skill version dependency.
+
+**Backward compatibility.** Old-style `.env` (only `CBORG_API_KEY`,
+no `ACTIVE_PROVIDER` / `MODEL_*`) is explicitly supported: provider
+inference returns `cborg`; `compose_env_append` does not redeclare
+the existing key; tier models come from discovery. Pinned by
+`test_old_style_env_upgrades_cleanly` in `tests/test_llm_config.py`.
+
+**Related:** CRAFT-CONTRACT.md §3.4;
+`handoffs/CRAFT-config-round2-CC-brief.md` (sub-round 2a
+presentation-maker brief);
+`handoffs/CRAFT-config-stage6-CC-brief.md`
+(`app_internal_base_url` + image-client consumer migration);
+`handoffs/CRAFT-config-stage7-CC-brief.md` (release brief).
