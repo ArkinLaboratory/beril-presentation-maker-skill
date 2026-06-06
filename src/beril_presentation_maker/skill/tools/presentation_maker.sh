@@ -1944,9 +1944,14 @@ stage_cross_tenant() {
   # (b) If signal present, run cross_tenant.v1.md to compose a single
   #     cross_tenant_integration slide (deck-level; spliced between
   #     last substory and acknowledgments at merge time).
-  _stage_set_model reasoning
+  # Round 2a fixup (2): cross_tenant is a single-slide composition over
+  # pre-extracted structured signal (extract_cross_tenant.py runs
+  # deterministically beforehand and provides cross_tenant_signal.json).
+  # The LLM composes ONE slide of bounded scope — not high-leverage
+  # framing like throughline. Demoted from reasoning to standard.
+  _stage_set_model standard
   echo "" >&2
-  echo "[Stage 3.8/5] cross_tenant (tier=reasoning, model=$MODEL)" >&2
+  echo "[Stage 3.8/5] cross_tenant (tier=standard, model=$MODEL)" >&2
 
   local signal_md="$CROSS_TENANT_MD"
   local signal_json="$CROSS_TENANT_JSON"

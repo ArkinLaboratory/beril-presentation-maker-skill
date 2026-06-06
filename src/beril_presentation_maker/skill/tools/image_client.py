@@ -60,27 +60,32 @@ Tests live at tests/unit/test_image_client.py. Live API tests are
 gated behind the `image_gen` pytest marker (cost; deselected by
 default).
 """
+
 from __future__ import annotations
 
 import argparse
 import base64
-import dataclasses
 import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
 
 import requests
-
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_CBORG_BASE_URL = "https://api.cborg.lbl.gov"
+# CRAFT-CONTRACT §3.4: CBORG_BASE_URL is the single user-facing base URL
+# for the app-internal (OpenAI-style) CBORG client. Includes `/v1` because
+# this is the OpenAI-compat surface (the bare host is what `claude -p` uses
+# via llm_config.bare_host's /v1 strip). The CBORG endpoint helpers below
+# append the path (`/images/generations`, `/models`) — NOT `/v1/...` —
+# so the user is free to override CBORG_BASE_URL (e.g. for a proxy) and
+# it's respected end-to-end.
+DEFAULT_CBORG_BASE_URL = "https://api.cborg.lbl.gov/v1"
 DEFAULT_AI_STUDIO_BASE_URL = "https://generativelanguage.googleapis.com"
 # 2026-04-30: CBORG model inventory uses bare names (not google/-prefixed).
 # Default to gemini-3-pro-image (Gemini 3's image-gen, "nanobanana pro")
@@ -101,19 +106,19 @@ DEFAULT_AI_STUDIO_MODEL = "gemini-3.1-flash-image-preview"
 # the encoded image, ~32K tokens at the model's max).
 _MODEL_RATES_USD_PER_M = {
     # CBORG (proxied Google models, OpenAI-compat surface)
-    "gemini-pro-image":                  {"input": 2.00, "output": 12.00},
-    "gemini-3-pro-image":                {"input": 2.00, "output": 12.00},
+    "gemini-pro-image": {"input": 2.00, "output": 12.00},
+    "gemini-3-pro-image": {"input": 2.00, "output": 12.00},
     # Legacy google/-prefixed aliases — kept so old callers don't break,
     # but CBORG itself expects the bare names above.
-    "google/gemini-pro-image":           {"input": 2.00, "output": 12.00},
-    "google/gemini-3-pro-image":         {"input": 2.00, "output": 12.00},
+    "google/gemini-pro-image": {"input": 2.00, "output": 12.00},
+    "google/gemini-3-pro-image": {"input": 2.00, "output": 12.00},
     "google/gemini-3-pro-image-preview": {"input": 2.00, "output": 12.00},
     # AI Studio native (M5b/D-062). Conservative input/output rates until
     # image_gen_calibration.py runs against AI Studio (M5b Tier E).
     # Sourced from ai.google.dev/pricing (May 2026 published numbers).
-    "gemini-3.1-flash-image-preview":    {"input": 0.30, "output": 30.00},
-    "gemini-3-pro-image-preview":        {"input": 1.25, "output": 30.00},
-    "gemini-2.5-flash-image":            {"input": 0.30, "output": 30.00},
+    "gemini-3.1-flash-image-preview": {"input": 0.30, "output": 30.00},
+    "gemini-3-pro-image-preview": {"input": 1.25, "output": 30.00},
+    "gemini-2.5-flash-image": {"input": 0.30, "output": 30.00},
 }
 
 # AI Studio fallback chain (D-035-rev1, M5b Tier A discovery: Google's
@@ -129,8 +134,8 @@ AI_STUDIO_MODEL_FALLBACK_CHAIN = (
 )
 
 # Channel labels per SPEC §8.3 two-channel design.
-CHANNEL_A = "A"   # LLM-proposed (global flag opt-in)
-CHANNEL_B = "B"   # user-requested (interactive override; bypasses Channel A)
+CHANNEL_A = "A"  # LLM-proposed (global flag opt-in)
+CHANNEL_B = "B"  # user-requested (interactive override; bypasses Channel A)
 
 
 # AI Studio's image API accepts aspectRatio + imageSize (bucketed
@@ -170,8 +175,7 @@ def _size_to_ai_studio_config(size: tuple[int, int]) -> tuple[str, str]:
     if width <= 0 or height <= 0:
         return "1:1", "1K"
     requested_ratio = width / height
-    best = min(_AI_STUDIO_ASPECT_RATIOS,
-               key=lambda pair: abs(pair[0] - requested_ratio))
+    best = min(_AI_STUDIO_ASPECT_RATIOS, key=lambda pair: abs(pair[0] - requested_ratio))
     aspect_ratio = best[1]
     max_dim = max(width, height)
     if max_dim <= 512:
@@ -218,18 +222,20 @@ _WORST_CASE_COST_USD = 0.08
 # Result types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ImageResult:
     """One image-generation result, including provenance."""
+
     image_bytes: bytes
     model: str
     prompt: str
     cost_usd: float
     elapsed_seconds: float
-    channel: str             # "A" (LLM-proposed) | "B" (user-requested)
-    approved_at: str         # ISO-8601
-    quant_content_score: Optional[float] = None  # set by judge step
-    error: Optional[str] = None
+    channel: str  # "A" (LLM-proposed) | "B" (user-requested)
+    approved_at: str  # ISO-8601
+    quant_content_score: float | None = None  # set by judge step
+    error: str | None = None
 
     def to_provenance_dict(self) -> dict:
         """Provenance dict for image_provenance.json (per SPEC §8.3)."""
@@ -261,6 +267,7 @@ class QuantContentRejected(ImageClientError):
 # Provider abstraction
 # ---------------------------------------------------------------------------
 
+
 class ImageClient:
     """Image-generation client. Default provider: CBORG."""
 
@@ -282,14 +289,23 @@ class ImageClient:
         self._session = request_session or requests.Session()
 
     @classmethod
-    def cborg(cls, api_key: str, **kwargs) -> "ImageClient":
-        return cls(provider="cborg", base_url=DEFAULT_CBORG_BASE_URL,
-                   api_key=api_key, **kwargs)
+    def cborg(cls, api_key: str, **kwargs) -> ImageClient:
+        """Construct a CBORG ImageClient.
+
+        Reads CBORG_BASE_URL from the environment if set (CRAFT-CONTRACT
+        §3.4: CBORG_BASE_URL is the single user-facing base URL for the
+        app-internal OpenAI-style CBORG client). Falls back to
+        DEFAULT_CBORG_BASE_URL otherwise. An explicit `base_url=...`
+        kwarg still overrides the env-resolved value (used by tests).
+        """
+        if "base_url" not in kwargs:
+            kwargs["base_url"] = os.environ.get("CBORG_BASE_URL") or DEFAULT_CBORG_BASE_URL
+        return cls(provider="cborg", api_key=api_key, **kwargs)
 
     @classmethod
-    def google_ai_studio(cls, api_key: str,
-                         model: str = DEFAULT_AI_STUDIO_MODEL,
-                         **kwargs) -> "ImageClient":
+    def google_ai_studio(
+        cls, api_key: str, model: str = DEFAULT_AI_STUDIO_MODEL, **kwargs
+    ) -> ImageClient:
         """Construct an ImageClient that talks to AI Studio's native
         Gemini API. M5b/D-062.
 
@@ -297,25 +313,26 @@ class ImageClient:
         resolve_ai_studio_model() (Tier C) before constructing; this
         constructor accepts the resolved model name and doesn't probe.
         """
-        return cls(provider="google_ai_studio",
-                   base_url=DEFAULT_AI_STUDIO_BASE_URL,
-                   model=model, api_key=api_key, **kwargs)
+        return cls(
+            provider="google_ai_studio",
+            base_url=DEFAULT_AI_STUDIO_BASE_URL,
+            model=model,
+            api_key=api_key,
+            **kwargs,
+        )
 
     # -----------------------------------------------------------------------
     # Cost estimation
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def estimate_cost_usd(model: str,
-                          input_tokens: int = 0,
-                          output_tokens: int = 0) -> float:
+    def estimate_cost_usd(model: str, input_tokens: int = 0, output_tokens: int = 0) -> float:
         """Estimate USD cost for an image-gen call. Falls back to 0.0 for
         unknown models."""
         rates = _MODEL_RATES_USD_PER_M.get(model)
         if rates is None:
             return 0.0
-        return (input_tokens * rates["input"]
-                + output_tokens * rates["output"]) / 1_000_000
+        return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
 
     # -----------------------------------------------------------------------
     # Generation
@@ -381,9 +398,11 @@ class ImageClient:
             )
         elapsed = time.time() - start
 
-        cost = self.estimate_cost_usd(model,
-                                      input_tokens=usage.get("input_tokens", 0),
-                                      output_tokens=usage.get("output_tokens", 0))
+        cost = self.estimate_cost_usd(
+            model,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
 
         return ImageResult(
             image_bytes=image_bytes,
@@ -413,12 +432,16 @@ class ImageClient:
         shape. Image returned as base64 in `data[0].b64_json`. (This API
         contract is unverified at v0.1; see SPEC §20.2 — Gemini quality
         + endpoint may need tweaking on first live test.)
+
+        Endpoint construction follows CRAFT-CONTRACT §3.4: `self.base_url`
+        IS the OpenAI-style base (includes `/v1` when the default CBORG
+        host is used). We append only the path here, so a CBORG_BASE_URL
+        override (e.g. for a proxy) flows through end-to-end without
+        double-`/v1` or silent ignore.
         """
         if not self.api_key:
-            raise ImageClientError(
-                "no api_key set; pass api_key=... or set CBORG_API_KEY env var"
-            )
-        url = f"{self.base_url}/v1/images/generations"
+            raise ImageClientError("no api_key set; pass api_key=... or set CBORG_API_KEY env var")
+        url = f"{self.base_url}/images/generations"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -431,8 +454,7 @@ class ImageClient:
             "response_format": "b64_json",
         }
         try:
-            resp = self._session.post(url, headers=headers, json=payload,
-                                       timeout=self.timeout_s)
+            resp = self._session.post(url, headers=headers, json=payload, timeout=self.timeout_s)
             resp.raise_for_status()
         except requests.RequestException as e:
             # Surface the response body too — 400/422 errors typically
@@ -454,9 +476,7 @@ class ImageClient:
         try:
             b64 = data["data"][0]["b64_json"]
         except (KeyError, IndexError, TypeError) as e:
-            raise ImageClientError(
-                f"CBORG response missing data[0].b64_json: {data}"
-            ) from e
+            raise ImageClientError(f"CBORG response missing data[0].b64_json: {data}") from e
 
         image_bytes = base64.b64decode(b64)
         usage = data.get("usage", {})
@@ -465,14 +485,15 @@ class ImageClient:
         # "prompt_tokens" / "completion_tokens"). Permissive lookup.
         normalized = {
             "input_tokens": int(
-                usage.get("input_tokens",
-                          usage.get("prompt_tokens",
-                                    usage.get("promptTokenCount", 0)))
+                usage.get(
+                    "input_tokens", usage.get("prompt_tokens", usage.get("promptTokenCount", 0))
+                )
             ),
             "output_tokens": int(
-                usage.get("output_tokens",
-                          usage.get("completion_tokens",
-                                    usage.get("candidatesTokenCount", 0)))
+                usage.get(
+                    "output_tokens",
+                    usage.get("completion_tokens", usage.get("candidatesTokenCount", 0)),
+                )
             ),
         }
         return image_bytes, normalized
@@ -512,8 +533,7 @@ class ImageClient:
         """
         if not self.api_key:
             raise ImageClientError(
-                "no api_key set; pass api_key=... or set "
-                "GOOGLE_AI_STUDIO_API_KEY env var"
+                "no api_key set; pass api_key=... or set GOOGLE_AI_STUDIO_API_KEY env var"
             )
         url = f"{self.base_url}/v1beta/models/{model}:generateContent"
         headers = {
@@ -532,8 +552,7 @@ class ImageClient:
             },
         }
         try:
-            resp = self._session.post(url, headers=headers, json=payload,
-                                       timeout=self.timeout_s)
+            resp = self._session.post(url, headers=headers, json=payload, timeout=self.timeout_s)
             resp.raise_for_status()
         except requests.RequestException as e:
             body = ""
@@ -557,9 +576,7 @@ class ImageClient:
                     f"Response: {body}"
                 ) from e
             raise ImageClientError(
-                f"AI Studio request failed: {e}\n"
-                f"  endpoint: {url}\n"
-                f"  response body: {body}"
+                f"AI Studio request failed: {e}\n  endpoint: {url}\n  response body: {body}"
             ) from e
 
         data = resp.json()
@@ -582,8 +599,7 @@ class ImageClient:
                 break
         if b64 is None:
             raise ImageClientError(
-                f"AI Studio response had no inlineData part among "
-                f"{len(parts)} parts: {data}"
+                f"AI Studio response had no inlineData part among {len(parts)} parts: {data}"
             )
         if mime_type and not mime_type.startswith("image/"):
             # Defensive: don't assume bytes are an image if the model
@@ -649,6 +665,7 @@ def _fingerprint_api_key(api_key: str) -> str:
     resistance is fine at that length for the "did the key change?"
     use case (NOT cryptographic identity)."""
     import hashlib
+
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
 
 
@@ -687,7 +704,7 @@ def probe_available_models(
         if "generateContent" not in methods:
             continue
         # Strip the "models/" prefix Google returns.
-        short = name[len("models/"):] if name.startswith("models/") else name
+        short = name[len("models/") :] if name.startswith("models/") else name
         # Filter to image-capable: name contains "image". Excludes
         # gemini-*-flash (text), gemini-*-pro (text), etc.
         if "image" in short.lower():
@@ -762,16 +779,17 @@ def load_or_probe_ai_studio_model(
             "from_override": True,
             "chain_walked": [override_model],
         }
-        sidecar.write_text(json.dumps(record, indent=2) + "\n",
-                           encoding="utf-8")
+        sidecar.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         return {**record, "from_cache": False}
 
     # Cache hit? Same fingerprint + same schema.
     if not force_refresh and sidecar.is_file():
         try:
             cached = json.loads(sidecar.read_text(encoding="utf-8"))
-            if (cached.get("schema_version") == PROBE_SCHEMA_VERSION
-                    and cached.get("api_key_fingerprint") == fingerprint):
+            if (
+                cached.get("schema_version") == PROBE_SCHEMA_VERSION
+                and cached.get("api_key_fingerprint") == fingerprint
+            ):
                 return {**cached, "from_cache": True}
         except (json.JSONDecodeError, OSError):
             # Sidecar corrupt — re-probe rather than fail.
@@ -779,7 +797,9 @@ def load_or_probe_ai_studio_model(
 
     # Probe.
     available = probe_available_models(
-        api_key, base_url=base_url, timeout_s=timeout_s,
+        api_key,
+        base_url=base_url,
+        timeout_s=timeout_s,
         request_session=request_session,
     )
     resolved = resolve_ai_studio_model(available, chain=AI_STUDIO_MODEL_FALLBACK_CHAIN)
@@ -792,8 +812,7 @@ def load_or_probe_ai_studio_model(
         "from_override": False,
         "chain_walked": chain_walked,
     }
-    sidecar.write_text(json.dumps(record, indent=2) + "\n",
-                       encoding="utf-8")
+    sidecar.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     return {**record, "from_cache": False}
 
 
@@ -832,21 +851,25 @@ def format_probe_failure_diagnostic(
     else:
         lines.append("  Image-capable models seen on this key: NONE")
     if cborg_available:
-        lines.append("  CBORG_API_KEY is set — image-gen would silently "
-                     "fall back to CBORG (this path is the loud-warning "
-                     "branch only when invoked explicitly).")
+        lines.append(
+            "  CBORG_API_KEY is set — image-gen would silently "
+            "fall back to CBORG (this path is the loud-warning "
+            "branch only when invoked explicitly)."
+        )
     else:
-        lines.append("  No CBORG_API_KEY for fallback. Image-gen DISABLED "
-                     "for this run.")
-        lines.append("  To re-enable: set CBORG_API_KEY (CBORG fallback), "
-                     "OR set GOOGLE_AI_STUDIO_MODEL=<name> to pin a "
-                     "specific model, OR fix AI Studio access.")
+        lines.append("  No CBORG_API_KEY for fallback. Image-gen DISABLED for this run.")
+        lines.append(
+            "  To re-enable: set CBORG_API_KEY (CBORG fallback), "
+            "OR set GOOGLE_AI_STUDIO_MODEL=<name> to pin a "
+            "specific model, OR fix AI Studio access."
+        )
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # Provenance file I/O
 # ---------------------------------------------------------------------------
+
 
 def append_provenance(
     provenance_path: Path,
@@ -889,13 +912,13 @@ def append_provenance(
     existing["entries"].append(entry)
 
     provenance_path.parent.mkdir(parents=True, exist_ok=True)
-    provenance_path.write_text(json.dumps(existing, indent=2) + "\n",
-                                encoding="utf-8")
+    provenance_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _cmd_generate(args: argparse.Namespace) -> int:
     """Generate one image, save bytes + provenance."""
@@ -903,16 +926,14 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     if provider == "cborg":
         api_key = args.api_key or os.environ.get("CBORG_API_KEY")
         if not api_key:
-            print("CBORG_API_KEY not set (and --api-key not provided)",
-                  file=sys.stderr)
+            print("CBORG_API_KEY not set (and --api-key not provided)", file=sys.stderr)
             return 3
         model = args.model or DEFAULT_MODEL
         client = ImageClient.cborg(api_key=api_key, model=model)
     elif provider == "google_ai_studio":
         api_key = args.api_key or os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
         if not api_key:
-            print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not "
-                  "provided)", file=sys.stderr)
+            print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not provided)", file=sys.stderr)
             return 3
         # When --provider google_ai_studio without an explicit --model,
         # default to the M5b primary. Tier C's probe is the canonical
@@ -920,8 +941,10 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         model = args.model or DEFAULT_AI_STUDIO_MODEL
         client = ImageClient.google_ai_studio(api_key=api_key, model=model)
     else:
-        print(f"unknown --provider {provider!r}; expected "
-              f"'cborg' or 'google_ai_studio'", file=sys.stderr)
+        print(
+            f"unknown --provider {provider!r}; expected 'cborg' or 'google_ai_studio'",
+            file=sys.stderr,
+        )
         return 3
     try:
         result = client.generate(
@@ -940,9 +963,11 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(result.image_bytes)
-    print(f"wrote {out} ({len(result.image_bytes):,} bytes; "
-          f"~${result.cost_usd:.3f}; {result.elapsed_seconds:.1f}s)",
-          file=sys.stderr)
+    print(
+        f"wrote {out} ({len(result.image_bytes):,} bytes; "
+        f"~${result.cost_usd:.3f}; {result.elapsed_seconds:.1f}s)",
+        file=sys.stderr,
+    )
 
     if args.provenance:
         append_provenance(args.provenance, result, image_path=out)
@@ -951,50 +976,63 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="image_client",
-                                description="AI image-gen client (CBORG default).")
+    p = argparse.ArgumentParser(
+        prog="image_client", description="AI image-gen client (CBORG default)."
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     p_gen = sub.add_parser("generate", help="Generate one image and save it.")
     p_gen.add_argument("--prompt", required=True)
     p_gen.add_argument("--out", required=True, help="Output image path (e.g., img.png).")
-    p_gen.add_argument("--budget", type=float, default=5.00,
-                       help="Remaining budget for this draft (USD); "
-                            "if worst-case cost would exceed, exit 4.")
-    p_gen.add_argument("--provider", choices=["cborg", "google_ai_studio"],
-                       default="cborg",
-                       help="Image-gen provider. 'cborg' (default) reads "
-                            "CBORG_API_KEY; 'google_ai_studio' reads "
-                            "GOOGLE_AI_STUDIO_API_KEY (M5b/D-062).")
-    p_gen.add_argument("--model", default=None,
-                       help="Model name. Defaults: 'gemini-3-pro-image' "
-                            "(cborg) / 'gemini-3.1-flash-image-preview' "
-                            "(google_ai_studio). Tier-C probe is the "
-                            "canonical resolver for google_ai_studio.")
+    p_gen.add_argument(
+        "--budget",
+        type=float,
+        default=5.00,
+        help="Remaining budget for this draft (USD); if worst-case cost would exceed, exit 4.",
+    )
+    p_gen.add_argument(
+        "--provider",
+        choices=["cborg", "google_ai_studio"],
+        default="cborg",
+        help="Image-gen provider. 'cborg' (default) reads "
+        "CBORG_API_KEY; 'google_ai_studio' reads "
+        "GOOGLE_AI_STUDIO_API_KEY (M5b/D-062).",
+    )
+    p_gen.add_argument(
+        "--model",
+        default=None,
+        help="Model name. Defaults: 'gemini-3-pro-image' "
+        "(cborg) / 'gemini-3.1-flash-image-preview' "
+        "(google_ai_studio). Tier-C probe is the "
+        "canonical resolver for google_ai_studio.",
+    )
     p_gen.add_argument("--width", type=int, default=1024)
     p_gen.add_argument("--height", type=int, default=1024)
     p_gen.add_argument("--channel", choices=["A", "B"], default="A")
     p_gen.add_argument("--api-key", help="Override CBORG_API_KEY env var.")
-    p_gen.add_argument("--provenance",
-                       help="Append-to path for image_provenance.json.")
+    p_gen.add_argument("--provenance", help="Append-to path for image_provenance.json.")
     p_gen.set_defaults(func=_cmd_generate)
 
     # M5b Tier C: probe subcommand. Orchestrator invokes this before
     # the first image-gen call to resolve the AI Studio model + cache
     # the result in <audit_dir>/ai_image_gen_probe.json.
     p_probe = sub.add_parser(
-        "probe",
-        help="Probe AI Studio for image-capable models + cache resolution.")
-    p_probe.add_argument("--audit-dir", required=True,
-                         help="Directory for ai_image_gen_probe.json sidecar.")
-    p_probe.add_argument("--api-key",
-                         help="Override GOOGLE_AI_STUDIO_API_KEY env var.")
-    p_probe.add_argument("--force-refresh", action="store_true",
-                         help="Re-probe even if cache hit exists.")
-    p_probe.add_argument("--cborg-available", action="store_true",
-                         help="Pass when CBORG_API_KEY is set in the caller "
-                              "shell. Affects the D-064 diagnostic when "
-                              "the probe finds no usable model.")
+        "probe", help="Probe AI Studio for image-capable models + cache resolution."
+    )
+    p_probe.add_argument(
+        "--audit-dir", required=True, help="Directory for ai_image_gen_probe.json sidecar."
+    )
+    p_probe.add_argument("--api-key", help="Override GOOGLE_AI_STUDIO_API_KEY env var.")
+    p_probe.add_argument(
+        "--force-refresh", action="store_true", help="Re-probe even if cache hit exists."
+    )
+    p_probe.add_argument(
+        "--cborg-available",
+        action="store_true",
+        help="Pass when CBORG_API_KEY is set in the caller "
+        "shell. Affects the D-064 diagnostic when "
+        "the probe finds no usable model.",
+    )
     p_probe.set_defaults(func=_cmd_probe)
 
     args = p.parse_args(argv)
@@ -1017,8 +1055,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     """
     api_key = args.api_key or os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
     if not api_key:
-        print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not provided)",
-              file=sys.stderr)
+        print("GOOGLE_AI_STUDIO_API_KEY not set (and --api-key not provided)", file=sys.stderr)
         return 3
     override_model = os.environ.get("GOOGLE_AI_STUDIO_MODEL") or None
     record = load_or_probe_ai_studio_model(
@@ -1038,12 +1075,12 @@ def _cmd_probe(args: argparse.Namespace) -> int:
             source = f"cache (probed {record.get('probed_at', '?')})"
         else:
             source = "fresh probe"
-        print(f"image_client probe: resolved {record['resolved_model']} "
-              f"via {source}", file=sys.stderr)
+        print(
+            f"image_client probe: resolved {record['resolved_model']} via {source}", file=sys.stderr
+        )
         return 0
     # No resolved model: D-064 hybrid-fallback diagnostic.
-    diag = format_probe_failure_diagnostic(
-        record, cborg_available=args.cborg_available)
+    diag = format_probe_failure_diagnostic(record, cborg_available=args.cborg_available)
     print(diag, file=sys.stderr)
     return 5
 

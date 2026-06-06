@@ -12,21 +12,19 @@ Coverage:
   each writes a stub report, returns 0 (advisory).
 - CLI smoke.
 """
+
 from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RT2_PY = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
-          / "tools" / "review_tier2.py")
+RT2_PY = REPO_ROOT / "src" / "beril_presentation_maker" / "skill" / "tools" / "review_tier2.py"
 
 
 def _import(name: str, path: Path):
@@ -46,6 +44,7 @@ def rt2():
 # Toolchain probe
 # ---------------------------------------------------------------------------
 
+
 def test_toolchain_status_ok_with_claude_present(rt2):
     s = rt2.ToolchainStatus(claude="/u/claude")
     assert s.ok is True
@@ -60,8 +59,7 @@ def test_toolchain_status_missing_claude(rt2):
 
 def test_probe_toolchain_uses_shutil_which(rt2, monkeypatch):
     """probe_toolchain delegates to shutil.which."""
-    monkeypatch.setattr(rt2.shutil, "which",
-                        lambda name: "/u/c" if name == "my-claude" else None)
+    monkeypatch.setattr(rt2.shutil, "which", lambda name: "/u/c" if name == "my-claude" else None)
     status = rt2.probe_toolchain(claude_bin="my-claude")
     assert status.claude == "/u/c"
 
@@ -69,6 +67,7 @@ def test_probe_toolchain_uses_shutil_which(rt2, monkeypatch):
 # ---------------------------------------------------------------------------
 # Stub-report writers
 # ---------------------------------------------------------------------------
+
 
 def test_write_stub_reports_emits_schema(rt2, tmp_path):
     """The stub report carries schema_version + draft_dir + note +
@@ -89,6 +88,7 @@ def test_write_stub_reports_emits_schema(rt2, tmp_path):
 # ---------------------------------------------------------------------------
 # claude -p invocation
 # ---------------------------------------------------------------------------
+
 
 def test_invoke_tier2_review_builds_argv(rt2, tmp_path):
     """argv carries -p, --model haiku-4-5, --system-prompt,
@@ -135,11 +135,12 @@ def test_invoke_tier2_review_builds_argv(rt2, tmp_path):
     assert "Read,Write" in captured
     assert "--dangerously-skip-permissions" in captured
     assert "--model" in captured
-    # CRAFT §3.4 / brief §5a: Tier 2 review is fast pattern detection
-    # → fast tier (haiku). The on-disk literal is now the alias `haiku`;
-    # Claude Code resolves it via ANTHROPIC_DEFAULT_HAIKU_MODEL in
-    # settings.json at runtime (DQ3 cost discipline preserved by the
-    # configure-step discovery + pin).
+    # CRAFT §3.4 / Round 2a fixup (2): Tier 2 review is the
+    # narrative-light Haiku pass by design (DQ3 cheap mechanical
+    # review). DEFAULT_MODEL stays at the fast/haiku alias; Claude
+    # Code resolves it via ANTHROPIC_DEFAULT_HAIKU_MODEL in
+    # settings.json at runtime. Operators wanting to escalate can
+    # pin `--model sonnet` explicitly on the call site.
     assert captured[captured.index("--model") + 1] == rt2.DEFAULT_MODEL
     assert rt2.DEFAULT_MODEL == "haiku", (
         f"DEFAULT_MODEL must be the haiku tier alias; got {rt2.DEFAULT_MODEL}"
@@ -194,9 +195,15 @@ def test_invoke_tier2_review_user_prompt_names_all_inputs(rt2, tmp_path):
     # The user prompt is the LAST argv element (positional after --
     # dangerously-skip-permissions in our build_cmd order)
     user_prompt = captured[-1]
-    for label in ("DRAFT_DIR:", "SLIDE_SPEC_PATH:", "THROUGHLINE_PATH:",
-                  "SUBSTORIES_PATH:", "QUANT_GROUNDING_PATH:",
-                  "OUT_PATH:", "OUT_PATH_MD:"):
+    for label in (
+        "DRAFT_DIR:",
+        "SLIDE_SPEC_PATH:",
+        "THROUGHLINE_PATH:",
+        "SUBSTORIES_PATH:",
+        "QUANT_GROUNDING_PATH:",
+        "OUT_PATH:",
+        "OUT_PATH_MD:",
+    ):
         assert label in user_prompt, f"user prompt must name {label}"
 
 
@@ -206,8 +213,11 @@ def test_invoke_tier2_review_model_override(rt2, tmp_path):
     out_md = tmp_path / "audit" / "review_tier2.md"
     spec_path = tmp_path / "spec.json"
     spec_path.write_text("{}")
-    for p in (tmp_path / "00_throughline.md", tmp_path / "02_substories.md",
-              tmp_path / "quant.json"):
+    for p in (
+        tmp_path / "00_throughline.md",
+        tmp_path / "02_substories.md",
+        tmp_path / "quant.json",
+    ):
         p.write_text("{}")
 
     fake_proc = MagicMock(returncode=0, stdout="{}", stderr="")
@@ -276,52 +286,55 @@ def test_parse_cost_from_envelope_unparseable(rt2):
 # run_tier2 — failure paths
 # ---------------------------------------------------------------------------
 
+
 def test_run_tier2_returns_0_when_claude_missing(rt2, tmp_path, monkeypatch):
     """Missing claude CLI → stub report + rc=0 (cascade-advisory)."""
-    monkeypatch.setattr(rt2, "probe_toolchain",
-                        lambda *a, **kw: rt2.ToolchainStatus(claude=None))
+    monkeypatch.setattr(rt2, "probe_toolchain", lambda *a, **kw: rt2.ToolchainStatus(claude=None))
     rc = rt2.run_tier2(tmp_path, quiet=True)
     assert rc == 0
-    payload = json.loads(
-        (tmp_path / "audit" / "review_tier2.json").read_text())
+    payload = json.loads((tmp_path / "audit" / "review_tier2.json").read_text())
     assert payload["findings"] == []
     assert "claude" in payload["note"].lower()
 
 
 def test_run_tier2_returns_0_when_spec_missing(rt2, tmp_path, monkeypatch):
     """No working/slide_spec.json → stub report + rc=0."""
-    monkeypatch.setattr(rt2, "probe_toolchain",
-                        lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
+    monkeypatch.setattr(rt2, "probe_toolchain", lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
     rc = rt2.run_tier2(tmp_path, quiet=True)
     assert rc == 0
-    payload = json.loads(
-        (tmp_path / "audit" / "review_tier2.json").read_text())
+    payload = json.loads((tmp_path / "audit" / "review_tier2.json").read_text())
     assert "not found" in payload["note"]
 
 
 def test_run_tier2_returns_0_when_llm_call_fails(rt2, tmp_path, monkeypatch):
     """claude -p non-zero exit → stub report + rc=0."""
-    monkeypatch.setattr(rt2, "probe_toolchain",
-                        lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
+    monkeypatch.setattr(rt2, "probe_toolchain", lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
     spec_path = tmp_path / "working" / "slide_spec.json"
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text(json.dumps({"slides": []}))
 
-    monkeypatch.setattr(rt2, "invoke_tier2_review",
-                        lambda **kw: {
-                            "tool": "review_tier2", "exit_status": 2,
-                            "output_present": False, "cost_usd": 0.0,
-                            "cost_note": "", "stdout_tail": "",
-                            "stderr_tail": "model rate-limited",
-                            "model": rt2.DEFAULT_MODEL, "duration_sec": 1,
-                            "version": rt2.VERSION,
-                            "phase": "narrative_review",
-                            "timestamp": "x", "claude_bin": "/u/c",
-                        })
+    monkeypatch.setattr(
+        rt2,
+        "invoke_tier2_review",
+        lambda **kw: {
+            "tool": "review_tier2",
+            "exit_status": 2,
+            "output_present": False,
+            "cost_usd": 0.0,
+            "cost_note": "",
+            "stdout_tail": "",
+            "stderr_tail": "model rate-limited",
+            "model": rt2.DEFAULT_MODEL,
+            "duration_sec": 1,
+            "version": rt2.VERSION,
+            "phase": "narrative_review",
+            "timestamp": "x",
+            "claude_bin": "/u/c",
+        },
+    )
     rc = rt2.run_tier2(tmp_path, quiet=True)
     assert rc == 0
-    payload = json.loads(
-        (tmp_path / "audit" / "review_tier2.json").read_text())
+    payload = json.loads((tmp_path / "audit" / "review_tier2.json").read_text())
     assert "rate-limited" in payload["note"]
 
 
@@ -329,39 +342,57 @@ def test_run_tier2_returns_0_when_llm_call_fails(rt2, tmp_path, monkeypatch):
 # run_tier2 — happy path (everything mocked)
 # ---------------------------------------------------------------------------
 
+
 def test_run_tier2_happy_path(rt2, tmp_path, monkeypatch):
     """End-to-end stub: claude probes OK, spec present, LLM 'returns'
     a valid JSON; cascade gets a real audit/review_tier2.json."""
-    monkeypatch.setattr(rt2, "probe_toolchain",
-                        lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
+    monkeypatch.setattr(rt2, "probe_toolchain", lambda *a, **kw: rt2.ToolchainStatus(claude="/u/c"))
     spec_path = tmp_path / "working" / "slide_spec.json"
     spec_path.parent.mkdir(parents=True)
-    spec_path.write_text(json.dumps({
-        "schema_version": "v1",
-        "slides": [{"id": 1, "layout": "title"}],
-    }))
+    spec_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "slides": [{"id": 1, "layout": "title"}],
+            }
+        )
+    )
 
     def _fake_review(*, out_json_path, out_md_path, **kw):
         out_json_path.parent.mkdir(parents=True, exist_ok=True)
-        out_json_path.write_text(json.dumps({
-            "schema_version": rt2.SCHEMA_VERSION,
-            "draft_dir": str(kw["draft_dir"]),
-            "n_slides_reviewed": 1,
-            "findings": [{
-                "slide_id": 1, "kind": "register_drift",
-                "severity": "P1", "confidence": "high",
-                "detail": "synthetic finding for test",
-                "evidence_locator": "content.title",
-            }],
-        }))
+        out_json_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": rt2.SCHEMA_VERSION,
+                    "draft_dir": str(kw["draft_dir"]),
+                    "n_slides_reviewed": 1,
+                    "findings": [
+                        {
+                            "slide_id": 1,
+                            "kind": "register_drift",
+                            "severity": "P1",
+                            "confidence": "high",
+                            "detail": "synthetic finding for test",
+                            "evidence_locator": "content.title",
+                        }
+                    ],
+                }
+            )
+        )
         out_md_path.write_text("# Tier 2 review report\n")
         return {
-            "tool": "review_tier2", "exit_status": 0,
-            "output_present": True, "cost_usd": 0.0512,
-            "cost_note": "", "stdout_tail": "",
-            "stderr_tail": "", "model": rt2.DEFAULT_MODEL,
-            "duration_sec": 3, "version": rt2.VERSION,
-            "phase": "narrative_review", "timestamp": "x",
+            "tool": "review_tier2",
+            "exit_status": 0,
+            "output_present": True,
+            "cost_usd": 0.0512,
+            "cost_note": "",
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "model": rt2.DEFAULT_MODEL,
+            "duration_sec": 3,
+            "version": rt2.VERSION,
+            "phase": "narrative_review",
+            "timestamp": "x",
             "claude_bin": "/u/c",
         }
 
@@ -369,8 +400,7 @@ def test_run_tier2_happy_path(rt2, tmp_path, monkeypatch):
 
     rc = rt2.run_tier2(tmp_path, quiet=True)
     assert rc == 0
-    payload = json.loads(
-        (tmp_path / "audit" / "review_tier2.json").read_text())
+    payload = json.loads((tmp_path / "audit" / "review_tier2.json").read_text())
     assert payload["n_slides_reviewed"] == 1
     assert len(payload["findings"]) == 1
     assert payload["findings"][0]["severity"] == "P1"
@@ -381,6 +411,7 @@ def test_run_tier2_happy_path(rt2, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # CLI smoke
 # ---------------------------------------------------------------------------
+
 
 def test_cli_main_returns_0_on_missing_draft(rt2, tmp_path):
     """CLI on an empty directory → missing-deps OR missing-spec stub;
