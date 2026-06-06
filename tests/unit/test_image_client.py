@@ -131,6 +131,16 @@ def test_explicit_base_url_kwarg_still_wins(ic, monkeypatch):
     assert client.base_url == "https://kwarg.example.com/v1"
 
 
+def test_cborg_bare_host_env_gets_v1_appended(ic, monkeypatch):
+    """CRAFT-CONTRACT §3.4 / Stage 6: if a user sets CBORG_BASE_URL to the
+    BARE host (no `/v1`), the app-internal client now routes through
+    `llm_config.app_internal_base_url`, which appends `/v1`. Pre-Stage-6
+    the consumer read CBORG_BASE_URL raw and would 404 on /v1-less calls."""
+    monkeypatch.setenv("CBORG_BASE_URL", "https://api.cborg.lbl.gov")
+    client = ic.ImageClient.cborg(api_key="x")
+    assert client.base_url == "https://api.cborg.lbl.gov/v1"
+
+
 # ---------------------------------------------------------------------------
 # Cost estimation
 # ---------------------------------------------------------------------------

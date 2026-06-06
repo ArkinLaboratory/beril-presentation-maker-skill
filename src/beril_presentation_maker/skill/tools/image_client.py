@@ -74,6 +74,8 @@ from pathlib import Path
 
 import requests
 
+from beril_presentation_maker import llm_config
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -292,14 +294,17 @@ class ImageClient:
     def cborg(cls, api_key: str, **kwargs) -> ImageClient:
         """Construct a CBORG ImageClient.
 
-        Reads CBORG_BASE_URL from the environment if set (CRAFT-CONTRACT
-        §3.4: CBORG_BASE_URL is the single user-facing base URL for the
-        app-internal OpenAI-style CBORG client). Falls back to
-        DEFAULT_CBORG_BASE_URL otherwise. An explicit `base_url=...`
-        kwarg still overrides the env-resolved value (used by tests).
+        Resolves the OpenAI-style CBORG base URL via the canonical
+        `llm_config.app_internal_base_url(os.environ)` helper (CRAFT-
+        CONTRACT §3.4: CBORG_BASE_URL is the single user-facing base
+        URL for the app-internal OpenAI-style CBORG client). The helper
+        normalizes via `bare_host(env) + "/v1"`, so the user can write
+        EITHER the bare host OR the `/v1` form in `.env` and the
+        app-internal call always lands at the `/v1` endpoint. An
+        explicit `base_url=...` kwarg still overrides (used by tests).
         """
         if "base_url" not in kwargs:
-            kwargs["base_url"] = os.environ.get("CBORG_BASE_URL") or DEFAULT_CBORG_BASE_URL
+            kwargs["base_url"] = llm_config.app_internal_base_url(os.environ)
         return cls(provider="cborg", api_key=api_key, **kwargs)
 
     @classmethod
