@@ -20,9 +20,27 @@ Runs after `revise_slides`/`visual_qa_final`, before the PIPELINE
 COMPLETE banner. Each gate maps to a real caulobacter defect class:
 
   1. **G1 placeholder_or_leaked_template** — no TBD/blank in
-     title/presenter; no project-dir-name token in title/presenter
-     (catches the `Lipida` typo from the project name `caulobacter_
-     fur_lipida_loss`); acknowledgments contributors not all-TBD.
+     title/presenter (P0, AUTO_POPULATE_TITLE remediation: reads
+     `<project_dir>/beril.yaml` authors[0] and splices into the title
+     slide); no project-dir-name LEAK in title (P1, TARGETED
+     remediation: operator rewrites — see followup below);
+     acknowledgments contributors not all-TBD (P1, AUTO_POPULATE_TITLE).
+
+     *Followup (Adam, 2026-06-07): the dirname-leak detector is
+     narrowed and downgraded.* The first cut of
+     `_contains_dirname_token` matched any single ≥5-char dir-segment
+     word (e.g. "Caulobacter"), which mis-fires on correct titles;
+     the paired `strip_dirname_token` auto-remediation would have
+     deleted the organism name. The narrowed rule fires only on
+     (a) the **verbatim full dir-name** as a substring, OR
+     (b) **≥2 adjacent dir-segments** together (e.g. "lipida loss"
+     from `caulobacter_fur_lipida_loss`). A lone "Caulobacter" or
+     "Loss" does not fire. The finding is now P1 + TARGETED (asks the
+     operator to rewrite the title); `AUTO_STRIP_DIRNAME_TOKEN` and
+     its handler are removed. Safe by construction; the cost of a
+     false-negative here is one finding the operator would have wanted
+     but didn't get, and we trade that for not destroying correct
+     titles.
   2. **G2 image_completeness** — every
      `working/05_image_requests/<sid>_request.json` resolves to
      either a PNG (success) or a manifest reject/skip entry

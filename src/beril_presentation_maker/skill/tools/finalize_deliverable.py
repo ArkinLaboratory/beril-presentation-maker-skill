@@ -35,9 +35,12 @@ The auto handlers below are minimal and safe-by-construction:
                               contributors), write spec back, request
                               a reassemble pass.
 
-  strip_dirname_token:        strip the project-directory name token
-                              from the title slide's title field, write
-                              spec back, request a reassemble pass.
+(v1.2.0 followup, 2026-06-07: `strip_dirname_token` was REMOVED. The
+earlier broader dirname detector matched single segment-words
+(e.g. "Caulobacter") in correct titles; auto-stripping would have
+deleted the organism name. The narrowed detector + downgrade to a P1
+TARGETED finding asks the operator to rewrite — safe by construction.
+See validate_deliverable._contains_dirname_token.)
 
 Reassemble is requested AT MOST once per finalize invocation even if
 multiple findings ask for it (idempotent: the result is the same).
@@ -46,7 +49,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -163,63 +165,12 @@ def _populate_from_beril_yaml(draft_dir: Path) -> tuple[bool, str]:
     )
 
 
-def _strip_dirname_token(draft_dir: Path) -> tuple[bool, str]:
-    """Auto-action strip_dirname_token.
-
-    Removes the project-directory name (and its distinctive ≥5-char
-    word-tokens) from the title slide's title field. Conservative: we
-    delete the token + collapse surrounding whitespace; we DO NOT
-    rewrite — if the result is empty/degenerate, leave the field as-is
-    and the populate_title path or operator-targeted command takes
-    over.
-    """
-    spec = _load_spec(draft_dir)
-    if spec is None:
-        return False, "slide_spec.json missing or unreadable"
-
-    import validate_deliverable as vd  # noqa: E402
-    dirname_token = vd._project_dir_token(draft_dir)
-    if not dirname_token:
-        return False, "project_dir not detectable; no token to strip"
-
-    title_slide = next(
-        (s for s in spec.get("slides", []) if s.get("layout") == "title"),
-        None,
-    )
-    if title_slide is None:
-        return False, "no title slide to strip"
-    content = title_slide.setdefault("content", {})
-    title = content.get("title") or ""
-    if not isinstance(title, str) or not title:
-        return False, "title is empty or non-string"
-    if not vd._contains_dirname_token(title, dirname_token):
-        return False, "title does not contain dirname token"
-
-    # Build the strip pattern: the full dirname (lower) + distinctive
-    # ≥5-char tokens. Match word-boundary, case-insensitive.
-    norm_token = dirname_token.lower()
-    tokens = re.split(r"[_\-.\s]+", norm_token)
-    distinctive = [t for t in tokens if len(t) >= 5]
-    patterns = [re.escape(norm_token)] + [re.escape(t) for t in distinctive]
-    pattern = "|".join(patterns)
-    new_title = re.sub(
-        rf"\b({pattern})\b",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    )
-    # Collapse double-spaces + trim leading/trailing punctuation.
-    new_title = re.sub(r"\s+", " ", new_title).strip(" ,.;:-—–")
-    if not new_title or new_title == title:
-        return False, (
-            "stripping the dirname token left an empty/unchanged title; "
-            "leaving as-is for operator review"
-        )
-    content["title"] = new_title
-    _write_spec(draft_dir, spec)
-    return True, (
-        f"stripped dirname token from title: {title!r} -> {new_title!r}"
-    )
+# v1.2.0 followup (Adam, 2026-06-07): _strip_dirname_token was
+# REMOVED. The earlier broader dirname detector matched a single
+# segment-word (e.g. "Caulobacter") in correct titles; auto-stripping
+# would have deleted the organism name. The narrowed detector +
+# downgrade to a P1 TARGETED finding asks the operator to rewrite —
+# safe by construction. See validate_deliverable._contains_dirname_token.
 
 
 def _reassemble(draft_dir: Path) -> tuple[bool, str]:
@@ -254,7 +205,6 @@ def _reassemble(draft_dir: Path) -> tuple[bool, str]:
 
 _AUTO_HANDLERS = {
     "populate_title_from_beril": _populate_from_beril_yaml,
-    "strip_dirname_token": _strip_dirname_token,
     "reassemble": _reassemble,
 }
 
@@ -307,7 +257,7 @@ def finalize(draft_dir: Path) -> dict:
     # picks up the new spec.
     spec_mutating = [
         a for a in requested_actions
-        if a in ("populate_title_from_beril", "strip_dirname_token")
+        if a == "populate_title_from_beril"
     ]
     will_reassemble = "reassemble" in requested_actions or bool(spec_mutating)
     ordered = list(spec_mutating)

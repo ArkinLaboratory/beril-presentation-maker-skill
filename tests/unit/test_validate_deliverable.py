@@ -310,10 +310,26 @@ def test_g1_tbd_presenter_fails_loud(tmp_path):
     assert presenter_finding.remediation.action == vd.AUTO_POPULATE_TITLE
 
 
-def test_g1_dirname_leak_in_title_fails_loud(tmp_path):
-    """The caulobacter `Lipida` typo: project dir is
-    `caulobacter_fur_lipida_loss`; the LLM hallucinated `Lipida` into
-    the title. P0; auto-remediable via strip_dirname_token."""
+# ---------------------------------------------------------------------------
+# G1 dirname-leak — narrowed detector + downgraded finding (Adam,
+# 2026-06-07 follow-up). The earlier broader rule mis-fired on a
+# correct "…Caulobacter…" title and would have led
+# strip_dirname_token to delete the organism name. New rule:
+#   (a) verbatim full dir-name as substring, OR
+#   (b) ≥2 ADJACENT dir-segments together (e.g. "lipida loss").
+# A single segment-word like "Caulobacter" must NOT fire.
+#
+# Severity: P1 (was P0). Remediation: TARGETED operator rewrite
+# (was AUTO_STRIP). No more auto-deleting words from titles.
+# ---------------------------------------------------------------------------
+
+
+def _build_caulobacter_draft(
+    tmp_path: Path, title: str,
+) -> Path:
+    """Helper: build a project with dir-name `caulobacter_fur_lipida_
+    loss` carrying a single title slide with the given title. Used
+    by every dirname-leak test below."""
     proj_dir = tmp_path / "projects" / "caulobacter_fur_lipida_loss"
     draft_dir = proj_dir / "talks" / "draft_1"
     for d in (draft_dir / "audit", draft_dir / "working" / "03_slides",
@@ -337,24 +353,97 @@ def test_g1_dirname_leak_in_title_fails_loud(tmp_path):
         "slides": [{
             "position": 1, "layout": "title",
             "content": {
-                "title": "Caulobacter Lipida response: novel findings",
+                "title": title,
                 "presenter": "Adam Arkin",
                 "affiliation": "LBNL", "date": "2026-06-07",
             },
         }],
     }
     _write_json(draft_dir / "working" / "slide_spec.json", spec)
+    return draft_dir
 
+
+def test_g1_dirname_leak_full_slug_fires_p1_targeted(tmp_path):
+    """Case (a): the verbatim full dir-name appears in the title.
+    Fires P1 with a TARGETED remediation. No auto-strip."""
+    draft_dir = _build_caulobacter_draft(
+        tmp_path,
+        title="Findings on caulobacter_fur_lipida_loss: a brief",
+    )
     findings = vd.check_g1_placeholder_or_leaked_template(
         draft_dir, vd._load_slide_spec(draft_dir))
-    leak_findings = [f for f in findings if "dirname_leak" in f.id]
-    assert leak_findings, (
-        f"expected g1:title_dirname_leak finding; got "
-        f"{[f.id for f in findings]}"
+    leak = [f for f in findings if "dirname_leak" in f.id]
+    assert len(leak) == 1, f"expected 1 leak finding, got {leak}"
+    assert leak[0].severity == vd.SEVERITY_P1
+    assert leak[0].remediation.kind == vd.REMEDIATION_TARGETED
+    # No auto-action — operator rewrites.
+    assert leak[0].remediation.action is None
+
+
+def test_g1_dirname_leak_adjacent_pair_fires_p1_targeted(tmp_path):
+    """Case (b): ≥2 adjacent dir-segments together. `lipida loss` is
+    the adjacent pair from `caulobacter_fur_lipida_loss`. Fires P1."""
+    draft_dir = _build_caulobacter_draft(
+        tmp_path,
+        title="Mechanisms of Lipida loss in Caulobacter crescentus",
     )
-    leak = leak_findings[0]
-    assert leak.severity == vd.SEVERITY_P0
-    assert leak.remediation.action == vd.AUTO_STRIP_DIRNAME_TOKEN
+    findings = vd.check_g1_placeholder_or_leaked_template(
+        draft_dir, vd._load_slide_spec(draft_dir))
+    leak = [f for f in findings if "dirname_leak" in f.id]
+    assert len(leak) == 1
+    assert leak[0].severity == vd.SEVERITY_P1
+    assert leak[0].remediation.kind == vd.REMEDIATION_TARGETED
+
+
+def test_g1_dirname_leak_three_adjacent_segments_fires(tmp_path):
+    """Window-≥2 check covers longer runs too: `fur lipida loss`."""
+    draft_dir = _build_caulobacter_draft(
+        tmp_path,
+        title="A study of fur lipida loss phenotypes",
+    )
+    findings = vd.check_g1_placeholder_or_leaked_template(
+        draft_dir, vd._load_slide_spec(draft_dir))
+    leak = [f for f in findings if "dirname_leak" in f.id]
+    assert len(leak) == 1
+    assert leak[0].severity == vd.SEVERITY_P1
+
+
+def test_g1_correct_caulobacter_title_passes_clean(tmp_path):
+    """Adam's regression case: a correct title containing only the
+    standalone organism name `Caulobacter` must NOT fire. The earlier
+    broader rule did, and the strip_dirname_token handler would have
+    deleted the word — destroying a correct title."""
+    draft_dir = _build_caulobacter_draft(
+        tmp_path,
+        title="Iron regulation in Caulobacter crescentus: a fur "
+              "regulon analysis",
+    )
+    findings = vd.check_g1_placeholder_or_leaked_template(
+        draft_dir, vd._load_slide_spec(draft_dir))
+    leak = [f for f in findings if "dirname_leak" in f.id]
+    assert leak == [], (
+        f"correct title must NOT fire dirname-leak; got {leak}. "
+        f"_contains_dirname_token is too broad; revisit narrowing rules."
+    )
+
+
+def test_g1_dirname_leak_single_other_segment_does_not_fire(tmp_path):
+    """A single occurrence of `Loss` (or `Lipida` or `Fur`) on its
+    own — without an adjacent dir-segment — must NOT fire. These are
+    common English/science terms; the v1.2.0-followup detector only
+    flags when the project-slug pattern is clearly being echoed."""
+    for word in ("Loss", "Lipida", "Fur"):
+        draft_dir = _build_caulobacter_draft(
+            tmp_path / word,
+            title=f"A note on {word} and protein dynamics",
+        )
+        findings = vd.check_g1_placeholder_or_leaked_template(
+            draft_dir, vd._load_slide_spec(draft_dir))
+        leak = [f for f in findings if "dirname_leak" in f.id]
+        assert leak == [], (
+            f"single segment-word {word!r} must NOT fire on its own; "
+            f"got {[(f.id, f.message) for f in leak]}"
+        )
 
 
 def test_g1_acknowledgments_all_tbd_fires(tmp_path):
@@ -723,39 +812,24 @@ def test_finalize_populate_title_from_beril_mutates_spec(tmp_path):
     assert new_presenter == "Adam Arkin"
 
 
-def test_finalize_strip_dirname_token_mutates_title(tmp_path):
-    """G1 dirname-leak → finalize strips the token; writes spec back."""
-    proj_dir = tmp_path / "projects" / "caulobacter_fur_lipida_loss"
-    draft_dir = proj_dir / "talks" / "draft_1"
-    for d in (draft_dir / "audit", draft_dir / "working" / "03_slides",
-              draft_dir / "deliverable"):
-        d.mkdir(parents=True, exist_ok=True)
-    (proj_dir / "beril.yaml").write_text(
-        "project_id: caulobacter_fur_lipida_loss\nauthors: []\n",
-        encoding="utf-8",
+def test_finalize_strip_dirname_handler_removed(tmp_path):
+    """v1.2.0 followup (Adam, 2026-06-07): the auto strip-dirname-token
+    handler is GONE. The finalize-deliverable dispatcher has no
+    `strip_dirname_token` key, and the validator never emits a finding
+    asking for it; dirname-leak is now P1 TARGETED (operator rewrites).
+    This test pins the removal so a future re-introduction trips."""
+    assert "strip_dirname_token" not in fd._AUTO_HANDLERS, (
+        "strip_dirname_token must NOT be in _AUTO_HANDLERS — auto-stripping "
+        "words from a title via fuzzy match is too destructive (see Adam, "
+        "2026-06-07). Dirname-leak is P1 targeted."
     )
-    spec = {
-        "schema_version": "slide_spec.v1", "project_id": "x",
-        "mode": "talk-30", "audience": "peer", "tier": "STRONG",
-        "slides": [{
-            "position": 1, "layout": "title",
-            "content": {
-                "title": "Caulobacter Lipida response: novel findings",
-                "presenter": "Adam Arkin", "affiliation": "LBNL",
-                "date": "2026-06-07",
-            },
-        }],
-    }
-    _write_json(draft_dir / "working" / "slide_spec.json", spec)
-
-    ok, msg = fd._strip_dirname_token(draft_dir)
-    assert ok, msg
-    spec2 = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
-    new_title = next(s for s in spec2["slides"]
-                     if s["layout"] == "title")["content"]["title"]
-    # The distinctive ≥5-char tokens (caulobacter, lipida) are stripped.
-    assert "caulobacter" not in new_title.lower()
-    assert "lipida" not in new_title.lower()
+    assert not hasattr(fd, "_strip_dirname_token"), (
+        "_strip_dirname_token helper must NOT exist on finalize_deliverable."
+    )
+    assert not hasattr(vd, "AUTO_STRIP_DIRNAME_TOKEN"), (
+        "AUTO_STRIP_DIRNAME_TOKEN constant must NOT exist on "
+        "validate_deliverable."
+    )
 
 
 def test_finalize_skips_reassemble_when_no_auto_actions(tmp_path):

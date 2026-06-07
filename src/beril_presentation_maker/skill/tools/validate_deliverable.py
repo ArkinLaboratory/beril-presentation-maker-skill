@@ -80,8 +80,9 @@ Each finding carries a `remediation` block keyed to cost:
   remediation.action ∈ {                         # auto-routes (kind=auto)
       "reassemble",                  # rerun assemble only (no LLM)
       "populate_title_from_beril",   # read beril.yaml, splice into spec
-      "strip_dirname_token",         # strip project-dir tokens from text
   }
+  (v1.2.0 followup, 2026-06-07: `strip_dirname_token` was removed —
+  see the AUTO_REASSEMBLE/AUTO_POPULATE_TITLE definitions for context.)
   remediation.command (kind=targeted) — exact bash/python invocation.
 
 DETECTION vs REMEDIATION. This module is the detection half ONLY.
@@ -131,9 +132,14 @@ REMEDIATION_ADVISORY = "advisory"
 REMEDIATION_KINDS = (REMEDIATION_AUTO, REMEDIATION_TARGETED, REMEDIATION_ADVISORY)
 
 # Auto-action vocabulary (only meaningful when kind == "auto").
+# v1.2.0 followup (Adam, 2026-06-07): `strip_dirname_token` was
+# REMOVED. Stripping words from a real title via fuzzy match is too
+# destructive — earlier dirname-leak detector mis-fired on a real
+# "…Caulobacter…" title and would have deleted the organism name.
+# Dirname-leak is now a P1 TARGETED finding that asks the operator
+# to rewrite (see check_g1 + _contains_dirname_token).
 AUTO_REASSEMBLE = "reassemble"
 AUTO_POPULATE_TITLE = "populate_title_from_beril"
-AUTO_STRIP_DIRNAME_TOKEN = "strip_dirname_token"
 
 # Figure aspect-ratio tolerance for G5. 5% slop accommodates EMU
 # pixel rounding without false-positiving on pillarboxed figures
@@ -292,33 +298,59 @@ def _is_tbd(value: str | None) -> bool:
 def _contains_dirname_token(
     value: str | None, dirname_token: str,
 ) -> bool:
-    """True iff `value` contains the project directory name as a
-    word (case-insensitive). The caulobacter `Lipida` typo came from
-    `caulobacter_fur_lipida_loss` — substring-match catches the
-    underscored form AND any tokenization the LLM does of it."""
+    """Strict dirname-leak detector. True iff `value` contains EITHER
+
+      (a) the verbatim full dir-name as a substring (case-insensitive),
+          e.g. `caulobacter_fur_lipida_loss` literally appears, OR
+      (b) at least TWO ADJACENT dir-segments appearing together with
+          any whitespace/separator between them — e.g. dir
+          `caulobacter_fur_lipida_loss` matches "lipida loss" or
+          "fur lipida loss" or "Caulobacter-fur" in the value.
+
+    What this DELIBERATELY does NOT match (Adam, 2026-06-07):
+      - A single dir-segment word like "Caulobacter" or "Loss" on its
+        own. Those are common organism/science terms that legitimately
+        appear in correct titles; an earlier broader rule mis-fired
+        on a real "…Caulobacter…" title and would have led
+        strip_dirname_token to delete the organism name.
+
+    A real leak is "the LLM regurgitated the project slug"; one
+    adjacent-segment-pair is the smallest signal you can call that
+    rather than coincidence. Substring + adjacent-pair-or-more is
+    strict enough to be safe; the cost of a false-negative here is
+    one finding the operator would have wanted but didn't get, and
+    we trade that for not destroying correct titles.
+    """
     if not value or not dirname_token:
         return False
-    # Normalize: lowercase + replace common separators (_ - .) with
-    # spaces, then check token-by-token AND substring (an LLM might
-    # have dropped 'lipida' verbatim from the dir-name's `_lipida_`
-    # segment without otherwise mentioning the project).
     norm_value = value.lower()
     norm_token = dirname_token.lower()
-    # Direct substring: catches `caulobacter_fur_lipida_loss` mentions.
+
+    # (a) Verbatim full dirname (any separator at the dir boundaries
+    #     also matches — the dir name is multi-segment and someone
+    #     pasting it usually keeps the underscores).
     if norm_token in norm_value:
         return True
-    # Token-by-token: catches per-segment leaks (`lipida` from
-    # `caulobacter_fur_lipida_loss`).
-    tokens = re.split(r"[_\-.\s]+", norm_token)
-    # Filter short stopword-like tokens — single chars + 'fur'/'loss'
-    # type 3-letter fragments are too noisy. The threshold is
-    # generous; segments worth flagging (a project, organism, or
-    # condition word) are usually ≥5 chars.
-    distinctive = [t for t in tokens if len(t) >= 5]
-    if not distinctive:
+
+    # (b) Adjacent segments. Split the dir on its native separators,
+    #     then check every pair of consecutive segments — joined with
+    #     ANY of (space, hyphen, underscore) — appears as a contiguous
+    #     case-insensitive substring of the value (also normalized to
+    #     collapse its own separators).
+    segments = [s for s in re.split(r"[_\-.\s]+", norm_token) if s]
+    if len(segments) < 2:
         return False
-    value_words = set(re.split(r"[^A-Za-z0-9]+", norm_value))
-    return any(t in value_words for t in distinctive)
+    # Normalize the value's separators the same way so "Lipida-Loss",
+    # "Lipida_Loss", "Lipida Loss" all match the dir's "lipida loss".
+    norm_value_collapsed = re.sub(r"[_\-.\s]+", " ", norm_value)
+    for i in range(len(segments) - 1):
+        # Match ≥2 consecutive segments. Extend the window to catch
+        # longer runs ("fur lipida loss") in addition to pairs.
+        for n in range(2, len(segments) - i + 1):
+            window = " ".join(segments[i:i + n])
+            if window in norm_value_collapsed:
+                return True
+    return False
 
 
 def check_g1_placeholder_or_leaked_template(
@@ -406,20 +438,28 @@ def check_g1_placeholder_or_leaked_template(
             findings.append(Finding(
                 id=f"g1:title_dirname_leak:{slide_id}",
                 gate=GATES[0],
-                severity=SEVERITY_P0,
+                severity=SEVERITY_P1,
                 slide_id_or_target=slide_id,
                 message=(
-                    f"G1: title contains project-directory token "
+                    f"G1: title contains the project-directory slug "
                     f"(dirname={dirname_token!r}, title={title_val!r}). "
-                    f"Likely an LLM hallucination of the project name "
-                    f"as a science term."
+                    f"The match is strict — either the full slug or "
+                    f"≥2 adjacent segments — so this is almost "
+                    f"certainly an LLM hallucination of the dir-name "
+                    f"as science terminology. NOT auto-remediated: "
+                    f"stripping words from a real title via fuzzy "
+                    f"match is too destructive; the operator should "
+                    f"rewrite the title."
                 ),
                 remediation=Remediation(
-                    kind=REMEDIATION_AUTO,
-                    action=AUTO_STRIP_DIRNAME_TOKEN,
+                    kind=REMEDIATION_TARGETED,
                     note=(
-                        "Strip dir-name tokens from the title; "
-                        "re-run assemble."
+                        "Edit working/slide_spec.json: in the title "
+                        "slide's content.title, rewrite the title to "
+                        "a publication-ready phrasing that does not "
+                        "echo the project-slug segments. Then re-run "
+                        "assemble — `beril-presentation-maker assemble "
+                        "<draft_dir>` — to refresh the deck."
                     ),
                 ),
             ))
