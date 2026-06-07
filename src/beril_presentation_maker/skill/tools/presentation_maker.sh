@@ -222,7 +222,11 @@ MODE_EXPLICIT=0      # v1.1.1/DP9: set by --mode; distinguishes "user picked tal
                      # working/slide_spec.json mode=talk-45 can recover the
                      # original mode without silently flipping a user override.
 TIER="STRONG"
+TIER_EXPLICIT=0      # v1.2.0/DP9b: paired with MODE_EXPLICIT (v1.1.1) — set
+                     # by --tier; lets user_intent.json distinguish "user
+                     # picked STRONG" from "shell defaulted to STRONG".
 AUDIENCE="peer"
+AUDIENCE_EXPLICIT=0  # v1.2.0/DP9b: same pattern.
 AUTO_ADVANCE=0
 SKIP_ASSEMBLY=0
 # --- Tier-alias defaults (CRAFT-CONTRACT §3.4 v2; canary at adversarial@37088d8) ---
@@ -519,8 +523,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --beril-root)        BERIL_ROOT_OVERRIDE="$2"; shift 2 ;;
     --mode)              MODE="$2"; MODE_EXPLICIT=1; shift 2 ;;
-    --tier)              TIER="$2"; shift 2 ;;
-    --audience)          AUDIENCE="$2"; shift 2 ;;
+    --tier)              TIER="$2"; TIER_EXPLICIT=1; shift 2 ;;
+    --audience)          AUDIENCE="$2"; AUDIENCE_EXPLICIT=1; shift 2 ;;
     --auto-advance)      AUTO_ADVANCE=1; shift ;;
     --skip-assembly)     SKIP_ASSEMBLY=1; shift ;;
     --model)             MODEL="$2"; MODEL_EXPLICIT=1; shift 2 ;;
@@ -1306,42 +1310,83 @@ if [[ -n "$RESUME_FROM" && "$RESUME_FROM" != "plan" ]]; then
   validate_resume_prereqs "$RESUME_FROM"
 fi
 
-# v1.1.1/DP9: on resume, recover the original run mode from
-# working/slide_spec.json if the user didn't re-pass --mode. The caulobacter
-# hub run (2026-06-07) was a talk-45 draft followed by `continue
-# --resume-from image_gen --auto-approve-images` without --mode; MODE
-# defaulted to talk-30 → image_gen_decision + qa_prep wrote talk-30 budgets
-# on top of a talk-45 deck. The persisted slide_spec.json mode IS the
-# resolved run mode for this draft; on resume it's authoritative.
+# v1.1.1/DP9 + v1.2.0/DP9b: on resume, recover the original run mode.
+# Source-of-truth precedence (most authoritative first):
+#   1. audit/user_intent.json — written by THIS shell on first entry
+#      (process 1 of a multi-process flow like the --pick handoff); the
+#      ONLY source that records "the user actually selected this" vs.
+#      "the shell defaulted." Present for the entire lifetime of a draft
+#      once written (process 1 writes before halting). DP9b: this is
+#      what catches the draft-path drop the v1.1.1 hotfix couldn't —
+#      slide_spec.json doesn't exist yet on a `--pick TLN` resume, but
+#      user_intent.json does.
+#   2. working/slide_spec.json — only exists after merge_compose_fragments
+#      runs (post-merge resumes only). v1.1.1 hotfix's source.
 #
-# Three cases:
-#   --mode explicit + slide_spec mode == MODE → silent: user is consistent.
-#   --mode explicit + slide_spec mode != MODE → fail loud: mode-flip on
-#     resume is almost always a bug (e.g. typo); force the user to pick.
-#   --mode default + slide_spec has a mode    → adopt slide_spec mode; log.
+# Four cases per source (we walk #1 then #2; first hit wins):
+#   --mode explicit + persisted == MODE → silent: user is consistent.
+#   --mode explicit + persisted != MODE → fail loud: mode-flip on
+#     resume is almost always a bug (typo); force the user to pick.
+#   --mode default + persisted present  → adopt persisted; log.
+#   --mode default + no persistence     → keep CLI default (legacy
+#     drafts pre-v1.2.0 won't have user_intent.json; silent.)
 if [[ -n "$RESUME_FROM" ]]; then
-  _slide_spec_path="$WORKING_DIR/slide_spec.json"
-  if [[ -f "$_slide_spec_path" ]]; then
-    _persisted_mode=$("$PYTHON_BIN" "$TOOLS_DIR/mode_consistency.py" \
+  _persisted_mode=""
+  _persisted_source=""
+  # Source #1: audit/user_intent.json (v1.2.0; primary).
+  _ui_mode=$("$PYTHON_BIN" "$TOOLS_DIR/user_intent.py" \
+    read "$OUTDIR" --field mode --fallback "")
+  _ui_explicit=$("$PYTHON_BIN" "$TOOLS_DIR/user_intent.py" \
+    explicit "$OUTDIR" --field mode)
+  if [[ -n "$_ui_mode" && "$_ui_explicit" == "1" ]]; then
+    _persisted_mode="$_ui_mode"
+    _persisted_source="audit/user_intent.json (user-explicit)"
+  fi
+  # Source #2: working/slide_spec.json (v1.1.1 hotfix; fallback for
+  # legacy pre-v1.2.0 drafts without user_intent.json).
+  if [[ -z "$_persisted_mode" && -f "$WORKING_DIR/slide_spec.json" ]]; then
+    _ss_mode=$("$PYTHON_BIN" "$TOOLS_DIR/mode_consistency.py" \
       resolve-mode "$OUTDIR" --fallback "")
-    if [[ -n "$_persisted_mode" ]]; then
-      if [[ $MODE_EXPLICIT -eq 1 ]]; then
-        if [[ "$MODE" != "$_persisted_mode" ]]; then
-          echo "Error: --mode '$MODE' conflicts with the persisted run mode" >&2
-          echo "       '$_persisted_mode' in $_slide_spec_path." >&2
-          echo "       Resume normally with no --mode (or --mode $_persisted_mode);" >&2
-          echo "       if you genuinely want to switch modes, start a new draft." >&2
-          exit 1
-        fi
-      else
-        if [[ "$MODE" != "$_persisted_mode" ]]; then
-          echo "[v1.1.1/DP9] resume mode resolved from slide_spec.json:" >&2
-          echo "             $MODE (CLI default) -> $_persisted_mode (persisted)" >&2
-          MODE="$_persisted_mode"
-        fi
-      fi
+    if [[ -n "$_ss_mode" ]]; then
+      _persisted_mode="$_ss_mode"
+      _persisted_source="working/slide_spec.json"
     fi
   fi
+  if [[ -n "$_persisted_mode" ]]; then
+    if [[ $MODE_EXPLICIT -eq 1 ]]; then
+      if [[ "$MODE" != "$_persisted_mode" ]]; then
+        echo "Error: --mode '$MODE' conflicts with the persisted run mode" >&2
+        echo "       '$_persisted_mode' in $_persisted_source." >&2
+        echo "       Resume normally with no --mode (or --mode $_persisted_mode);" >&2
+        echo "       if you genuinely want to switch modes, start a new draft." >&2
+        exit 1
+      fi
+    elif [[ "$MODE" != "$_persisted_mode" ]]; then
+      echo "[v1.2.0/DP9b] resume mode resolved from $_persisted_source:" >&2
+      echo "              $MODE (CLI default) -> $_persisted_mode (persisted)" >&2
+      MODE="$_persisted_mode"
+      MODE_EXPLICIT=1  # MODE now reflects user intent; downstream
+                       # writes inherit the explicit flag.
+    fi
+  fi
+fi
+
+# v1.2.0/DP9b: persist user intent (mode/tier/audience + explicit
+# sentinels) the moment we have a draft layout to write into. Idempotent
+# merge — process 1 sets the explicit flags; process 2 (`continue ...`)
+# typically passes defaults and the existing explicit values win. The
+# `write` subcommand exits 1 on an explicit-conflict (e.g. process 2
+# re-passes a DIFFERENT --mode), which we surface to the user. After
+# this point every downstream stage + the deliverable validator can
+# read audit/user_intent.json as the source of truth for "what did the
+# user actually pick."
+if ! "$PYTHON_BIN" "$TOOLS_DIR/user_intent.py" write "$OUTDIR" \
+    --mode "$MODE" --tier "$TIER" --audience "$AUDIENCE" \
+    --mode-explicit "$MODE_EXPLICIT" \
+    --tier-explicit "$TIER_EXPLICIT" \
+    --audience-explicit "$AUDIENCE_EXPLICIT"; then
+  echo "Error: user_intent write failed (likely an explicit-value conflict on resume; see above)." >&2
+  exit 1
 fi
 
 echo "==================================================================" >&2
@@ -3889,6 +3934,40 @@ else
   if [[ $NO_ADVERSARIAL -eq 1 ]]; then
     echo "[skip] adversarial_review + revise loop (--no-adversarial)" >&2
   fi
+fi
+
+# v1.2.0/Cycle-1 — pre-handoff deliverable validation (DP2).
+# Tier-1 deterministic gate: six checks over the produced deck +
+# working artifacts. Skipped on --skip-assembly (no deck to check)
+# and on poster modes (the gates assume a slide-deck shape).
+#
+# Detection (validate_deliverable.py) and remediation
+# (finalize_deliverable.py) live in SEPARATE modules per the brief —
+# detection is pure; remediation may mutate the spec + reassemble.
+# The pipeline ALWAYS produces the deliverable; READINESS is what
+# the validator reports.
+if [[ $SKIP_ASSEMBLY -eq 0 ]]; then
+  case "$MODE" in
+    poster-h|poster-v)
+      echo "[skip] validate_deliverable (mode=$MODE; poster gates not in scope)" >&2
+      ;;
+    *)
+      echo "" >&2
+      echo "[Final-1/2] validate_deliverable (Tier-1 deterministic gate)" >&2
+      _validate_rc=0
+      "$PYTHON_BIN" "$TOOLS_DIR/validate_deliverable.py" check "$OUTDIR" \
+        --print-findings >&2 || _validate_rc=$?
+      if [[ $_validate_rc -ne 0 ]]; then
+        echo "" >&2
+        echo "[Final-2/2] finalize_deliverable (apply auto-remediations + re-check)" >&2
+        # finalize exits 0 on post-remediation clean, 1 if findings
+        # remain. Either way the deliverable is preserved.
+        "$PYTHON_BIN" "$TOOLS_DIR/finalize_deliverable.py" finalize "$OUTDIR" >&2 || true
+      else
+        echo "  validate_deliverable: clean (no P0/P1 findings)" >&2
+      fi
+      ;;
+  esac
 fi
 
 # Final summary banner

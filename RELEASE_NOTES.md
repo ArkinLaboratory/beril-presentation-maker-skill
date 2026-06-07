@@ -1,5 +1,157 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v1.2.0 (2026-06-07) — Cycle 1: pre-handoff deliverable validation + DP9b fix
+
+**Minor release.** First CRAFT hardening-cycle deliverable. Adds a
+deterministic Tier-1 gate at the pre-handoff point that catches the
+silent omissions/defects v1.1.1 had to fix manually after they
+shipped — without discarding the deliverable or forcing an expensive
+re-run. Companion CRAFT re-pin (a small platform bump) delivers it.
+
+**Theory tested:** *a deterministic pre-handoff gate catches the
+silent omissions/defects that today only the human or adversarial
+review catches.* Test: regression fixtures per gate (drawn from the
+caulobacter live-run defects) all fail loud as expected; the
+hotfixed caulobacter deck passes clean.
+
+### New gates — `validate_deliverable` (6 checks)
+
+Runs after `revise_slides`/`visual_qa_final`, before the PIPELINE
+COMPLETE banner. Each gate maps to a real caulobacter defect class:
+
+  1. **G1 placeholder_or_leaked_template** — no TBD/blank in
+     title/presenter; no project-dir-name token in title/presenter
+     (catches the `Lipida` typo from the project name `caulobacter_
+     fur_lipida_loss`); acknowledgments contributors not all-TBD.
+  2. **G2 image_completeness** — every
+     `working/05_image_requests/<sid>_request.json` resolves to
+     either a PNG (success) or a manifest reject/skip entry
+     (explicit decline). Widens v1.1.1's stage-tail
+     `image_gen_orchestrate assert-requests-resolved` to the
+     deliverable boundary. Also: unbound `{TBD}` `image_path` on
+     `concept_illustration` slides → P0. (DP3)
+  3. **G3 slide_count_vs_budget** — count within
+     `MODE_SLIDE_BUDGETS[mode]`; advisory-only by design (a deck
+     slightly off-budget is rarely worth blocking on).
+  4. **G4 mode_vs_user_intent** — the load-bearing new gate. Every
+     artifact recording `mode` (slide_spec, 05_image_decisions,
+     qa_anticipated) must equal the user's **explicitly persisted
+     mode pick** (`audit/user_intent.json`). Cross-artifact agreement
+     alone (v1.1.1's `mode_consistency`) is NOT enough: caulobacter
+     had every artifact uniformly agree on talk-30 while the user
+     picked talk-45, so a uniformly-wrong deck passed clean. (DP9b)
+  5. **G5 figure_integrity** — every embedded picture's display AR ≈
+     native AR within 5%. Guards the v1.1.1/DP4 `_add_picture`
+     fit-preserve-aspect contract against regression.
+  6. **G6 figure_path_resolution** — every `content.figure` (and
+     `supporting_graphic` / `image_path`) referenced by slide_spec
+     resolves on disk via the same lookup logic `assemble_pptx`
+     uses (draft_dir first, then project_dir fallback).
+
+Findings emit to `audit/deliverable_validation.json` under the new
+**`deliverable-validation.v1`** schema, modeled on the existing
+`content-overflow.v1` / `layout-overlaps.v1` cascade-finding shape
+(id / gate / severity / slide_id_or_target / message / remediation).
+Projectable fields (`gate`, `severity`, `remediation.kind`) are
+tokens drawn from frozen vocabularies — telemetry-ready for the
+later cross-skill run-record contract (Cycle 2+) without a rewrite.
+
+### Never-discard remediation policy
+
+A blocking finding does NOT delete the deliverable or force a full
+re-run. Each finding carries a `remediation` block keyed to cost:
+
+- **auto** (deterministic, ~free) — `finalize_deliverable.py`
+  fixes it in place + re-checks. Three auto-actions:
+    - `populate_title_from_beril` — read project's `beril.yaml`,
+      splice `authors[0].name`/`affiliation` into the title slide's
+      presenter + into acknowledgments contributors.
+    - `strip_dirname_token` — strip the project-directory name (and
+      its ≥5-char word-tokens) from the title.
+    - `reassemble` — re-run `assemble_pptx.assemble()` against the
+      current spec; pulled in whenever a content-mutating action ran
+      or G5 explicitly requests it.
+- **targeted** (cheap one-stage re-run) — gate emits the exact
+  command; operator runs it. Never "re-run the pipeline."
+- **advisory** — surfaced, never blocks.
+
+The deliverable is ALWAYS produced; exit code reflects readiness;
+nothing expensive is recomputed; every blocker names its fix.
+
+**Detection / remediation separation.** Per the brief,
+`validate_deliverable.py` is pure read-only. `finalize_deliverable.py`
+is the mutator + re-validator. The orchestrator invokes detection,
+then remediation, then re-detection — all silently rc=0 if clean.
+
+### DP9b fix — the one generation-side change this cycle carries
+
+`presentation_maker.sh` now writes `audit/user_intent.json` the
+moment CLI args parse (with `mode_explicit` / `tier_explicit` /
+`audience_explicit` sentinels distinguishing "user picked this" from
+"shell defaulted to this"). On resume, the mode-recovery hook reads
+`user_intent.json` BEFORE `working/slide_spec.json` — closing the
+draft-path gap the v1.1.1 hotfix couldn't (slide_spec.json doesn't
+exist yet at `--pick TLN` resume time).
+
+The persistence layer is what makes Gate 4's "vs. user intent"
+question askable. Without it, the validator has no anchor to
+compare artifacts against.
+
+The persisted intent is idempotent across process boundaries:
+process 1 (the original `draft`) sets the explicit flags; process 2
+(the `continue --pick ...`) typically passes defaults and the
+existing explicit values win. If process 2 re-passes a DIFFERENT
+explicit value (e.g. `--mode talk-30` over a persisted talk-45
+explicit) → fail loud (mode-flips on resume are almost always a
+typo, not intent).
+
+### New files
+
+- `src/beril_presentation_maker/skill/tools/user_intent.py` —
+  DP9b persistence layer + `write` / `read` / `explicit` CLI.
+- `src/beril_presentation_maker/skill/tools/validate_deliverable.py`
+  — pure read-only 6-gate check + `deliverable-validation.v1` schema
+  + `check` CLI.
+- `src/beril_presentation_maker/skill/tools/finalize_deliverable.py`
+  — auto-remediation + re-validation + targeted-route emitter.
+- `tests/unit/test_validate_deliverable.py` — 32 tests (1 clean
+  fixture + per-gate regression fixtures from the live run + DP9b
+  user_intent + finalize handlers + schema-shape).
+
+### Modified files
+
+- `src/beril_presentation_maker/skill/tools/presentation_maker.sh` —
+  `MODE_EXPLICIT` / `TIER_EXPLICIT` / `AUDIENCE_EXPLICIT` sentinels +
+  resume-time mode recovery now reads user_intent.json first +
+  per-entry user_intent write + `validate_deliverable` /
+  `finalize_deliverable` stage call between revise/visual_qa and
+  the PIPELINE COMPLETE banner (skipped on `--skip-assembly` and
+  poster modes).
+- `pyproject.toml`, `src/beril_presentation_maker/__init__.py` —
+  version 1.1.1 → 1.2.0 (both files; CRAFT-sync gotcha).
+
+### Verification (CC-local)
+
+- pytest unit suite: **2093 pass** (2061 baseline + 32 new + 0
+  regression; 3 skipped — pre-existing fixture skips unrelated).
+- Ruff: clean on all CC-touched files.
+- CLI smoke: `validate_deliverable check <clean-fixture>` produces
+  the expected `deliverable_validation.json` envelope; exit code 1
+  on the dedicated G5-no-deck finding (correct: fixture has no
+  rendered .pptx); exit 0 when the deck is present.
+- Live verification gates (Cowork: run the gate against the
+  caulobacter deck → clean; against doctored fixtures per gate →
+  each fails loud) and the hub re-run (Adam) remain external.
+
+### Git disposition
+
+Commit-local on `beril-presentation-maker` main; NOT pushed, NOT
+tagged. Cowork verifies independently; Adam pushes + tags v1.2.0;
+then a CRAFT re-pin (suggest `v0.3.2`, or fold into next coordinated
+release) delivers it.
+
+---
+
 ## v1.1.1 (2026-06-07) — caulobacter-hub-run hotfix (DP4 / DP3 / DP9 / assemble path)
 
 **Patch release.** Four root-caused defects from the first real hub
