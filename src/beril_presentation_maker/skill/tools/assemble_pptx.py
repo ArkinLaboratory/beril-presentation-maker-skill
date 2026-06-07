@@ -1054,12 +1054,45 @@ def _set_speaker_notes(slide, text: str) -> None:
 def _add_picture(slide, image_path: Path,
                  left_in: float, top_in: float,
                  width_in: float, height_in: float):
-    """Add a picture at the given inches-position. Returns the picture shape."""
-    return slide.shapes.add_picture(
+    """Add a picture fit-within-box preserving aspect, then center in the box.
+
+    v1.1.1/DP4 fix. Pre-v1.1.1 this passed BOTH width and height to
+    python-pptx's add_picture, which STRETCHES the image to the box
+    (every figure forced to the FIGURE_REGIONS box aspect — measured
+    skew 2.2×-4.5× on the caulobacter deck). The replacement:
+
+      1. Add with width= only — python-pptx sets height to preserve
+         the source image's aspect ratio.
+      2. If the resulting picture is taller than the box, rescale to
+         the box height — preserving aspect (height-limited).
+      3. Center the (now smaller-or-equal) picture in the original box
+         so the surrounding region geometry is unchanged.
+
+    The visual outcome is pillarboxing (portrait-ish into wide box) or
+    letterboxing (wide-ish into square box) — correct-but-smaller
+    rather than distorted. A follow-on aspect-aware layout choice
+    (e.g. pick `claim_evidence` for portrait figures) is a Cycle-1+
+    item; this fix is the no-distortion floor.
+
+    Returns the picture shape.
+    """
+    pic = slide.shapes.add_picture(
         str(image_path),
         Inches(left_in), Inches(top_in),
-        width=Inches(width_in), height=Inches(height_in),
+        width=Inches(width_in),
     )
+    box_h_emu = Inches(height_in)
+    if pic.height > box_h_emu:
+        # Height-limited: scale the picture so its height fits the box,
+        # preserving aspect via the same ratio applied to width.
+        ratio = box_h_emu / pic.height
+        pic.width = int(pic.width * ratio)
+        pic.height = box_h_emu
+    # Center within the original (left, top, width, height) box.
+    box_w_emu = Inches(width_in)
+    pic.left = Inches(left_in) + (box_w_emu - pic.width) // 2
+    pic.top = Inches(top_in) + (box_h_emu - pic.height) // 2
+    return pic
 
 
 def _add_textbox(slide, text: str,

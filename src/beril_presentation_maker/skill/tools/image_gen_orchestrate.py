@@ -252,6 +252,84 @@ def record_skipped(
 
 
 # --------------------------------------------------------------------------
+# v1.1.1/DP3 fail-loud check
+# --------------------------------------------------------------------------
+
+def find_unresolved_requests(paths: dp.DraftPaths) -> list[str]:
+    """Return slide_ids whose request.json exists but neither a PNG
+    nor a manifest-recorded reject/skip entry exists.
+
+    DP3 root cause (caulobacter 2026-06-07): the ai_image_prompt stage
+    wrote `05_image_requests/S4-pos3_request.json` and the approval
+    gate auto-approved (`--auto-approve-images`), but generation
+    never produced `05_images/S4-pos3.png` AND no rejection record
+    was written. The silent miss read as success: the deck rendered
+    with the slide's stock figure instead of the requested AI image,
+    and audit/stage-metadata.json had no signal.
+
+    The fail-loud rule: every request file MUST resolve to one of
+        (a) the matching PNG in 05_images/  (the success path), OR
+        (b) a manifest entry for that slide_id with approved=False
+            (the explicit rejection / skip path).
+    Anything else is `image_requested_but_not_produced`. Returns the
+    list of unresolved slide_ids; caller decides exit code.
+    """
+    image_requests_dir = paths.image_requests_dir
+    if not image_requests_dir.is_dir():
+        return []
+
+    # Build the set of manifest slide_ids that are known-rejected/skipped
+    # (i.e. legitimately have no PNG). approved=True entries don't need
+    # to appear here — the PNG check below catches them as resolved.
+    accounted_in_manifest: set[str] = set()
+    if paths.image_manifest_json.is_file():
+        manifest = igm.Manifest.load(paths.image_manifest_json)
+        for entry in manifest.entries:
+            if not entry.get("approved", False):
+                sid = entry.get("slide_id")
+                if isinstance(sid, str):
+                    accounted_in_manifest.add(sid)
+
+    unresolved: list[str] = []
+    for request_path in sorted(image_requests_dir.glob("*_request.json")):
+        # Slide id from filename: `S4-pos3_request.json` → `S4-pos3`.
+        sid = request_path.stem[: -len("_request")]
+        png_path = paths.images_dir / f"{sid}.png"
+        if png_path.is_file():
+            continue
+        if sid in accounted_in_manifest:
+            continue
+        unresolved.append(sid)
+    return unresolved
+
+
+def _cmd_assert_requests_resolved(args: argparse.Namespace) -> int:
+    """CLI: fail loud (exit 1) if any request lacks a PNG and a manifest
+    reject/skip entry. Exit 0 when every request is accounted for.
+    Used by the bash orchestrator at the tail of stage_image_gen."""
+    paths = dp.DraftPaths.from_draft_dir(args.draft_dir)
+    unresolved = find_unresolved_requests(paths)
+    if not unresolved:
+        return 0
+    print(
+        f"image_gen_orchestrate: FAIL — {len(unresolved)} image "
+        f"request(s) wrote a prompt but produced no PNG and no manifest "
+        f"reject/skip entry (image_requested_but_not_produced):",
+        file=sys.stderr,
+    )
+    for sid in unresolved:
+        print(f"  - {sid}", file=sys.stderr)
+    print(
+        "  Likely cause: image_client.py was never invoked, or it "
+        "exited without raising the failure path. Re-run image_gen "
+        "(beril-presentation-maker continue <draft_dir> --resume-from "
+        "image_gen) after diagnosing.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -435,6 +513,16 @@ def main(argv=None) -> int:
     p_mut.add_argument("--channel", required=True, choices=("A", "B"))
     p_mut.add_argument("--approved-at", required=True)
     p_mut.set_defaults(func=_cmd_mutate_fragment_bind)
+
+    p_assert = sub.add_parser(
+        "assert-requests-resolved",
+        help=("v1.1.1/DP3 fail-loud: every 05_image_requests/*.json must "
+              "either produce a 05_images/<sid>.png OR have a manifest "
+              "reject/skip entry. Exit 1 with a list of unresolved "
+              "slide_ids on mismatch."),
+    )
+    p_assert.add_argument("--draft-dir", required=True)
+    p_assert.set_defaults(func=_cmd_assert_requests_resolved)
 
     args = p.parse_args(argv)
     return args.func(args)

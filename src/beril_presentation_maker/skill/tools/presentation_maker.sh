@@ -217,6 +217,10 @@ set -euo pipefail
 PROJECT_ID=""
 BERIL_ROOT_OVERRIDE=""
 MODE="talk-30"
+MODE_EXPLICIT=0      # v1.1.1/DP9: set by --mode; distinguishes "user picked talk-30"
+                     # from "defaulted to talk-30" so a resume that finds
+                     # working/slide_spec.json mode=talk-45 can recover the
+                     # original mode without silently flipping a user override.
 TIER="STRONG"
 AUDIENCE="peer"
 AUTO_ADVANCE=0
@@ -514,7 +518,7 @@ fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --beril-root)        BERIL_ROOT_OVERRIDE="$2"; shift 2 ;;
-    --mode)              MODE="$2"; shift 2 ;;
+    --mode)              MODE="$2"; MODE_EXPLICIT=1; shift 2 ;;
     --tier)              TIER="$2"; shift 2 ;;
     --audience)          AUDIENCE="$2"; shift 2 ;;
     --auto-advance)      AUTO_ADVANCE=1; shift ;;
@@ -1300,6 +1304,44 @@ validate_resume_prereqs() {
 }
 if [[ -n "$RESUME_FROM" && "$RESUME_FROM" != "plan" ]]; then
   validate_resume_prereqs "$RESUME_FROM"
+fi
+
+# v1.1.1/DP9: on resume, recover the original run mode from
+# working/slide_spec.json if the user didn't re-pass --mode. The caulobacter
+# hub run (2026-06-07) was a talk-45 draft followed by `continue
+# --resume-from image_gen --auto-approve-images` without --mode; MODE
+# defaulted to talk-30 → image_gen_decision + qa_prep wrote talk-30 budgets
+# on top of a talk-45 deck. The persisted slide_spec.json mode IS the
+# resolved run mode for this draft; on resume it's authoritative.
+#
+# Three cases:
+#   --mode explicit + slide_spec mode == MODE → silent: user is consistent.
+#   --mode explicit + slide_spec mode != MODE → fail loud: mode-flip on
+#     resume is almost always a bug (e.g. typo); force the user to pick.
+#   --mode default + slide_spec has a mode    → adopt slide_spec mode; log.
+if [[ -n "$RESUME_FROM" ]]; then
+  _slide_spec_path="$WORKING_DIR/slide_spec.json"
+  if [[ -f "$_slide_spec_path" ]]; then
+    _persisted_mode=$("$PYTHON_BIN" "$TOOLS_DIR/mode_consistency.py" \
+      resolve-mode "$OUTDIR" --fallback "")
+    if [[ -n "$_persisted_mode" ]]; then
+      if [[ $MODE_EXPLICIT -eq 1 ]]; then
+        if [[ "$MODE" != "$_persisted_mode" ]]; then
+          echo "Error: --mode '$MODE' conflicts with the persisted run mode" >&2
+          echo "       '$_persisted_mode' in $_slide_spec_path." >&2
+          echo "       Resume normally with no --mode (or --mode $_persisted_mode);" >&2
+          echo "       if you genuinely want to switch modes, start a new draft." >&2
+          exit 1
+        fi
+      else
+        if [[ "$MODE" != "$_persisted_mode" ]]; then
+          echo "[v1.1.1/DP9] resume mode resolved from slide_spec.json:" >&2
+          echo "             $MODE (CLI default) -> $_persisted_mode (persisted)" >&2
+          MODE="$_persisted_mode"
+        fi
+      fi
+    fi
+  fi
 fi
 
 echo "==================================================================" >&2
@@ -2471,6 +2513,17 @@ kind='qa_anticipated_set' to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/qa_prep.v1.md" \
     "$user_prompt" "$fragment_path" "qa_prep"
+
+  # v1.1.1/DP9: assert the qa fragment's mode matches the run mode.
+  # Catches the talk-30/talk-45 mismatch that surfaced on the
+  # caulobacter run (qa_anticipated.json wrote talk-30 while
+  # slide_spec.json was talk-45). Fail loud — silent mismatch
+  # under-budgets the Q&A set.
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/mode_consistency.py" check-consistency \
+      "$OUTDIR" --run-mode "$MODE"; then
+    echo "  qa_prep mode-consistency check failed (see findings above)." >&2
+    return 1
+  fi
 }
 
 stage_speaker_notes() {
@@ -2634,6 +2687,16 @@ stage_image_gen() {
       --out "$IMAGE_DECISIONS_JSON"; then
     echo "  image_gen_decision failed; skipping image-gen stage" >&2
     return 0
+  fi
+
+  # v1.1.1/DP9: assert 05_image_decisions.json's mode matches the run
+  # mode. The decision envelope just written carries `mode`; if it
+  # disagrees with $MODE the resume-from path silently shadowed the
+  # original mode (caulobacter run, 2026-06-07). Fail loud.
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/mode_consistency.py" check-consistency \
+      "$OUTDIR" --run-mode "$MODE"; then
+    echo "  image_gen_decision mode-consistency check failed; aborting stage" >&2
+    return 1
   fi
 
   # 2. Enumerate emit=true slide_ids. Empty list → nothing to do.
@@ -2876,6 +2939,17 @@ they don't state the answer."
 
   echo "" >&2
   echo "  image_gen summary: $n_approved approved, $n_rejected rejected, $n_skipped skipped" >&2
+
+  # v1.1.1/DP3: fail-loud cross-check — every 05_image_requests/*.json
+  # must EITHER produce a 05_images/<sid>.png OR have a manifest
+  # reject/skip entry. A bare request with no PNG and no manifest entry
+  # is image_requested_but_not_produced (caulobacter 2026-06-07 mode).
+  if ! "$PYTHON_BIN" "$TOOLS_DIR/image_gen_orchestrate.py" \
+      assert-requests-resolved --draft-dir "$OUTDIR"; then
+    echo "  image_gen FAIL: orphan image request(s) detected; aborting" >&2
+    return 1
+  fi
+
   return 0
 }
 

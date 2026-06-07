@@ -1,5 +1,115 @@
 # beril-presentation-maker-skill — Release Notes
 
+## v1.1.1 (2026-06-07) — caulobacter-hub-run hotfix (DP4 / DP3 / DP9 / assemble path)
+
+**Patch release.** Four root-caused defects from the first real hub
+run (caulobacter_fur_lipida_loss, talk-45) — all in
+beril-presentation-maker, all bug-fixes only (no schema or behavior
+change beyond closing the bugs). The validators that would *catch*
+these are CRAFT hardening Cycle 1; this ships the fixes themselves.
+Independent of CRAFT v0.3.0; CRAFT v0.3.1 re-pins to deliver it.
+
+**Fix 1 — DP4: figure distortion (every figure stretched).**
+`assemble_pptx._add_picture` called `slide.shapes.add_picture(...,
+width=..., height=...)` passing BOTH dimensions, which forces
+python-pptx to STRETCH the image to the box. Every figure was forced
+to the FIGURE_REGIONS box aspect; `data_figure` is 3.16:1, so figures
+skewed 2.2×–4.5× (portrait fig on caulobacter slide 25 skewed 4.5×).
+Fix: pass `width=` only (preserves aspect from the source), clamp
+height to box_h if it exceeds (rescaling width proportionally), and
+center the resulting picture in the original box (letter/pillarbox).
+Applied at the single `_add_picture` site → every layout that calls
+it benefits (claim_evidence / big_idea / data_figure /
+concept_illustration / acknowledgments funder_logos). A follow-on
+aspect-aware layout choice (e.g. send portrait figures to
+claim_evidence) is a Cycle-1+ item; this is the no-distortion floor.
+
+**Fix 2 — DP3: AI image prompt written but never generated.**
+On the caulobacter run, `ai_image_prompt-S4-pos3` produced
+`working/05_image_requests/S4-pos3_request.json` and the approval
+gate auto-approved (`--auto-approve-images`), but
+`working/05_images/` was empty AND no manifest reject/skip entry
+recorded the loss — silent. The image_client wiring itself is intact
+(stage_image_gen → APPROVE → `_generate_and_record_image` →
+image_client); the defect was that nothing detected the orphan
+request. Fix: new `image_gen_orchestrate.py assert-requests-resolved`
+subcommand asserts every `05_image_requests/*.json` resolves to
+either a `05_images/<sid>.png` (approved path) or a manifest entry
+with `approved=False` (rejected/skipped path); anything else is
+`image_requested_but_not_produced`. Wired into `stage_image_gen` at
+the tail — orphan requests fail the stage (exit 1) instead of
+silently passing.
+
+**Fix 3 — DP9: run mode not propagated to all stages.**
+The caulobacter run was talk-45, but `working/05_image_decisions.json`
++ `working/03_slides/qa_anticipated.json` both recorded `mode:
+talk-30`. Root cause: `presentation_maker.sh` defaults `MODE=talk-30`
+unconditionally; `continue --resume-from image_gen
+--auto-approve-images` (without `--mode talk-45` re-passed) left MODE
+at the smaller default → image_gen_decision + qa_prep wrote talk-30
+budgets on top of a talk-45 deck (under-sized Q&A set + image
+affordances; deck landed at 37 slides, low end of the talk-45 35–48
+budget). Two-layer fix:
+1. **Shell:** on `--resume-from`, recover MODE from
+   `working/slide_spec.json` if `--mode` wasn't explicitly re-passed.
+   If `--mode` IS explicit but conflicts with the persisted mode →
+   fail loud (mode-flip on resume is almost always a typo, not an
+   intent).
+2. **Consistency assertion:** new `mode_consistency.py
+   check-consistency` walks the three artifacts that record `mode`
+   (`working/slide_spec.json`, `working/05_image_decisions.json`,
+   `working/03_slides/qa_anticipated.json`) and asserts they all
+   equal the run mode. Missing artifacts skip silently; a present-
+   but-different mode fails loud with a finding per artifact. Wired
+   into `stage_image_gen` (right after emit-decisions writes) and
+   `stage_qa_prep` (right after the LLM writes qa_anticipated.json).
+
+**Fix 4 — `assemble` reads the 4-zone path first.**
+`assemble <draft_dir>` only read `<draft_dir>/slide_spec.json` (the
+pre-v0.3.1 flat layout) while the pipeline writes
+`<draft_dir>/working/slide_spec.json` (CRAFT-CONTRACT §3.1 4-zone) —
+the caulobacter operator had to manually copy the spec to render.
+Fix: resolve `working/slide_spec.json` first; fall back to the flat
+path for backward-compat. Output goes to `deliverable/draft.pptx`
+when the 4-zone `deliverable/` directory exists; else to
+`<draft_dir>/draft.pptx` (legacy flat). `--out` always overrides.
+
+**New files (CC-introduced):**
+- `src/beril_presentation_maker/skill/tools/mode_consistency.py` —
+  `resolve-mode` + `check-consistency` CLI helpers for DP9.
+- `tests/unit/test_v1_1_1_hotfixes.py` — 30 unit tests across all
+  four fixes (DP4 aspect math 5 tests; DP3 fail-loud 6 tests;
+  DP9 resolve + check + CLI 14 tests; Fix-4 path resolution 4 tests
+  + 1 module-load helper).
+
+**Modified files:**
+- `src/beril_presentation_maker/skill/tools/assemble_pptx.py` —
+  `_add_picture` body rewritten (~30 lines).
+- `src/beril_presentation_maker/skill/tools/image_gen_orchestrate.py`
+  — new `find_unresolved_requests` + `assert-requests-resolved` CLI
+  subcommand.
+- `src/beril_presentation_maker/skill/tools/presentation_maker.sh` —
+  MODE_EXPLICIT sentinel + resume-time mode recovery hook + 3
+  consistency-assertion sites + DP3 tail check.
+- `src/beril_presentation_maker/commands/assemble.py` — path
+  resolution helper + 4-zone deliverable/ output preference.
+- `pyproject.toml`, `src/beril_presentation_maker/__init__.py` —
+  version 1.1.0 → 1.1.1 (both files, per the CRAFT-sync gotcha
+  pinned in v1.1.0).
+
+**Verification:** pytest unit suite green (2061 pass — 2031 baseline
++ 30 new + 0 regression). Ruff clean on all CC-touched files. The
+live verification gates (re-assemble the caulobacter deck +
+independent aspect / image-landed / mode-propagation checks) are
+Cowork's; the live hub re-run (DP3/DP9 end-to-end through real
+`claude -p` + gemini) is Adam's.
+
+**Git disposition:** commit-local on `beril-presentation-maker` main;
+NOT pushed, NOT tagged. Cowork's verification + Adam's tag come next;
+then CRAFT v0.3.1 re-pins.
+
+---
+
 ## v1.1.0 (2026-06-06) — CRAFT runtime-config standardization (§3.4)
 
 **Coordinated CRAFT release.** Ships the CRAFT runtime-config arc
