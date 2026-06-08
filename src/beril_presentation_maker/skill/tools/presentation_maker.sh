@@ -1244,7 +1244,20 @@ RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 finalize_run_on_exit() {
   local rc=$?
   if [[ -d "$OUTDIR/audit" ]]; then
+    # Legacy run-summary.v1 + stage-metadata.v1 (kept for back-compat
+    # this cycle; deprecate in a later cleanup once consumers read
+    # only the new run-record.v1).
     "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" write \
+      --draft-dir "$OUTDIR" \
+      --exit-code "$rc" \
+      --started-at "$RUN_STARTED_AT" \
+      2>/dev/null || true
+    # Cycle 3 / DP1: cross-skill run-record.v1. The finalize guard
+    # inside record-finalize refuses to overwrite a status=halted
+    # record — a process exit AT a halt-gate (e.g. the throughline-
+    # pick gate calls record-halt right before exiting) MUST stay
+    # halted across this trap.
+    "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" record-finalize \
       --draft-dir "$OUTDIR" \
       --exit-code "$rc" \
       --started-at "$RUN_STARTED_AT" \
@@ -1388,6 +1401,18 @@ if ! "$PYTHON_BIN" "$TOOLS_DIR/user_intent.py" write "$OUTDIR" \
   echo "Error: user_intent write failed (likely an explicit-value conflict on resume; see above)." >&2
   exit 1
 fi
+
+# Cycle 3 / DP1: write the initial run_record.json (status=running).
+# Subsequent record-stage calls at each stage boundary append entries;
+# record-halt at a halt-gate flips status=halted; trap-EXIT
+# record-finalize finalizes terminal runs (or preserves halted state
+# via the guard). On a resume, this allocates the NEXT run-N (no
+# clobber) — the prior run's record was already canonicalized in its
+# own trap-EXIT.
+"$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" record-start \
+  --draft-dir "$OUTDIR" \
+  --started-at "$RUN_STARTED_AT" \
+  2>/dev/null || true
 
 echo "==================================================================" >&2
 echo "BERIL Presentation Maker — Smoke Run" >&2
@@ -1555,6 +1580,35 @@ ${base_user_prompt}"
   return 1
 }
 
+# Cycle 3 / DP1: record one stage boundary into run_record.json. The
+# orchestrator is the single source of truth for the stage ENUM +
+# ordering (it names $1); per-stage VALUES come from the artifacts the
+# stage wrote (the sidecar / image_provenance). Always non-fatal — a
+# telemetry write must never break the pipeline.
+#
+# Usage:
+#   _record_stage <stage_id> [<status>] [extra args to record-stage...]
+#     <status> defaults to "completed".
+#   LLM stage:      _record_stage plan completed --from-sidecar "$PLAN_PATH.metadata.json"
+#   non-LLM stage:  _record_stage curate_figures
+#   image_gen:      _record_stage image_gen completed \
+#                     --from-sidecar <prompt-sidecar> \
+#                     --image-provenance "$IMAGE_PROVENANCE_JSON"
+# started_at/finished_at are derived by the emitter (finished=now;
+# started=finished − sidecar elapsed) so we don't thread a T0 here.
+_record_stage() {
+  local stage_id="$1"; shift
+  local status="${1:-completed}"
+  if [[ $# -gt 0 ]]; then shift; fi
+  [[ -d "$OUTDIR/audit" ]] || return 0
+  "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" record-stage \
+    --draft-dir "$OUTDIR" \
+    --stage "$stage_id" \
+    --status "$status" \
+    "$@" \
+    2>/dev/null || true
+}
+
 # ==============================================================================
 # Stages
 # ==============================================================================
@@ -1576,6 +1630,10 @@ Build the critical-analysis inventory and seed 2-3 throughline candidates. \
 Write the result to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/plan.v1.md" "$user_prompt" "$out" "plan"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage plan completed \
+    --from-sidecar "$out.metadata.json"
+  return $rc
 }
 
 stage_throughline() {
@@ -1594,6 +1652,10 @@ and seed candidates. Produce 2-3 throughline candidates with evidence \
 maps. Write the result to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/throughline.v1.md" "$user_prompt" "$out" "throughline"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage throughline_candidates completed \
+    --from-sidecar "$out.metadata.json"
+  return $rc
 }
 
 # Throughline pick gate. v0.3.6 (2026-05-05): replaced TTY-blocking
@@ -1640,6 +1702,21 @@ gate_throughline_pick() {
     echo "Error: failed to emit throughline handoff" >&2
     return 1
   }
+
+  # Cycle 3 / DP1: flip run_record.json status=halted BEFORE exit.
+  # This is the correctness lynchpin from the brief: the trap-EXIT
+  # finalize_run_on_exit will see status=halted via the finalize
+  # guard and refuse to overwrite — without this call, the trap
+  # would demote the halted run to completed (exit_code=0). The
+  # gate name (`throughline_pick`) becomes a `status:running` stage
+  # entry so the validator's referential check passes; resume's
+  # record-start allocates a new run and the halted record stays
+  # archived under runs/run-N/.
+  "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" record-halt \
+    --draft-dir "$OUTDIR" \
+    --gate "throughline_pick" \
+    --started-at "$RUN_STARTED_AT" \
+    2>/dev/null || true
 
   echo "" >&2
   echo "==================================================================" >&2
@@ -1745,6 +1822,10 @@ mode-capacity verdict. If overflow, surface the three options and halt. \
 Write the result to OUT_PATH."
 
   invoke_claude_with_retry "$(_substory_design_prompt_path)" "$user_prompt" "$out" "substory_design"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage substory_design completed \
+    --from-sidecar "$out.metadata.json"
+  return $rc
 }
 
 # v0.4 M3 (V0_4_ARCHITECTURE.md §16 M3 / §20.8; M3_PUNCH_LIST.md Tier A;
@@ -1770,6 +1851,10 @@ stage_phase0_tooling() {
       > "$log" 2>&1; then
     sed 's/^/    /' "$log" >&2
     echo "  -> Phase-0 artifacts ready under $PHASE0_DIR" >&2
+    # Fold the ORIGINATE-path LLM cost (extract_claims) from
+    # audit/phase0.jsonl; $0 on a reuse-only run.
+    _record_stage phase0_tooling completed \
+      --from-phase0-jsonl "$AUDIT_DIR/phase0.jsonl"
     return 0
   else
     local rc=$?
@@ -1823,6 +1908,10 @@ overflow, surface the options and halt (D-027). Write the result to \
 OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/deck_outline.v1.md" "$user_prompt" "$out" "deck_outline"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage deck_outline completed \
+    --from-sidecar "$out.metadata.json"
+  return $rc
 }
 
 # Audit divider punchline lengths against the soft 14-word cap.
@@ -1965,11 +2054,13 @@ stage_curate_figures() {
         cat "$STAGE_LOGS_DIR/check_curator_figure_floor.stderr" >&2 || true
       fi
     fi
+    _record_stage curate_figures completed  # non-LLM, zero-cost
     return 0
   else
     echo "  warning: curate_figures.py exited non-zero — see $STAGE_LOGS_DIR/curate_figures.stderr" >&2
     cat "$STAGE_LOGS_DIR/curate_figures.stderr" >&2 || true
     # Don't fail the run; figures are an enrichment, not a blocker
+    _record_stage curate_figures skipped  # ran but produced nothing usable
     return 0
   fi
 }
@@ -2022,6 +2113,10 @@ JSON to POOL_JSON_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/citation_pool.v1.md" \
     "$user_prompt" "$pool_path" "citation_pool"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage citation_pool completed \
+    --from-sidecar "$pool_path.metadata.json"
+  return $rc
 }
 
 stage_cross_tenant() {
@@ -2065,6 +2160,7 @@ except Exception as e:
 
   if [[ "$has_signal" != "true" ]]; then
     echo "  no cross-tenant signal detected — skipping LLM call" >&2
+    _record_stage cross_tenant skipped  # no signal → no LLM call
     return 0
   fi
 
@@ -2088,6 +2184,10 @@ as a JSON fragment with kind='cross_tenant_set' to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/cross_tenant.v1.md" \
     "$user_prompt" "$fragment_path" "cross_tenant"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage cross_tenant completed \
+    --from-sidecar "$fragment_path.metadata.json"
+  return $rc
 }
 
 stage_deck_close() {
@@ -2116,6 +2216,7 @@ stage_deck_close() {
 
   if [[ "$MODE" != "talk-30" ]]; then
     echo "  mode=$MODE — deck_close is optional below talk-30 STRONG (D-086); skipping" >&2
+    _record_stage deck_close skipped  # mode-gated off below talk-30
     return 0
   fi
 
@@ -2159,6 +2260,7 @@ except Exception:
   "slides": []
 }
 EOF
+    _record_stage deck_close skipped  # no signal → empty fragment, no LLM
     return 0
   fi
 
@@ -2184,6 +2286,10 @@ JSON fragment with kind='deck_close_set' to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/deck_close.v1.md" \
     "$user_prompt" "$fragment_path" "deck_close"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage deck_close completed \
+    --from-sidecar "$fragment_path.metadata.json"
+  return $rc
 }
 
 stage_intro() {
@@ -2210,6 +2316,7 @@ stage_intro() {
   "slides": []
 }
 EOF
+    _record_stage intro skipped  # mode has zero intro budget
     return 0
   fi
 
@@ -2229,6 +2336,10 @@ derivable from RESEARCH_PLAN; numbers verbatim from REPORT. No \
 marketing voice. Write the result to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/intro.v1.md" "$user_prompt" "$out" "intro"
+  local rc=$?
+  [[ $rc -eq 0 ]] && _record_stage intro completed \
+    --from-sidecar "$out.metadata.json"
+  return $rc
 }
 
 # v0.4 M3 helpers — per-section composer brief extraction.
@@ -2497,6 +2608,22 @@ stage_slide_compose() {
   else
     _slide_compose_v0_3 "$substories" $substory_ids
   fi
+  local rc=$?
+
+  # Cycle 3 / DP1: record one stage entry per substory composer. Done
+  # SEQUENTIALLY here (NOT inside _compose_one_substory) — the composers
+  # run in backgrounded subshells via wp_run_pool, and record-stage's
+  # read-modify-write of the canonical record is not concurrency-safe.
+  # The per-substory .metadata.json sidecars persist after the pool, so
+  # we replay them in order once the pool has drained.
+  if [[ $rc -eq 0 ]]; then
+    local _sid
+    for _sid in $substory_ids; do
+      _record_stage "slide_compose-$_sid" completed \
+        --from-sidecar "$SLIDES_DIR/${_sid}_slides.json.metadata.json"
+    done
+  fi
+  return $rc
 }
 
 stage_qa_prep() {
@@ -2513,6 +2640,7 @@ stage_qa_prep() {
   # Mode-aware QA budget: skip for posters (qa makes no sense in poster)
   if [[ "$MODE" == "poster-h" || "$MODE" == "poster-v" ]]; then
     echo "  mode=$MODE — skipping qa_prep (posters don't have Q&A)" >&2
+    _record_stage qa_prep skipped  # posters have no Q&A
     return 0
   fi
 
@@ -2558,6 +2686,12 @@ kind='qa_anticipated_set' to OUT_PATH."
 
   invoke_claude_with_retry "$PROMPTS_DIR/qa_prep.v1.md" \
     "$user_prompt" "$fragment_path" "qa_prep"
+  local rc=$?
+  # Record the LLM stage cost regardless of the downstream
+  # mode-consistency check (the tokens were spent either way).
+  [[ $rc -eq 0 ]] && _record_stage qa_prep completed \
+    --from-sidecar "$fragment_path.metadata.json"
+  [[ $rc -ne 0 ]] && return $rc
 
   # v1.1.1/DP9: assert the qa fragment's mode matches the run mode.
   # Catches the talk-30/talk-45 mismatch that surfaced on the
@@ -2629,6 +2763,12 @@ schema. Write the result to OUT_PATH."
 
     invoke_claude_with_retry "$PROMPTS_DIR/speaker_notes.v1.md" \
       "$user_prompt" "$notes_md" "speaker_notes-$sid"
+    local _sn_rc=$?
+    # Sequential loop (not backgrounded) → safe to record in-line.
+    if [[ $_sn_rc -eq 0 ]]; then
+      _record_stage "speaker_notes-$sid" completed \
+        --from-sidecar "$notes_md.metadata.json"
+    fi
 
     # Parse the markdown to JSON for merge-step injection
     if [[ -f "$notes_md" ]]; then
@@ -2667,6 +2807,7 @@ stage_image_gen() {
     echo "  [image-gen] no image provider configured (no GOOGLE_AI_STUDIO_API_KEY," >&2
     echo "              no CBORG_API_KEY in .env or shell); skipping image_gen." >&2
     echo "              The draft continues with curated figures only." >&2
+    _record_stage image_gen skipped  # no provider configured
     return 0
   fi
 
@@ -2750,6 +2891,12 @@ stage_image_gen() {
     list-yes "$IMAGE_DECISIONS_JSON")"
   if [[ -z "$yes_list" ]]; then
     echo "  no slides flagged for image-gen (decision layer)" >&2
+    # The decision layer's prompt-judgment LLM may have spent tokens;
+    # fold any ai_image_prompt-* sidecars even though no image was
+    # generated (image_provenance.json will be absent/empty → 0 gen).
+    _record_stage image_gen completed \
+      --sidecar-glob "$IMAGE_REQUESTS_DIR/*_request.json.metadata.json" \
+      --image-provenance "$IMAGE_PROVENANCE_JSON"
     return 0
   fi
   local n_yes
@@ -2984,6 +3131,17 @@ they don't state the answer."
 
   echo "" >&2
   echo "  image_gen summary: $n_approved approved, $n_rejected rejected, $n_skipped skipped" >&2
+
+  # Cycle 3 / DP1: record ONE image_gen stage entry folding BOTH the
+  # prompt-composition LLM cost (one ai_image_prompt-* sidecar per
+  # image, summed via --sidecar-glob) AND the per-image GENERATION
+  # cost (--image-provenance). The generation cost is the specific
+  # undercount the prompt-sidecar-only path missed (Adam 2026-06-07).
+  # Recorded BEFORE the orphan-request cross-check so the cost lands
+  # even if that check aborts the stage.
+  _record_stage image_gen completed \
+    --sidecar-glob "$IMAGE_REQUESTS_DIR/*_request.json.metadata.json" \
+    --image-provenance "$IMAGE_PROVENANCE_JSON"
 
   # v1.1.1/DP3: fail-loud cross-check — every 05_image_requests/*.json
   # must EITHER produce a 05_images/<sid>.png OR have a manifest
@@ -3251,6 +3409,7 @@ stage_merge_and_assemble() {
   echo "  spec:  $spec" >&2
   echo "  deck:  $pptx" >&2
   echo "==================================================================" >&2
+  _record_stage merge_and_assemble completed  # non-LLM (merge+render)
 }
 
 # ==============================================================================
@@ -3312,6 +3471,7 @@ EOF
   "stages": ["review_cascade.py"]
 }
 EOF
+  _record_stage review_cascade completed  # advisory cascade (Tier-A $0)
 }
 
 # ==============================================================================
@@ -3333,6 +3493,7 @@ stage_adversarial_review() {
     echo "  Install: pipx install --pip-args=\"--no-cache-dir\" \\" >&2
     echo "           git+ssh://git@github.com/ArkinLaboratory/beril-adversarial-skill.git@v0.6.3" >&2
     echo "  Or pass --no-adversarial to skip this warning." >&2
+    _record_stage adversarial_review skipped  # beril-adversarial absent
     return 0
   fi
 
@@ -3441,6 +3602,11 @@ sev = s.get('by_severity', {})
 print(f' (P0={sev.get(\"P0\", 0)} P1={sev.get(\"P1\", 0)} P2={sev.get(\"P2\", 0)} info={sev.get(\"info\", 0)})')
 " 2>&1 | sed 's/^/    /' >&2
   fi
+  # External sub-skill (beril-adversarial owns its own run record); we
+  # record the stage boundary + ordering. Per-finding cost lives in
+  # the adversarial run's own provenance, not a presmaker sidecar — a
+  # future `subrecord` pointer can link it.
+  _record_stage adversarial_review completed
 }
 
 stage_revise_slides() {
@@ -3453,6 +3619,7 @@ stage_revise_slides() {
   local review_path="$ADVERSARIAL_REVIEW_JSON"
   if [[ ! -f "$review_path" ]]; then
     echo "  no adversarial_review.json found; skipping revise loop" >&2
+    _record_stage revise_slides skipped  # no review to revise against
     return 0
   fi
 
@@ -3529,6 +3696,12 @@ print(len(m.get('findings_revised', [])) + len(m.get('findings_added', [])))
   if [[ -f "$NEXT_ACTIONS" ]]; then
     echo "  next_actions.md written: $NEXT_ACTIONS" >&2
   fi
+  # revise_loop.py drives its own claude calls; its cost lives in
+  # audit/revise_loop_metadata.json (cost_usd_cumulative + ISO
+  # timestamps — a different provenance format than the stream_progress
+  # sidecars, no tokens/model). Fold its cost via --from-revise-metadata.
+  _record_stage revise_slides completed \
+    --from-revise-metadata "$REVISE_LOOP_METADATA"
 }
 
 # ==============================================================================
@@ -3562,16 +3735,35 @@ stage_visual_qa_final() {
   # Pre-flight: need a deck + an adversarial_review.json to augment.
   if [[ ! -f "$DECK_PPTX" ]]; then
     echo "  no deck at $DECK_PPTX; skipping visual_qa_final" >&2
+    _record_stage visual_qa_final skipped  # no deck to QA
     return 0
   fi
   if [[ ! -f "$AUDIT_DIR/adversarial_review.json" ]]; then
     echo "  no adversarial_review.json; skipping visual_qa_final" >&2
+    _record_stage visual_qa_final skipped  # nothing to augment
     return 0
   fi
   if [[ "$VISUAL_QA" -ne 1 ]]; then
     echo "  visual-QA disabled (--no-visual-qa or non-audience mode); skipping" >&2
+    _record_stage visual_qa_final skipped  # disabled
     return 0
   fi
+
+  # Cycle 3 / DP1: record visual_qa_final's cost. The vision-pass cost
+  # lands in a sidecar the visual-QA tool writes next to its findings
+  # JSON (audit/visual_qa_final.json.metadata.json); the optional 2nd
+  # revise pass adds to revise_loop_metadata.json. _record_vqa folds
+  # whichever exist. Called at each terminal exit below: vision-only
+  # when no findings / no 2nd pass; vision + 2nd-pass ("with-revise")
+  # at the full path. status=completed throughout — the gates above
+  # already filtered the skip cases.
+  _record_vqa() {
+    local _args=(--from-sidecar "$AUDIT_DIR/visual_qa_final.json.metadata.json")
+    if [[ "${1:-}" == "with-revise" ]]; then
+      _args+=(--from-revise-metadata "$AUDIT_DIR/revise_loop_metadata.json")
+    fi
+    _record_stage visual_qa_final completed "${_args[@]}"
+  }
 
   # 0. v0.8.0 Tier G.10-A: deterministic bounding-box overlap detector.
   #    Pure-geometry check over the rendered .pptx — cheaper, faster,
@@ -3598,6 +3790,7 @@ stage_visual_qa_final() {
 
   if [[ ! -f "$vq_final_json" ]]; then
     echo "  visual-QA produced no output; skipping merge" >&2
+    _record_vqa  # vision-only (sidecar may be 0-cost if QA couldn't run)
     return 0
   fi
 
@@ -3613,6 +3806,7 @@ except Exception:
 
   if [[ "$n_vq_findings" -eq 0 ]]; then
     echo "  visual-QA found 0 findings on post-revise deck; no merge needed" >&2
+    _record_vqa  # vision-only (no 2nd revise pass)
     return 0
   fi
 
@@ -3631,6 +3825,7 @@ except Exception:
   local _vq_only_review="$AUDIT_DIR/adversarial_review_vq_only.json"
   if [[ ! -f "$_vq_only_review" ]]; then
     echo "  no adversarial_review_vq_only.json written; skipping 2nd revise pass" >&2
+    _record_vqa  # vision-only (2nd revise pass not run)
     return 0
   fi
 
@@ -3658,6 +3853,12 @@ except Exception:
     $stream_flag 2>&1 | sed 's/^/    /' >&2
 
   local rc=$?
+  # The 2nd revise pass has run (revise_loop overwrote
+  # revise_loop_metadata.json with the VQ-pass cumulative cost). Record
+  # visual_qa_final folding BOTH the vision sidecar AND that 2nd-pass
+  # cost — at every exit from here on (crash, validate-fail,
+  # assemble-fail, success all share the same spent cost).
+  _record_vqa with-revise
   if [[ $rc -ne 0 && $rc -ne 1 ]]; then
     echo "  visual-QA-revise pass crashed (rc=$rc); deck is the pre-VQ-revise version" >&2
     return 0

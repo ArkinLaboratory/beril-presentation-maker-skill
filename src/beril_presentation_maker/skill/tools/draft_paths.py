@@ -292,6 +292,14 @@ class DraftPaths:
         return self.audit / "stage-metadata.json"
 
     @property
+    def run_record(self) -> Path:
+        """Cycle-3/DP1 canonical run record (run-record.v1). The
+        LATEST run's record; `craft status` polls this path; the
+        per-run archived copy lives at runs/run-N/run_record.json.
+        See craft-platform `craft.run_record` for the schema."""
+        return self.audit / "run_record.json"
+
+    @property
     def stage_logs_dir(self) -> Path:
         return self.audit / "stage-logs"
 

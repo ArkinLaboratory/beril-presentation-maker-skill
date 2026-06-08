@@ -1,0 +1,74 @@
+{
+  "schema_version": "run-record.v1",
+  "skill": "presentation-maker",
+  "skill_version": "1.3.0",
+  "run_id": "run-1",
+  "draft_dir": "/private/tmp/cycle3-presmaker-live/running",
+  "mode": "talk-45",
+  "status": "running",
+  "started_at": "2026-06-07T18:00:00Z",
+  "finished_at": null,
+  "exit_code": null,
+  "current_stage": "slide_compose",
+  "stages": [
+    {
+      "id": "plan",
+      "status": "completed",
+      "model": "claude-opus-4-7",
+      "started_at": "2026-06-07T18:00:05Z",
+      "finished_at": "2026-06-07T18:02:30Z",
+      "elapsed_seconds": 145.0,
+      "input_tokens": 12000,
+      "output_tokens": 3200,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cost_usd": 0.31,
+      "subrecord": null
+    },
+    {
+      "id": "throughline",
+      "status": "completed",
+      "model": "claude-opus-4-7",
+      "started_at": "2026-06-07T18:02:35Z",
+      "finished_at": "2026-06-07T18:05:10Z",
+      "elapsed_seconds": 155.0,
+      "input_tokens": 8500,
+      "output_tokens": 4100,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cost_usd": 0.22,
+      "subrecord": null
+    },
+    {
+      "id": "slide_compose",
+      "status": "running",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-06-07T18:05:15Z",
+      "finished_at": null,
+      "elapsed_seconds": 0.0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cost_usd": 0.0,
+      "subrecord": null
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.53,
+    "input_tokens": 20500,
+    "output_tokens": 7300,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "elapsed_seconds": 300.0
+  },
+  "models_used": [
+    "claude-opus-4-7",
+    "claude-sonnet-4-6"
+  ],
+  "artifacts": {
+    "user_intent": "audit/user_intent.json",
+    "deliverable_validation": null,
+    "deliverable": null
+  }
+}
