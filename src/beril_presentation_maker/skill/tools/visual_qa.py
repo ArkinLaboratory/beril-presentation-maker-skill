@@ -535,6 +535,27 @@ def run_visual_qa(
                   f" PNGs at {pngs_dir}", file=sys.stderr)
         return 0
 
+    # Cycle 3 / DP1: persist the vision-pass cost to a stream_progress-
+    # shaped sidecar next to the findings JSON, so finalize_run's
+    # record-stage --from-sidecar can fold visual_qa_final's cost into
+    # the run record. The LLM writes the findings file itself (via its
+    # Write tool), so cost never lands there — without this sidecar the
+    # vision-pass cost is unrecoverable from disk. Field names match
+    # stream_progress.py's sidecar (estimated_cost_usd / model /
+    # elapsed_seconds) so the existing reader needs no special case.
+    try:
+        sidecar = out_json.with_name(out_json.name + ".metadata.json")
+        sidecar.write_text(
+            json.dumps({
+                "estimated_cost_usd": round(float(diag.get("cost_usd", 0.0)), 6),
+                "model": diag.get("model"),
+                "elapsed_seconds": int(diag.get("duration_sec", 0) or 0),
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # advisory — never fail the QA pass over a cost sidecar
+
     # --- 7. Cleanup ---
     if not keep_pngs:
         for p in png_paths:

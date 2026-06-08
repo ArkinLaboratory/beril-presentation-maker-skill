@@ -1,13 +1,16 @@
-"""Tests for v0.3.4.2 finalize_run helper.
+"""Tests for the finalize_run run-record.v1 emitter.
 
 Covers:
 - Stage label derivation from per-stage .metadata.json filenames
-- Stage metadata collection (recursive walk of working/)
-- Aggregation totals (cost / tokens / elapsed / models)
-- Idempotent stage-metadata.json write
-- Sequential run-N allocation
-- run-summary.json shape + totals roundtrip
-- CLI dispatch
+- Stage metadata collection (recursive walk of working/) — still used
+  by record-finalize's reconciliation
+- The run-record.v1 emitter: record-start / record-stage / record-halt
+  / record-finalize, run-N allocation + no-clobber, the finalize guard,
+  the value-source folds, and the shared-validator roundtrip
+
+(v1.3.1 / Cycle-3 follow-up P0-1 retired the legacy `write` subcommand —
+run-summary.v1 / stage-metadata.v1 — and its tests, because that archive
+was a second uncoordinated run-N allocator. run-record.v1 supersedes it.)
 """
 from __future__ import annotations
 
@@ -164,228 +167,6 @@ def test_collect_dedupes_by_mtime(tmp_path):
     assert meta["plan"]["model"] == "old"
 
 
-# ---------------------------------------------------------------------------
-# aggregate_run_totals
-# ---------------------------------------------------------------------------
-
-def test_aggregate_sums_across_stages():
-    stage_meta = {
-        "plan": {
-            "elapsed_seconds": 100, "input_tokens": 1000,
-            "output_tokens": 100, "estimated_cost_usd": 0.10,
-            "model": "claude-sonnet-4-6",
-        },
-        "throughline": {
-            "elapsed_seconds": 200, "input_tokens": 2000,
-            "output_tokens": 200, "estimated_cost_usd": 0.20,
-            "model": "claude-sonnet-4-6",
-        },
-    }
-    totals = fr.aggregate_run_totals(stage_meta)
-    assert totals["total_cost_usd"] == pytest.approx(0.30)
-    assert totals["total_input_tokens"] == 3000
-    assert totals["total_output_tokens"] == 300
-    assert totals["total_elapsed_seconds"] == 300
-    assert totals["models_used"] == ["claude-sonnet-4-6"]
-
-
-def test_aggregate_handles_multi_model():
-    stage_meta = {
-        "plan": {
-            "estimated_cost_usd": 0.10,
-            "input_tokens": 100, "output_tokens": 10,
-            "model": "claude-sonnet-4-6",
-        },
-        "throughline": {
-            "estimated_cost_usd": 0.30,
-            "input_tokens": 200, "output_tokens": 20,
-            "model": "claude-opus-4-6",
-        },
-    }
-    totals = fr.aggregate_run_totals(stage_meta)
-    assert sorted(totals["models_used"]) == ["claude-opus-4-6", "claude-sonnet-4-6"]
-    assert totals["total_cost_usd"] == pytest.approx(0.40)
-
-
-def test_aggregate_includes_cache_tokens():
-    stage_meta = {
-        "plan": {
-            "input_tokens": 1000, "output_tokens": 100,
-            "cache_read_tokens": 500, "cache_creation_tokens": 200,
-            "estimated_cost_usd": 0.05, "model": "test",
-        },
-    }
-    totals = fr.aggregate_run_totals(stage_meta)
-    assert totals["total_cache_read_tokens"] == 500
-    assert totals["total_cache_creation_tokens"] == 200
-
-
-def test_aggregate_handles_missing_optional_fields():
-    """A stage with no model / cost / tokens shouldn't break aggregation."""
-    stage_meta = {"plan": {"elapsed_seconds": 120}}
-    totals = fr.aggregate_run_totals(stage_meta)
-    assert totals["total_cost_usd"] == 0.0
-    assert totals["total_input_tokens"] == 0
-    assert totals["total_elapsed_seconds"] == 120
-    assert totals["models_used"] == []
-
-
-def test_aggregate_empty_stage_meta():
-    totals = fr.aggregate_run_totals({})
-    assert totals["total_cost_usd"] == 0.0
-    assert totals["total_input_tokens"] == 0
-    assert totals["models_used"] == []
-
-
-# ---------------------------------------------------------------------------
-# write_stage_metadata
-# ---------------------------------------------------------------------------
-
-def test_write_stage_metadata_creates_envelope(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    meta = fr.collect_stage_metadata(paths.working)
-    target = fr.write_stage_metadata(paths, meta)
-    assert target == paths.stage_metadata
-    assert target.is_file()
-    envelope = json.loads(target.read_text())
-    assert envelope["schema_version"] == "stage-metadata.v1"
-    assert envelope["draft_dir"] == str(paths.draft_dir)
-    assert "plan" in envelope["stages"]
-
-
-def test_write_stage_metadata_idempotent(initialized_draft_with_metadata):
-    """Repeated invocations overwrite (always reflect current state)."""
-    paths = initialized_draft_with_metadata
-    meta1 = fr.collect_stage_metadata(paths.working)
-    fr.write_stage_metadata(paths, meta1)
-    # Add a new stage on disk
-    (paths.slides_dir / "S3_slides.json.metadata.json").write_text(json.dumps({
-        "elapsed_seconds": 50, "input_tokens": 100, "output_tokens": 10,
-        "estimated_cost_usd": 0.05, "model": "test",
-    }))
-    meta2 = fr.collect_stage_metadata(paths.working)
-    fr.write_stage_metadata(paths, meta2)
-    envelope = json.loads(paths.stage_metadata.read_text())
-    assert "slide_compose-S3" in envelope["stages"]
-
-
-def test_write_stage_metadata_sorts_keys(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    meta = fr.collect_stage_metadata(paths.working)
-    fr.write_stage_metadata(paths, meta)
-    envelope = json.loads(paths.stage_metadata.read_text())
-    keys = list(envelope["stages"].keys())
-    assert keys == sorted(keys)
-
-
-# ---------------------------------------------------------------------------
-# write_run_summary
-# ---------------------------------------------------------------------------
-
-def test_write_run_summary_allocates_run_1(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    target = fr.write_run_summary(paths, exit_code=0)
-    assert target == paths.runs_dir / "run-1" / "summary.json"
-    assert target.is_file()
-
-
-def test_write_run_summary_increments(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    fr.write_run_summary(paths, exit_code=0)
-    fr.write_run_summary(paths, exit_code=1)
-    fr.write_run_summary(paths, exit_code=0)
-    assert (paths.runs_dir / "run-1" / "summary.json").is_file()
-    assert (paths.runs_dir / "run-2" / "summary.json").is_file()
-    assert (paths.runs_dir / "run-3" / "summary.json").is_file()
-
-
-def test_write_run_summary_shape(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    target = fr.write_run_summary(
-        paths, exit_code=0,
-        started_at="2026-05-04T03:00:00Z",
-    )
-    summary = json.loads(target.read_text())
-    assert summary["schema_version"] == "run-summary.v1"
-    assert summary["run_n"] == 1
-    assert summary["exit_code"] == 0
-    assert summary["started_at"] == "2026-05-04T03:00:00Z"
-    assert "finished_at" in summary
-    assert "stages_run" in summary
-    assert isinstance(summary["stages_run"], list)
-    assert "plan" in summary["stages_run"]
-    assert summary["total_cost_usd"] > 0
-    assert summary["total_input_tokens"] > 0
-
-
-def test_write_run_summary_with_failure_exit_code(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    target = fr.write_run_summary(paths, exit_code=2)
-    summary = json.loads(target.read_text())
-    assert summary["exit_code"] == 2
-
-
-def test_write_run_summary_no_started_at_falls_back_to_finished(
-    initialized_draft_with_metadata
-):
-    paths = initialized_draft_with_metadata
-    target = fr.write_run_summary(paths, exit_code=0)
-    summary = json.loads(target.read_text())
-    # Without explicit started_at, it equals finished_at as fallback
-    assert summary["started_at"] == summary["finished_at"]
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def test_cli_write_consolidates(initialized_draft_with_metadata):
-    paths = initialized_draft_with_metadata
-    rc = fr.main([
-        "write",
-        "--draft-dir", str(paths.draft_dir),
-        "--exit-code", "0",
-        "--started-at", "2026-05-04T03:00:00Z",
-    ])
-    assert rc == 0
-    # Both outputs land
-    assert paths.stage_metadata.is_file()
-    summary = json.loads((paths.runs_dir / "run-1" / "summary.json").read_text())
-    assert summary["started_at"] == "2026-05-04T03:00:00Z"
-
-
-def test_cli_write_uninitialized_draft_returns_1(tmp_path, capsys):
-    rc = fr.main([
-        "write",
-        "--draft-dir", str(tmp_path),
-        "--exit-code", "0",
-    ])
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert "not initialized" in captured.err
-
-
-def test_cli_write_with_no_metadata_files_still_succeeds(tmp_path):
-    """Edge case: orchestrator failed before any stage's stream_progress
-    wrote a metadata file. finalize_run should still emit empty
-    consolidations rather than crashing."""
-    paths = dp.DraftPaths.from_draft_dir(tmp_path)
-    paths.init_layout()
-    rc = fr.main([
-        "write",
-        "--draft-dir", str(tmp_path),
-        "--exit-code", "1",
-    ])
-    assert rc == 0
-    # Empty stages
-    envelope = json.loads(paths.stage_metadata.read_text())
-    assert envelope["stages"] == {}
-    summary = json.loads((paths.runs_dir / "run-1" / "summary.json").read_text())
-    assert summary["stages_run"] == []
-    assert summary["total_cost_usd"] == 0.0
-    assert summary["exit_code"] == 1
-
-
 # ===========================================================================
 # Cycle 3 / DP1 — run-record.v1 emitter
 # ===========================================================================
@@ -466,6 +247,138 @@ def test_record_start_no_clobber_allocates_next_run_n(tmp_path):
     rec = _read_canonical(paths)
     assert rec["run_id"] == "run-2"
     assert rec["started_at"] == "2026-06-07T19:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# v1.3.1 / Cycle-3 follow-up P0-2 — resume re-opens, doesn't allocate
+# ---------------------------------------------------------------------------
+
+def test_resume_reopens_halted_record_same_run(tmp_path):
+    """A halt → resume must stay ONE run record: re-open (flip halted→
+    running), keep run_id + started_at + cumulative totals + stages[].
+    NOT a fresh run-N (the P0-2 fragmentation bug)."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    # pre-halt run: a stage with real cost, then halt at the gate.
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(
+        paths, stage_id="plan", status="completed",
+        model="claude-opus-4-7", started_at="2026-06-08T17:00:05Z",
+        finished_at="2026-06-08T17:02:30Z", elapsed_seconds=145.0,
+        input_tokens=12000, output_tokens=3200, cost_usd=12.76,
+    )
+    fr.record_halt(paths, gate_id="throughline_pick",
+                   started_at="2026-06-08T17:00:00Z", skill_version="1.3.1")
+    pre = _read_canonical(paths)
+    assert pre["status"] == "halted" and pre["run_id"] == "run-1"
+
+    # RESUME: must re-open run-1, not allocate run-2.
+    _canon, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T17:42:00Z", skill_version="1.3.1")
+    assert action == "reopened"
+    assert run_n == 1
+    rec = _read_canonical(paths)
+    assert rec["run_id"] == "run-1"                 # same run
+    assert rec["status"] == "running"               # flipped back
+    assert rec["started_at"] == "2026-06-08T17:00:00Z"  # ORIGINAL start
+    assert rec["finished_at"] is None and rec["exit_code"] is None
+    # cumulative cost + stages carried over (NOT reset to $0).
+    assert rec["totals"]["cost_usd"] == 12.76
+    assert {s["id"] for s in rec["stages"]} >= {"plan", "throughline_pick"}
+    # exactly one run dir exists.
+    run_dirs = sorted(p.name for p in paths.runs_dir.iterdir() if p.is_dir())
+    assert run_dirs == ["run-1"]
+
+
+def test_resume_then_continue_completes_one_record(tmp_path):
+    """Full halt→resume→complete: ONE record, cumulative total, status
+    completed, stages span the halt."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="plan", status="completed",
+                    cost_usd=12.76, started_at="2026-06-08T17:00:05Z",
+                    finished_at="2026-06-08T17:02:30Z")
+    fr.record_halt(paths, gate_id="throughline_pick",
+                   started_at="2026-06-08T17:00:00Z", skill_version="1.3.1")
+    # resume
+    fr.record_resume_or_start(paths, started_at="2026-06-08T17:42:00Z",
+                              skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="substory_design", status="completed",
+                    cost_usd=6.73, started_at="2026-06-08T17:42:05Z",
+                    finished_at="2026-06-08T17:45:00Z")
+    fr.record_finalize(paths, exit_code=0,
+                       started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+    rec = _read_canonical(paths)
+    assert rec["status"] == "completed" and rec["run_id"] == "run-1"
+    assert abs(rec["totals"]["cost_usd"] - 19.49) < 1e-9  # cumulative
+    ids = {s["id"] for s in rec["stages"]}
+    assert {"plan", "substory_design"} <= ids  # span the halt
+    run_dirs = sorted(p.name for p in paths.runs_dir.iterdir() if p.is_dir())
+    assert run_dirs == ["run-1"]  # exactly one
+
+
+def test_resume_on_running_record_reopens(tmp_path):
+    """A crash/re-invoke with no clean halt (status still running) also
+    re-opens — same run, not a new one."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="plan", status="completed",
+                    cost_usd=1.0, started_at="2026-06-08T17:00:05Z",
+                    finished_at="2026-06-08T17:01:00Z")
+    _c, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T18:00:00Z", skill_version="1.3.1")
+    assert action == "reopened" and run_n == 1
+
+
+def test_resume_on_completed_record_allocates_fresh(tmp_path):
+    """--resume-from targeting an ALREADY-FINISHED deck is a genuine
+    redo → allocate a fresh run-N."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_finalize(paths, exit_code=0,
+                       started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+    assert _read_canonical(paths)["status"] == "completed"
+    _c, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T18:00:00Z", skill_version="1.3.1")
+    assert action == "allocated" and run_n == 2
+    assert _read_canonical(paths)["status"] == "running"
+
+
+def test_resume_no_record_allocates_fresh(tmp_path):
+    """--resume with no existing record (defensive) → fresh run-1."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    _c, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T18:00:00Z", skill_version="1.3.1")
+    assert action == "allocated" and run_n == 1
+
+
+def test_cli_record_start_resume_reopens(tmp_path, capsys):
+    """The shell's `record-start --resume` path re-opens a halted run."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_halt(paths, gate_id="throughline_pick",
+                   started_at="2026-06-08T17:00:00Z", skill_version="1.3.1")
+    rc = fr.main([
+        "record-start", "--draft-dir", str(tmp_path),
+        "--started-at", "2026-06-08T17:42:00Z", "--resume",
+    ])
+    assert rc == 0
+    rec = _read_canonical(paths)
+    assert rec["run_id"] == "run-1" and rec["status"] == "running"
+    captured = capsys.readouterr()
+    assert "reopened run-1" in captured.err
 
 
 def test_record_stage_append_then_finalize(tmp_path):
