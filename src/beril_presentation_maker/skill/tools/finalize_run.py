@@ -177,54 +177,14 @@ def collect_stage_metadata(working_dir: Path) -> dict[str, dict]:
     return out
 
 
-def aggregate_run_totals(stage_metadata: dict[str, dict]) -> dict:
-    """Sum per-stage costs / tokens / elapsed for the run summary.
-
-    Returns a dict with: total_cost_usd, total_input_tokens,
-    total_output_tokens, total_cache_read_tokens,
-    total_cache_creation_tokens, total_elapsed_seconds, models_used.
-    """
-    totals = {
-        "total_cost_usd": 0.0,
-        "total_input_tokens": 0,
-        "total_output_tokens": 0,
-        "total_cache_read_tokens": 0,
-        "total_cache_creation_tokens": 0,
-        "total_elapsed_seconds": 0,
-    }
-    models_used: set[str] = set()
-    for label, meta in stage_metadata.items():
-        totals["total_cost_usd"] += float(meta.get("estimated_cost_usd", 0.0))
-        totals["total_input_tokens"] += int(meta.get("input_tokens", 0))
-        totals["total_output_tokens"] += int(meta.get("output_tokens", 0))
-        totals["total_cache_read_tokens"] += int(meta.get("cache_read_tokens", 0))
-        totals["total_cache_creation_tokens"] += int(
-            meta.get("cache_creation_tokens", 0))
-        totals["total_elapsed_seconds"] += int(meta.get("elapsed_seconds", 0))
-        m = meta.get("model")
-        if m:
-            models_used.add(m)
-    totals["models_used"] = sorted(models_used)
-    totals["total_cost_usd"] = round(totals["total_cost_usd"], 4)
-    return totals
-
-
-def write_stage_metadata(paths: dp.DraftPaths,
-                         stage_metadata: dict[str, dict]) -> Path:
-    """Write the consolidated audit/stage-metadata.json. Returns the
-    path written. Idempotent — overwrites prior content."""
-    paths.audit.mkdir(parents=True, exist_ok=True)
-    target = paths.stage_metadata
-    envelope = {
-        "schema_version": "stage-metadata.v1",
-        "draft_dir": str(paths.draft_dir),
-        "stages": dict(sorted(stage_metadata.items())),
-    }
-    target.write_text(
-        json.dumps(envelope, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return target
+# v1.3.1 / Cycle-3 follow-up P0-1: aggregate_run_totals +
+# write_stage_metadata + write_run_summary (the legacy run-summary.v1 /
+# stage-metadata.v1 archive) are RETIRED. run-record.v1 is a strict
+# superset (stages[] + totals + status), and that archive ran its own
+# uncoordinated _next_run_n against the shared audit/runs/ namespace —
+# the second-allocator bug this fix removes. collect_stage_metadata +
+# _stage_label below are KEPT: record-finalize still reads the per-stage
+# .metadata.json sidecars for its loud reconciliation.
 
 
 def _next_run_n(runs_dir: Path) -> int:
@@ -240,43 +200,6 @@ def _next_run_n(runs_dir: Path) -> int:
                 f"too many existing runs"
             )
     return n
-
-
-def write_run_summary(paths: dp.DraftPaths,
-                      *,
-                      exit_code: int,
-                      started_at: str | None = None,
-                      stage_metadata: dict[str, dict] | None = None) -> Path:
-    """Write audit/runs/run-<N>/summary.json. Allocates the next
-    available run-N. Returns the summary path written."""
-    if stage_metadata is None:
-        stage_metadata = collect_stage_metadata(paths.working)
-    paths.runs_dir.mkdir(parents=True, exist_ok=True)
-    n = _next_run_n(paths.runs_dir)
-    run_dir = paths.run_archive_dir(n)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if started_at is None:
-        started_at = finished_at  # fallback if caller didn't provide
-
-    totals = aggregate_run_totals(stage_metadata)
-    summary = {
-        "schema_version": "run-summary.v1",
-        "run_n": n,
-        "draft_dir": str(paths.draft_dir),
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "exit_code": int(exit_code),
-        "stages_run": sorted(stage_metadata.keys()),
-        **totals,
-    }
-    target = run_dir / "summary.json"
-    target.write_text(
-        json.dumps(summary, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return target
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +658,63 @@ def record_start(
         paths, record, run_n,
     )
     return canonical, run_n
+
+
+def record_resume_or_start(
+    paths: dp.DraftPaths,
+    *,
+    started_at: str,
+    skill_version: str,
+) -> tuple[Path, int, str]:
+    """Resume-aware entry point (v1.3.1 / Cycle-3 follow-up P0-2).
+
+    The shell calls THIS (not record_start) at the --resume-from entry,
+    so a halt+resume stays ONE run record instead of fragmenting across
+    run-N (halted) + run-N+1 (resumed) and resetting craft status to $0
+    mid-build. Decision is by the existing canonical record's STATUS,
+    not guesswork:
+
+      status ∈ {halted, running}   → RE-OPEN it. Flip status→running;
+        KEEP run_id + started_at + cumulative totals + existing
+        stages[]. The interrupted run continues; subsequent
+        record-stage calls append. (running covers a crash/re-invoke
+        with no clean halt; halted covers the throughline-pick gate.)
+      status ∈ {completed, failed}, or NO record → ALLOCATE a fresh
+        run-N (a genuine redo / fresh start — e.g. --resume-from
+        targeting an already-finished deck).
+
+    Returns (canonical_path, run_n, action) where action ∈
+    {"reopened", "allocated"} for the caller's logging.
+    """
+    existing = _load_existing_record(paths.run_record)
+    status = existing.get("status") if isinstance(existing, dict) else None
+
+    if status in ("halted", "running"):
+        # Re-open the interrupted record: only the status (and the
+        # archive copy) changes; identity + accumulated state persist.
+        run_n = _find_canonical_run_n(existing)
+        if run_n is None:
+            # Corrupted run_id on an otherwise-resumable record — fall
+            # through to a fresh allocation rather than mutate a record
+            # we can't address.
+            canonical, run_n = record_start(
+                paths, started_at=started_at, skill_version=skill_version)
+            return canonical, run_n, "allocated"
+        reopened = dict(existing)
+        reopened["status"] = "running"
+        reopened["finished_at"] = None
+        reopened["exit_code"] = None
+        # started_at, run_id, stages[], totals, models_used, artifacts
+        # all carry over from the existing record unchanged.
+        canonical, _archive = write_run_record_canonical_and_archive(
+            paths, reopened, run_n,
+        )
+        return canonical, run_n, "reopened"
+
+    # completed / failed / no-record → genuine fresh run.
+    canonical, run_n = record_start(
+        paths, started_at=started_at, skill_version=skill_version)
+    return canonical, run_n, "allocated"
 
 
 def _find_canonical_run_n(record: dict | None) -> int | None:
@@ -1219,33 +1199,10 @@ def record_finalize(
 # CLI
 # ---------------------------------------------------------------------------
 
-def _cmd_write(args) -> int:
-    paths = dp.DraftPaths.from_draft_dir(args.draft_dir)
-    if not paths.is_initialized():
-        print(f"finalize_run: draft_dir not initialized: {paths.draft_dir}",
-              file=sys.stderr)
-        return 1
-    stage_meta = collect_stage_metadata(paths.working)
-    stage_meta_path = write_stage_metadata(paths, stage_meta)
-    summary_path = write_run_summary(
-        paths,
-        exit_code=args.exit_code,
-        started_at=args.started_at,
-        stage_metadata=stage_meta,
-    )
-    n_stages = len(stage_meta)
-    totals = aggregate_run_totals(stage_meta)
-    print(
-        f"finalize_run: consolidated {n_stages} stages "
-        f"(${totals['total_cost_usd']:.4f}, "
-        f"{totals['total_input_tokens']:,} in / "
-        f"{totals['total_output_tokens']:,} out tokens, "
-        f"{totals['total_elapsed_seconds']}s)",
-        file=sys.stderr,
-    )
-    print(f"  stage-metadata: {stage_meta_path}", file=sys.stderr)
-    print(f"  run summary: {summary_path}", file=sys.stderr)
-    return 0
+# v1.3.1 / Cycle-3 follow-up P0-1: _cmd_write (the legacy `write`
+# subcommand) is RETIRED along with write_run_summary /
+# write_stage_metadata / aggregate_run_totals — see the comment at the
+# top of the run-record emitter section.
 
 
 def _cmd_record_start(args) -> int:
@@ -1256,6 +1213,21 @@ def _cmd_record_start(args) -> int:
             file=sys.stderr,
         )
         return 1
+    if getattr(args, "resume", False):
+        # v1.3.1 P0-2: resume-aware — re-open a halted/running record
+        # (one run per deck across the halt) instead of allocating a
+        # fresh run-N.
+        canonical, run_n, action = record_resume_or_start(
+            paths,
+            started_at=args.started_at,
+            skill_version=args.skill_version or _SKILL_VERSION,
+        )
+        print(
+            f"finalize_run: record-start --resume {action} run-{run_n} "
+            f"→ {canonical}",
+            file=sys.stderr,
+        )
+        return 0
     canonical, run_n = record_start(
         paths,
         started_at=args.started_at,
@@ -1359,24 +1331,14 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="finalize_run",
         description=(
-            "v0.3.4.2: consolidate per-stage .metadata.json sidecars "
-            "into audit/stage-metadata.json + write per-orchestrator "
-            "audit/runs/run-N/summary.json."
+            "Cycle-3 DP1 run-record.v1 emitter: record-start / "
+            "record-stage / record-halt / record-finalize maintain "
+            "audit/run_record.json + the audit/runs/run-N/ archive. "
+            "(The legacy `write` subcommand — run-summary.v1 / "
+            "stage-metadata.v1 — was retired in v1.3.1, P0-1.)"
         ),
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-
-    p_write = sub.add_parser(
-        "write",
-        help="Walk working/ for .metadata.json files; write consolidations.",
-    )
-    p_write.add_argument("--draft-dir", required=True)
-    p_write.add_argument("--exit-code", type=int, default=0,
-                         help="Exit code from the orchestrator (default: 0).")
-    p_write.add_argument("--started-at", default=None,
-                         help="Orchestrator start time, ISO-8601 UTC. "
-                              "If omitted, run summary uses finish time.")
-    p_write.set_defaults(func=_cmd_write)
 
     # Cycle 3 / DP1 run-record.v1 incremental write CLI. See module
     # docstring for the protocol.
@@ -1394,6 +1356,14 @@ def main(argv=None) -> int:
     p_start.add_argument(
         "--skill-version", default=None,
         help="Override skill version (default: __version__).",
+    )
+    p_start.add_argument(
+        "--resume", action="store_true",
+        help="v1.3.1 P0-2: resume-aware. RE-OPEN an existing "
+             "halted/running record (one run per deck across a halt) "
+             "instead of allocating a fresh run-N. completed/failed or "
+             "no record → fresh run-N. The shell passes this on the "
+             "--resume-from entry.",
     )
     p_start.set_defaults(func=_cmd_record_start)
 

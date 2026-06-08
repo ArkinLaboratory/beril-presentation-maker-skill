@@ -6,17 +6,19 @@ audit dirs (2 projects × 2 pipelines) and emits a comparison Markdown
 applying the ≥4/6 advisory decision rule (D-065 + D-066).
 
 Per D-067, this script reads existing per-stage audit JSONs +
-`runs/run-N/summary.json` files — no centralized state.json is
+`runs/run-N/run_record.json` files — no centralized state.json is
 required. The orchestrator's `finalize_run.py` EXIT trap (and the
 existing v0.3 audit-file conventions) already emit everything we
-need.
+need. (v1.3.1: reads run-record.v1; the legacy summary.json archive
+it formerly read was retired — P0-1. Legacy summary.json is still read
+as a fallback for pre-v1.3.1 drafts.)
 
 Six metrics (metric 7 dropped per D-065):
 
-  1. Wall-clock           — sum `total_elapsed_seconds` across all
-                            runs in the draft's audit/runs/run-N/
-                            summary.json files (lower is better)
-  2. Token cost           — sum `total_cost_usd` likewise
+  1. Wall-clock           — sum elapsed across all runs in the draft's
+                            audit/runs/run-N/run_record.json files
+                            (totals.elapsed_seconds; lower is better)
+  2. Token cost           — sum totals.cost_usd likewise
   3. Adversarial findings — `audit/adversarial_review.json`
                             `summary.total_findings` (lower is better);
                             fall back to `audit/review_cascade.json`
@@ -141,14 +143,31 @@ def aggregate_runs(audit_dir: Path) -> RunSummary:
     out = RunSummary()
     if not runs_dir.is_dir():
         return out
-    for p in sorted(runs_dir.glob("run-*/summary.json")):
+    # v1.3.1 / Cycle-3 follow-up P0-1: read run-record.v1 archives
+    # (run-N/run_record.json), NOT the retired run-summary.v1
+    # (run-N/summary.json). run-record.v1 is a strict superset — cost +
+    # elapsed live under `totals`, exit_code/started_at/finished_at are
+    # top-level. Falls back to the legacy summary.json shape for any
+    # pre-v1.3.1 drafts still on disk (best-effort; both keys read).
+    # NOTE: after the P0-2 resume fix, a halt+resume is ONE run record
+    # spanning the halt (not two), so this sum is the cumulative deck
+    # total per draft — which is exactly what the A/B compares.
+    run_files = sorted(runs_dir.glob("run-*/run_record.json"))
+    if not run_files:
+        run_files = sorted(runs_dir.glob("run-*/summary.json"))  # legacy
+    for p in run_files:
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         out.n_runs += 1
-        out.total_cost_usd += float(d.get("total_cost_usd", 0.0))
-        out.total_elapsed_seconds += float(d.get("total_elapsed_seconds", 0.0))
+        totals = d.get("totals") if isinstance(d.get("totals"), dict) else {}
+        # run-record.v1: totals.{cost_usd,elapsed_seconds}; legacy:
+        # top-level total_{cost_usd,elapsed_seconds}.
+        out.total_cost_usd += float(
+            totals.get("cost_usd", d.get("total_cost_usd", 0.0)))
+        out.total_elapsed_seconds += float(
+            totals.get("elapsed_seconds", d.get("total_elapsed_seconds", 0.0)))
         started = d.get("started_at")
         finished = d.get("finished_at")
         if started and (out.earliest_started is None

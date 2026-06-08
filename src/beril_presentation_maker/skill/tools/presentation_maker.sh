@@ -1231,10 +1231,22 @@ build_v3_concat_prompts
 
 # --- v0.3.4.2 finalize-on-exit hook ---
 # Run finalize_run.py at the end of every orchestrator invocation
-# (success, failure, Ctrl-C). Consolidates per-stage .metadata.json
-# sidecars into audit/stage-metadata.json + writes
-# audit/runs/run-N/summary.json. The hook captures the exit code
-# and the start time; finalize_run does the rest.
+# (success, failure, Ctrl-C). Writes the terminal run-record.v1
+# (audit/run_record.json + the archive audit/runs/run-N/run_record.json).
+# The hook captures the exit code and the start time; finalize_run does
+# the rest.
+#
+# v1.3.1 / Cycle-3 follow-up P0-1: the legacy `write` subcommand
+# (write_run_summary → audit/runs/run-N/summary.json +
+# write_stage_metadata → audit/stage-metadata.json) is RETIRED. It ran
+# its OWN _next_run_n against the shared audit/runs/ namespace,
+# uncoordinated with the run_record allocator, so every invocation
+# leapfrogged a run-N dir (live: one deck → run-1/run-3 run_record +
+# run-2/run-4 summary). run-record.v1 is a strict superset (stages[] +
+# totals + status), so the per-run summary archive is redundant. After
+# this fix, audit/runs/run-N/ is allocated by the run_record mechanism
+# ONLY. (m6_score.py, the deprecated M6 A/B tool, was the one reader;
+# it now reads run_record.json — see its docstring.)
 #
 # trap order: EXIT fires after the script exits (any reason). It
 # runs in the same shell so OUTDIR + RUN_STARTED_AT are visible.
@@ -1244,14 +1256,6 @@ RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 finalize_run_on_exit() {
   local rc=$?
   if [[ -d "$OUTDIR/audit" ]]; then
-    # Legacy run-summary.v1 + stage-metadata.v1 (kept for back-compat
-    # this cycle; deprecate in a later cleanup once consumers read
-    # only the new run-record.v1).
-    "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" write \
-      --draft-dir "$OUTDIR" \
-      --exit-code "$rc" \
-      --started-at "$RUN_STARTED_AT" \
-      2>/dev/null || true
     # Cycle 3 / DP1: cross-skill run-record.v1. The finalize guard
     # inside record-finalize refuses to overwrite a status=halted
     # record — a process exit AT a halt-gate (e.g. the throughline-
@@ -1402,16 +1406,27 @@ if ! "$PYTHON_BIN" "$TOOLS_DIR/user_intent.py" write "$OUTDIR" \
   exit 1
 fi
 
-# Cycle 3 / DP1: write the initial run_record.json (status=running).
+# Cycle 3 / DP1: write/open the run_record.json (status=running).
 # Subsequent record-stage calls at each stage boundary append entries;
 # record-halt at a halt-gate flips status=halted; trap-EXIT
 # record-finalize finalizes terminal runs (or preserves halted state
-# via the guard). On a resume, this allocates the NEXT run-N (no
-# clobber) — the prior run's record was already canonicalized in its
-# own trap-EXIT.
+# via the guard).
+#
+# v1.3.1 / Cycle-3 follow-up P0-2: on a RESUME (--resume-from set), pass
+# --resume so the emitter RE-OPENS the existing halted/running record
+# (ONE run per deck across the halt — keeps run_id/started_at/cumulative
+# totals/stages, flips status→running) instead of allocating a fresh
+# run-N. A fresh build (no --resume-from), or a --resume-from that finds
+# a completed/failed record, allocates a new run-N. The decision is by
+# record STATUS, inside finalize_run.record_resume_or_start.
+_rr_resume_flag=()
+if [[ -n "$RESUME_FROM" ]]; then
+  _rr_resume_flag=(--resume)
+fi
 "$PYTHON_BIN" "$TOOLS_DIR/finalize_run.py" record-start \
   --draft-dir "$OUTDIR" \
   --started-at "$RUN_STARTED_AT" \
+  "${_rr_resume_flag[@]}" \
   2>/dev/null || true
 
 echo "==================================================================" >&2
