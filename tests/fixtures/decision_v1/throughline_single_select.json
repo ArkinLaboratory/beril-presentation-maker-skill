@@ -1,0 +1,47 @@
+{
+  "phase": "throughline_pick",
+  "draft_dir": "/projects/ibd_phage_targeting/talks/draft_7",
+  "candidates": [
+    {
+      "id": "TL1",
+      "label": "Δfur is the demonstrable driver of phage susceptibility"
+    },
+    {
+      "id": "TL2",
+      "label": "Iron-limitation reprograms the phage-defense regulon"
+    },
+    {
+      "id": "TL3",
+      "label": "A two-gene switch gates the whole susceptibility phenotype"
+    }
+  ],
+  "candidates_md": "tests/fixtures/throughline/00_throughline_candidates.md",
+  "next_command": "beril-presentation-maker continue /projects/ibd_phage_targeting/talks/draft_7 --pick TLN",
+  "schema_version": "decision.v1",
+  "skill": "presentation-maker",
+  "gate": "throughline_pick",
+  "prompt": "Pick the throughline for the deck — it sets every downstream slide. Which single claim should the talk argue?",
+  "kind": "single_select",
+  "options": [
+    {
+      "id": "TL1",
+      "summary": "Δfur is the demonstrable driver of phage susceptibility",
+      "detail": "## Candidate TL1 — Δfur is the demonstrable driver of phage susceptibility\n\n**Claim.** Loss of the ferric-uptake regulator (Δfur) is the single\ndemonstrable driver of the phage-susceptibility phenotype.\n\n**Evidence chain.** The Δfur knockout shows a 4.1× shift in plaque-forming\nefficiency (fig 3); the effect reverses on complementation; regulon analysis\nties it to three susceptibility genes. This is the claim the data most\ndirectly supports.\n\n**Arc.** TL1 → mechanism → the two confirming figures → implications."
+    },
+    {
+      "id": "TL2",
+      "summary": "Iron-limitation reprograms the phage-defense regulon",
+      "detail": "## Candidate TL2 — Iron-limitation reprograms the phage-defense regulon\n\n**Claim.** Iron limitation reprograms a broad phage-defense regulon, of which\nthe fur effect is one arm.\n\n**Evidence chain.** Leans on the transcriptomic survey (fig 5) more than the\nknockout. More novel-sounding, less airtight — two regulon genes have an\nambiguous direction of effect.\n\n**Arc.** Best where the audience rewards breadth over a single clean result."
+    },
+    {
+      "id": "TL3",
+      "summary": "A two-gene switch gates the whole susceptibility phenotype",
+      "detail": "## Candidate TL3 — A two-gene switch gates the whole susceptibility phenotype\n\n**Claim.** A two-gene epistatic switch gates the entire susceptibility\nphenotype.\n\n**Evidence chain.** Tightest, most provocative, but the second gene's role\nrests on a single un-replicated epistasis experiment (fig 6). A sharp\nreviewer will press on n=1.\n\n**Arc.** Reserve for a venue where the provocative framing is worth the risk."
+    }
+  ],
+  "default": "TL1",
+  "confirm": true,
+  "continue": {
+    "cmd": "beril-presentation-maker continue /projects/ibd_phage_targeting/talks/draft_7 --pick {id}"
+  }
+}
