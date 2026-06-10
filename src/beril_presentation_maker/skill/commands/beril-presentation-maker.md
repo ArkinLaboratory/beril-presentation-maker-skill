@@ -168,58 +168,54 @@ throughline-pick state. The draft_dir path was printed near the top
 of the bash output ("draft dir: ...") and is also the path under
 `projects/<project_id>/talks/draft_N/`.
 
-Read the handoff JSON in a Bash block:
+The handoff is a **`decision.v1`** payload (CRAFT Cycle-4): it EXTENDS
+the throughline-pick handoff with the inline-decision presentation
+fields. Read it in a Bash block:
 
     cat <draft_dir>/.handoff.json
 
-The expected fields:
+The fields you act on:
 
-- `phase` — should be `"throughline_pick"`
-- `candidates` — an array of `{id, label}` objects (TL1, TL2, ...)
-- `candidates_md` — absolute path to the full candidates markdown with
-  per-candidate evidence maps
-- `next_command` — the canonical command shape to invoke next
+- `phase` — should be `"throughline_pick"` (and `gate` equals it)
+- `schema_version` — `"decision.v1"`
+- `prompt` — the question to put to the user
+- `kind` — `"single_select"`
+- `options` — array of `{id, summary, detail}` (TL1, TL2, ...). The
+  `detail` is the **full** per-candidate evidence map — render it
+  completely, do not truncate.
+- `default` — the id chosen by `--auto-advance` if the user doesn't pick
+- `confirm` — `true` for the throughline gate (echo-and-confirm beat)
+- `continue.cmd` — the command to resume, with an `{id}` placeholder
 
 If `phase` is anything other than `"throughline_pick"`, something
 upstream went wrong; tell the user and stop. If the handoff doesn't
 exist at all, the bash either completed (look for the .pptx) or
 errored (re-read the bash output for the failure mode).
 
-**Before invoking AskUserQuestion**, in a Bash block tell the user
-the absolute path to the candidates markdown so they can open it in
-a separate terminal or scrollback for the full evidence map per
-candidate. The AskUserQuestion widget truncates descriptions, and
-the evidence map is the substantive material:
+**Apply the CRAFT interaction-layer contract (SKILL.md → rule 2):**
+render the decision **completely inline as your own message** — the
+`prompt`, then every option's `id` + `summary` + **full `detail`**, with
+the `default` marked. Do NOT use the `AskUserQuestion` widget here (it
+truncates the descriptions, and the evidence map is the substantive
+material) and do NOT point the user at a file. Close with a trivial
+choice line, e.g. **"Tell me TL1 / TL2 / TL3."**
 
-    echo "Open this for the full evidence map:"
-    echo "  $(cat <draft_dir>/.handoff.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["candidates_md"])')"
+`confirm` is `true`, so after the user picks, **echo the pick back and
+confirm once** — e.g. *"Resuming with **TL1** — go?"* — and wait. Do not
+silent-auto-run.
 
-**Then invoke AskUserQuestion** with one option per candidate:
+On the go-ahead, take `continue.cmd` from the handoff and **substitute
+the chosen id for `{id}`**, then run it. The user must NEVER see or type
+the raw `--pick` flag or the draft path — you translate their plain
+choice into the command. This is a foreground run; the remaining 12
+stages take 12-20 minutes.
 
-- `label`: the candidate id (e.g. `"TL1"`, `"TL2"`)
-- `description`: use the `label` field from the handoff JSON; trim to
-  one line if the LLM produced a long label
-
-Question framing:
-
-> Pick a throughline candidate. Open the candidates markdown above for
-> the full evidence map per candidate.
-
-After the user selects, **immediately re-invoke the bash** to run
-`continue --pick TLN` and resume the pipeline from substory_design.
-This is a foreground run; the remaining 12 stages take 12-20 minutes.
-
-    beril-presentation-maker continue <draft_dir> --pick TL2 \
-        [--mode <mode>] \
-        [--auto-approve-images] \
-        [--max-image-cost-usd <n>] \
-        [--no-adversarial] \
-        [--max-revise-cost-usd <n>]
-
-Forward whatever flags from Step 4 are still relevant. The `--mode`
-should match the original draft's mode; the orchestrator validates
-this. If image-gen is enabled and you're running unattended, set
-`--auto-approve-images --max-image-cost-usd <cap>`.
+Forward whatever flags from Step 4 are still relevant (append them after
+the substituted `continue.cmd`): the `--mode` should match the original
+draft's mode (the orchestrator validates this); if image-gen is enabled
+and you're running unattended, set `--auto-approve-images
+--max-image-cost-usd <cap>`, plus `--no-adversarial` /
+`--max-revise-cost-usd <n>` as relevant.
 
 ## Step 6 — Surface the output
 

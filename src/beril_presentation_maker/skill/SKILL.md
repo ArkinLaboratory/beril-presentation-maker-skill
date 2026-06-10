@@ -116,6 +116,70 @@ register: `STRONG` (declarative; default), `THIN` (scoped/hedged),
 
 When the user invokes `/beril-presentation-maker`:
 
+### CRAFT interaction layer — how to surface this skill's output
+
+This skill's orchestrator runs as a subprocess. Inside this session its stdout
+is non-TTY (no color) and long output is folded out of view, so **the
+user-facing signal is YOUR message, not the raw tool output.** Your job is to
+re-render the skill's structured signals — STAGE progress, DECISION halts,
+RESULT deliverables — as clear, consistent message text. Follow these rules:
+
+1. **Re-render the structured contract as message text — do not rely on the
+   raw box being visible.** When a tool result contains a CRAFT `STAGE` /
+   `DECISION` / `RESULT` block (or the `decision.v1` / run-record JSON behind
+   it), reconstruct it in your own message in a consistent presentation style.
+   The boxed block in stdout is bare-terminal chrome and a data source; the
+   legible copy the user reads is the one you write. Keep your style consistent
+   run-to-run so the skill's "voice" is recognizable.
+
+2. **On a DECISION halt, render the choice completely + inline, honor
+   `confirm`, then act on the reply.** When the orchestrator halts at a gate it
+   writes a `decision.v1` to `<draft_dir>/.handoff.json` and exits; the run is
+   paused waiting for the user. You MUST:
+   - Present **every** option **completely** — show each option's full
+     `detail` text, not just the `summary`, and never a file path or a "see
+     `.handoff.json`". The user decides from what you show; show all of it.
+   - Make choosing trivial: list the option `id`s (e.g. **TL1 / TL2 / TL3**),
+     note which is the `default`, and ask the user to pick one.
+   - **Honor `confirm`:**
+     - `confirm: true` (consequential, hard-to-reverse gates — e.g. a
+       throughline pick that sets the whole deck): after the user picks, **echo
+       the pick back and confirm once** ("Resuming with **TL1** — go?") BEFORE
+       running `continue.cmd`. Do not silent-auto-run.
+     - `confirm: false` (the choice is cheap or already-spent — e.g. an
+       image-approval where the cost is already incurred): run `continue.cmd`
+       directly on the stated choice; no extra confirmation beat needed.
+   - When you act, invoke the command in `continue.cmd`, substituting the
+     chosen `id` for `{id}`. The user must NEVER see or type the raw `--pick`
+     flag or the draft path — you translate their plain choice into the
+     command and run it.
+   - Do not invent options or change the `id`s; use exactly what `decision.v1`
+     carries. For `kind: free_text`, the user's typed reply fills the `{id}`
+     slot.
+
+3. **Report progress + cost at boundaries, from the run-record — not a
+   continuous tick.** The STAGE banners mark stage boundaries; surface a brief
+   "Stage N/M (<stage>) — <state>" line at those boundaries, and read
+   stage/cost/tokens/model from the run-record (`audit/run_record.json`) when
+   reporting them. Do **not** narrate every internal step or invent a live
+   progress meter (continuous live ticking is deferred). A final cost/summary
+   line when the run completes is welcome; per-step "now I'll run the next
+   stage" narration is noise.
+
+4. **Suppress orchestrator NOISE.** Lines the orchestrator marks as internal
+   (e.g. `[orchestrator] …` diagnostics) are written to
+   `<audit_dir>/orchestrator.log`, not to the user. Do not surface that log
+   content unless the user is debugging or an error/blocker requires it.
+
+5. **Speak up only when it carries signal.** A DECISION (rule 2), an
+   error/blocker, a boundary report (rule 3), or a final summary the user asked
+   for. A bare "Stage 5 is running." with nothing else is worse than silence —
+   let the structured re-render do the work.
+
+> The single throughline-pick halt is the one DECISION gate today (it writes a
+> `decision.v1` extending `.handoff.json`). Step 5 below is its concrete
+> application of rule 2.
+
 ### Step 1 — Resolve project context
 
 This is the agent's most load-bearing inference step. On the BERIL

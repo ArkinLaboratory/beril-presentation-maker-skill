@@ -698,6 +698,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PROMPTS_DIR="$SKILL_DIR/prompts"
 TOOLS_DIR="$SKILL_DIR/tools"
+# CRAFT Cycle-4 (DP6): the vendored chrome.py renderer (byte-identical to
+# craft-platform's canonical — Family-F). Sits at the package root, beside
+# llm_config.py, i.e. one level up from the skill/ dir.
+CHROME_PY="$SKILL_DIR/../chrome.py"
 
 for f in plan.v1.md throughline.v1.md substory_design.v1.md substory_design.v3_overlay.md substory_design.v3.2_overlay.md substory_design.v3.3_overlay.md deck_outline.v1.md slide_compose.v1.md slide_compose.v2.md slide_compose.v3_overlay.md slide_compose.v3.1_overlay.md slide_compose.v3.2_overlay.md intro.v1.md; do
   if [[ ! -f "$PROMPTS_DIR/$f" ]]; then
@@ -937,17 +941,20 @@ build_v3_concat_prompts() {
       > "$SUBSTORY_DESIGN_V3_3_CONCAT_PATH"
   fi
 
-  echo "[orchestrator] v$PROMPTS_VERSION concat prompts:" >&2
+  # CRAFT Cycle-4 (DP6): concat-prompt paths are orchestrator plumbing →
+  # audit/orchestrator.log, not stdout/stderr.
+  local _sc_path _sd_path
   case "$PROMPTS_VERSION" in
-    v3.2|v3.3) echo "  slide_compose:   $SLIDE_COMPOSE_V3_2_CONCAT_PATH" >&2 ;;
-    v3.1)      echo "  slide_compose:   $SLIDE_COMPOSE_V3_1_CONCAT_PATH" >&2 ;;
-    *)         echo "  slide_compose:   $SLIDE_COMPOSE_V3_CONCAT_PATH" >&2 ;;
+    v3.2|v3.3) _sc_path="$SLIDE_COMPOSE_V3_2_CONCAT_PATH" ;;
+    v3.1)      _sc_path="$SLIDE_COMPOSE_V3_1_CONCAT_PATH" ;;
+    *)         _sc_path="$SLIDE_COMPOSE_V3_CONCAT_PATH" ;;
   esac
   case "$PROMPTS_VERSION" in
-    v3.3) echo "  substory_design: $SUBSTORY_DESIGN_V3_3_CONCAT_PATH" >&2 ;;
-    v3.2) echo "  substory_design: $SUBSTORY_DESIGN_V3_2_CONCAT_PATH" >&2 ;;
-    *)    echo "  substory_design: $SUBSTORY_DESIGN_V3_CONCAT_PATH" >&2 ;;
+    v3.3) _sd_path="$SUBSTORY_DESIGN_V3_3_CONCAT_PATH" ;;
+    v3.2) _sd_path="$SUBSTORY_DESIGN_V3_2_CONCAT_PATH" ;;
+    *)    _sd_path="$SUBSTORY_DESIGN_V3_CONCAT_PATH" ;;
   esac
+  _noise "[orchestrator] v$PROMPTS_VERSION concat prompts: slide_compose=$_sc_path substory_design=$_sd_path"
 }
 
 # v0.4 M3: bounded-concurrency worker-pool for parallel slide_compose
@@ -997,7 +1004,47 @@ if [[ -z "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-echo "[orchestrator] using python: $PYTHON_BIN" >&2
+# CRAFT Cycle-4 (DP6): route an [orchestrator]-internal NOISE line off
+# stdout/stderr into audit/orchestrator.log via the vendored chrome.py.
+# Best-effort — a logging write must never break the run. Genuine
+# WARNING/ERROR lines do NOT use this — they stay on stderr where the
+# operator sees them. Pre-flight NOISE (emitted before the audit dir
+# exists) is BUFFERED and flushed by `_noise_flush` once the dir is made,
+# so nothing is silently lost for debugging while stdout/stderr stays
+# clean of config plumbing. (Defined here — before the first top-level
+# NOISE call below — so the pre-flight callers resolve it.)
+_NOISE_BUFFER=()
+_noise() {
+  local msg="$1"
+  local audit_dir="${OUTDIR:+$OUTDIR/audit}"
+  if [[ -n "$audit_dir" && -d "$audit_dir" ]]; then
+    "$PYTHON_BIN" "$CHROME_PY" noise \
+      --audit-dir "$audit_dir" --message "$msg" \
+      2>/dev/null || true
+  else
+    _NOISE_BUFFER+=("$msg")
+  fi
+}
+
+# Flush any pre-flight NOISE buffered before the audit dir existed. Call
+# once, right after the audit dir is created.
+_noise_flush() {
+  local audit_dir="${OUTDIR:+$OUTDIR/audit}"
+  [[ -n "$audit_dir" && -d "$audit_dir" ]] || return 0
+  local m
+  # bash-3.2 + `set -u`: expanding an empty array errors ("unbound
+  # variable") and `set -e` would abort. ${arr[@]+"${arr[@]}"} expands to
+  # nothing when empty, to the elements otherwise. (Same idiom as the
+  # manifest_arg guard elsewhere in this file.)
+  for m in ${_NOISE_BUFFER[@]+"${_NOISE_BUFFER[@]}"}; do
+    "$PYTHON_BIN" "$CHROME_PY" noise \
+      --audit-dir "$audit_dir" --message "$m" \
+      2>/dev/null || true
+  done
+  _NOISE_BUFFER=()
+}
+
+_noise "[orchestrator] using python: $PYTHON_BIN"
 
 # --- Pre-flight: verify python deps in the discovered interpreter ---
 # Burned ~\$6 across two smoke runs (2026-04-26) discovering python-pptx
@@ -1068,14 +1115,14 @@ for line in env_file.read_text(encoding='utf-8').splitlines():
           if [[ -z "${CBORG_API_KEY:-}" ]] && [[ -n "$_v" ]]; then
             CBORG_API_KEY="$_v"
             export CBORG_API_KEY
-            echo "[orchestrator] CBORG_API_KEY loaded from BERIL_ROOT/.env" >&2
+            _noise "[orchestrator] CBORG_API_KEY loaded from BERIL_ROOT/.env"
           fi
           ;;
         GOOGLE_AI_STUDIO_API_KEY)
           if [[ -z "${GOOGLE_AI_STUDIO_API_KEY:-}" ]] && [[ -n "$_v" ]]; then
             GOOGLE_AI_STUDIO_API_KEY="$_v"
             export GOOGLE_AI_STUDIO_API_KEY
-            echo "[orchestrator] GOOGLE_AI_STUDIO_API_KEY loaded from BERIL_ROOT/.env" >&2
+            _noise "[orchestrator] GOOGLE_AI_STUDIO_API_KEY loaded from BERIL_ROOT/.env"
           fi
           ;;
       esac
@@ -1094,10 +1141,10 @@ fi
 if [[ -z "$IMAGE_PROVIDER" ]]; then
   if [[ -n "${GOOGLE_AI_STUDIO_API_KEY:-}" ]]; then
     IMAGE_PROVIDER="google_ai_studio"
-    echo "[orchestrator] image-gen provider: google_ai_studio (GOOGLE_AI_STUDIO_API_KEY present)" >&2
+    _noise "[orchestrator] image-gen provider: google_ai_studio (GOOGLE_AI_STUDIO_API_KEY present)"
   elif [[ -n "${CBORG_API_KEY:-}" ]]; then
     IMAGE_PROVIDER="cborg"
-    echo "[orchestrator] image-gen provider: cborg (CBORG_API_KEY present)" >&2
+    _noise "[orchestrator] image-gen provider: cborg (CBORG_API_KEY present)"
   fi
 else
   # --image-provider explicit: validate the corresponding env var
@@ -1117,7 +1164,7 @@ else
       exit 2
       ;;
   esac
-  echo "[orchestrator] image-gen provider: $IMAGE_PROVIDER (via --image-provider)" >&2
+  _noise "[orchestrator] image-gen provider: $IMAGE_PROVIDER (via --image-provider)"
 fi
 export IMAGE_PROVIDER
 
@@ -1225,6 +1272,9 @@ set_draft_paths() {
 
 init_draft_layout "$OUTDIR"
 set_draft_paths "$OUTDIR"
+# CRAFT Cycle-4 (DP6): the audit dir now exists — flush any pre-flight
+# NOISE buffered before it did into audit/orchestrator.log.
+_noise_flush
 # v0.5.1/D-075: build the v3 concat-prompt files now that $AUDIT_DIR is
 # populated. No-op for v1/v2 paths.
 build_v3_concat_prompts
@@ -1624,6 +1674,18 @@ _record_stage() {
     2>/dev/null || true
 }
 
+# CRAFT Cycle-4 (DP6) P1: stage-START write. Call at a stage's ENTRY so
+# the run-record's current_stage names the IN-PROGRESS stage (feeds
+# boundary cost reporting + `craft status`), not the last-completed one.
+# The subsequent `_record_stage <id> completed` call (post-stage)
+# overwrites the running entry with real cost/tokens. Pure data write —
+# no display (the in-function `[Stage N/M]` echoes remain the bare-terminal
+# signal). No-op when the audit dir doesn't exist yet.
+_stage_begin() {
+  local stage_id="$1"
+  _record_stage "$stage_id" running >/dev/null 2>&1 || true
+}
+
 # ==============================================================================
 # Stages
 # ==============================================================================
@@ -1633,6 +1695,7 @@ stage_plan() {
   _stage_set_model reasoning
   echo "" >&2
   echo "[Stage 1/4] plan (tier=reasoning, model=$MODEL)" >&2
+  _stage_begin plan
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 MODE=$MODE
@@ -1656,6 +1719,7 @@ stage_throughline() {
   _stage_set_model reasoning
   echo "" >&2
   echo "[Stage 2/4] throughline (candidates) (tier=reasoning, model=$MODEL)" >&2
+  _stage_begin throughline_candidates
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 PLAN_PATH=$PLAN_PATH
@@ -1766,7 +1830,7 @@ emit_throughline_handoff() {
   local handoff="$OUTDIR/.handoff.json"
 
   "$PYTHON_BIN" - "$candidates" "$handoff" "$OUTDIR" <<'PYEOF'
-import json, os, re, sys
+import json, re, sys
 
 candidates_path, handoff_path, draft_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -1777,17 +1841,27 @@ with open(candidates_path, encoding="utf-8") as f:
 # `## Candidate TL1 —`, `## Candidate TL1:` (live throughline.v1
 # produced the last shape on 2026-04-26; consistent with the grep
 # pattern this gate used in the pre-v0.3.6 read-from-TTY codepath).
-candidates = []
-for m in re.finditer(
-    r"^##\s+(Candidate\s+)?(TL\d+)[\s:—–-]+(.+?)$",
-    text,
+HEADER_RE = re.compile(
+    r"^##\s+(?:Candidate\s+)?(TL\d+)[\s:—–-]+(.+?)$",
     re.MULTILINE,
-):
-    cid = m.group(2)
-    label = m.group(3).strip()
-    if len(label) > 120:
-        label = label[:117] + "..."
-    candidates.append({"id": cid, "label": label})
+)
+
+# Collect each candidate with its H2 match span so we can slice the FULL
+# section body (header → next H2 / EOF) as the decision.v1 `detail`. The
+# short label (≤120c) is the `summary`; the complete section is `detail`
+# (CRAFT Cycle-4 decision.v1: the user decides from what we show, so show
+# every candidate's full reasoning, never a truncated pointer).
+matches = list(HEADER_RE.finditer(text))
+candidates = []   # legacy handoff shape the continue CLI already reads
+options = []       # decision.v1 presentation shape (extends the same file)
+for i, m in enumerate(matches):
+    cid = m.group(1)
+    label = m.group(2).strip()
+    summary = label if len(label) <= 120 else label[:117] + "..."
+    section_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+    detail = text[m.start():section_end].rstrip()
+    candidates.append({"id": cid, "label": summary})
+    options.append({"id": cid, "summary": summary, "detail": detail})
 
 if not candidates:
     print(
@@ -1796,21 +1870,42 @@ if not candidates:
     )
     sys.exit(1)
 
+# decision.v1 EXTENDS the handoff (CRAFT Cycle-4, DP6): we RETAIN the keys
+# the continue CLI reads (phase authorizes --pick) and ADD the presentation
+# fields. `gate` MUST equal `phase`. confirm=true: a throughline sets the
+# whole deck, so Claude echoes the pick + a one-beat "resuming with TLn —
+# go?" before running continue.cmd. Contract:
+# craft-platform/docs/reference/chrome-interaction-contract.md.
+payload = {
+    # --- retained handoff keys (continue CLI reads these) ---
+    "phase": "throughline_pick",
+    "draft_dir": draft_dir,
+    "candidates": candidates,
+    "candidates_md": candidates_path,
+    "next_command": (
+        f"beril-presentation-maker continue {draft_dir} --pick TLN"
+    ),
+    # --- decision.v1 presentation fields ---
+    "schema_version": "decision.v1",
+    "skill": "presentation-maker",
+    "gate": "throughline_pick",
+    "prompt": (
+        "Pick the throughline for the deck — it sets every downstream "
+        "slide. Which single claim should the talk argue?"
+    ),
+    "kind": "single_select",
+    "options": options,
+    "default": candidates[0]["id"],
+    "confirm": True,
+    "continue": {
+        "cmd": (
+            f"beril-presentation-maker continue {draft_dir} --pick {{id}}"
+        )
+    },
+}
+
 with open(handoff_path, "w", encoding="utf-8") as f:
-    json.dump(
-        {
-            "phase": "throughline_pick",
-            "draft_dir": draft_dir,
-            "candidates": candidates,
-            "candidates_md": candidates_path,
-            "next_command": (
-                f"beril-presentation-maker continue {draft_dir} --pick TLN"
-            ),
-        },
-        f,
-        ensure_ascii=False,
-        indent=2,
-    )
+    json.dump(payload, f, ensure_ascii=False, indent=2)
 
 print(
     f"  wrote {len(candidates)} candidates to {handoff_path}",
@@ -1824,6 +1919,7 @@ stage_substory_design() {
   _stage_set_model reasoning
   echo "" >&2
   echo "[Stage 3/5] substory_design (tier=reasoning, model=$MODEL)" >&2
+  _stage_begin substory_design
   local user_prompt="OUT_PATH=$out
 PROJECT_DIR=$PROJECT_DIR
 PLAN_PATH=$PLAN_PATH
@@ -1857,6 +1953,7 @@ Write the result to OUT_PATH."
 stage_phase0_tooling() {
   echo "" >&2
   echo "[Stage 2.5/5] phase0_tooling (claim_inventory + methods_provenance)" >&2
+  _stage_begin phase0_tooling
 
   local log="$STAGE_LOGS_DIR/phase0_tooling.log"
   if "$PYTHON_BIN" "$TOOLS_DIR/phase0_reuse.py" \
@@ -1893,6 +1990,7 @@ stage_deck_outline() {
   _stage_set_model reasoning
   echo "" >&2
   echo "[Stage 3/5] deck_outline (v0.4 — M2-lite) (tier=reasoning, model=$MODEL)" >&2
+  _stage_begin deck_outline
 
   # Phase-0 artifacts (v0.4 M3: produced upstream by stage_phase0_tooling,
   # stage_curate_figures, stage_citation_pool, stage_cross_tenant — the
@@ -2009,6 +2107,7 @@ stage_curate_figures() {
   # from REPORT.md / notebook scans.
   echo "" >&2
   echo "[Stage 3.5/5] curate_figures (no LLM)" >&2
+  _stage_begin curate_figures
 
   # v0.8/D-093: if 02_substories.md exists, pass it to curate so the
   # per-substory floor kicks in. The curator will guarantee ≥1 figure
@@ -2092,6 +2191,7 @@ stage_citation_pool() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 3.7/5] citation_pool (tier=standard, model=$MODEL)" >&2
+  _stage_begin citation_pool
 
   local pool_path="$CITATION_POOL_PATH"
 
@@ -2149,6 +2249,7 @@ stage_cross_tenant() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 3.8/5] cross_tenant (tier=standard, model=$MODEL)" >&2
+  _stage_begin cross_tenant
 
   local signal_md="$CROSS_TENANT_MD"
   local signal_json="$CROSS_TENANT_JSON"
@@ -2228,6 +2329,7 @@ stage_deck_close() {
   _stage_set_model reasoning
   echo "" >&2
   echo "[Stage 4.5/5] deck_close (tier=reasoning, model=$MODEL)" >&2
+  _stage_begin deck_close
 
   if [[ "$MODE" != "talk-30" ]]; then
     echo "  mode=$MODE — deck_close is optional below talk-30 STRONG (D-086); skipping" >&2
@@ -2312,6 +2414,7 @@ stage_intro() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 4/5] intro (tier=standard, model=$MODEL)" >&2
+  _stage_begin intro
 
   # Mode-aware short-circuit: lightning-5 and posters skip intro entirely.
   # Still emit a fragment with empty slides[] so the merge step has a
@@ -2605,6 +2708,7 @@ stage_slide_compose() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 5/5] slide_compose (per substory) (tier=standard, model=$MODEL)" >&2
+  _stage_begin slide_compose
 
   # Enumerate substory IDs from the clustering output (substory_design
   # for v0.3.x; the enriched deck_outline for v0.4 — both keep the
@@ -2651,6 +2755,7 @@ stage_qa_prep() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 5.7/7] qa_prep (tier=standard, model=$MODEL)" >&2
+  _stage_begin qa_prep
 
   # Mode-aware QA budget: skip for posters (qa makes no sense in poster)
   if [[ "$MODE" == "poster-h" || "$MODE" == "poster-v" ]]; then
@@ -2729,6 +2834,7 @@ stage_speaker_notes() {
   _stage_set_model standard
   echo "" >&2
   echo "[Stage 5.5/7] speaker_notes (per substory) (tier=standard, model=$MODEL)" >&2
+  _stage_begin speaker_notes
 
   local notes_dir="$SPEAKER_NOTES_DIR"
   mkdir -p "$notes_dir"
@@ -2811,6 +2917,7 @@ stage_image_gen() {
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 11/14] image_gen (concept_illustration → AI image) (tier=standard, model=$MODEL)" >&2
+  _stage_begin image_gen
   echo "──────────────────────────────────────────────────" >&2
 
   # CRAFT-CONTRACT §3.4 / brief §5a: image generation is OPTIONAL with
@@ -3449,6 +3556,7 @@ stage_review_cascade() {
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 11.5/13] review_cascade (M4b Tier A scaffolding)" >&2
+  _stage_begin review_cascade
   echo "──────────────────────────────────────────────────" >&2
 
   # Pre-cascade checkpoint marker (D-090).
@@ -3497,6 +3605,7 @@ stage_adversarial_review() {
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 12/13] adversarial_review (--type presentation)" >&2
+  _stage_begin adversarial_review
   echo "──────────────────────────────────────────────────" >&2
 
   # v0.3.2.5: prefer the v0.6.0+ Python CLI subcommand
@@ -3629,6 +3738,7 @@ stage_revise_slides() {
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 13/13] revise_slides (review-rewrite loop) (tier=standard, model=$MODEL)" >&2
+  _stage_begin revise_slides
   echo "──────────────────────────────────────────────────" >&2
 
   local review_path="$ADVERSARIAL_REVIEW_JSON"
@@ -3745,6 +3855,7 @@ stage_visual_qa_final() {
   echo "" >&2
   echo "──────────────────────────────────────────────────" >&2
   echo "[Stage 14/14] visual_qa_final (Tier G.7 — post-revise QA gate)" >&2
+  _stage_begin visual_qa_final
   echo "──────────────────────────────────────────────────" >&2
 
   # Pre-flight: need a deck + an adversarial_review.json to augment.

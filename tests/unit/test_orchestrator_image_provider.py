@@ -68,11 +68,19 @@ def _run_snippet(env: dict[str, str],
     resolved IMAGE_PROVIDER + which keys were loaded.
     """
     block = _extract_auth_block()
+    # CRAFT Cycle-4 (DP6): the auth block now routes informational
+    # [orchestrator] lines through `_noise` (→ audit/orchestrator.log,
+    # NOT stdout/stderr). The real script defines `_noise` before this
+    # block; the snippet harness provides a stub that re-emits to stderr
+    # so the existing "the loaded-marker was produced" assertions still
+    # verify `_noise` was called with the right message — without coupling
+    # the test to whether production sends it to stderr or the log.
     wrapper = textwrap.dedent(f"""\
         set -euo pipefail
         BERIL_ROOT={beril_root!s}
         PYTHON_BIN={sys.executable!s}
         IMAGE_PROVIDER={image_provider_initial!r}
+        _noise() {{ echo "$1" >&2; }}
         {block}
         # Summary line for test assertions
         echo "RESOLVED_PROVIDER=$IMAGE_PROVIDER"

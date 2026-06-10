@@ -381,12 +381,18 @@ def test_allowlist_loaded_from_project_dir_when_v3():
 def _extract_function(text: str, fname: str) -> str:
     """Pull a bash function body (including the `name() { ... }`)
     out of the orchestrator source. Heuristic — the orchestrator's
-    function bodies are short and end at `^}` at column 0."""
+    function bodies are short and end at `^}` at column 0.
+
+    CRAFT Cycle-4 (DP6): the extracted function may now call `_noise`
+    (NOISE→audit/orchestrator.log). The real script defines `_noise`
+    before the function; here we prepend a no-op stub so the extracted
+    body runs standalone. We test the function's own behavior, not the
+    logging side-channel (covered separately)."""
     start = text.find(f"{fname}() {{")
     if start < 0:
         raise AssertionError(f"could not locate function {fname}")
     end = text.find("\n}\n", start) + 2
-    return text[start:end]
+    return "_noise() { :; }\n" + text[start:end]
 
 
 def test_build_v3_concat_creates_audit_prompts_file(tmp_path):
