@@ -139,8 +139,15 @@ RESULT deliverables — as clear, consistent message text. Follow these rules:
    - Present **every** option **completely** — show each option's full
      `detail` text, not just the `summary`, and never a file path or a "see
      `.handoff.json`". The user decides from what you show; show all of it.
+   - **Never use the `AskUserQuestion` tool/widget for a `decision.v1` halt** —
+     it truncates each option's `detail`, and the evidence map IS the substance
+     of the choice. Render the entire decision **as your own message text** and
+     collect the pick as a plain reply. Do **not** substitute a summary table or
+     a file pointer either. (`AskUserQuestion` stays in `allowed-tools` for
+     other, non-`decision.v1` interactions — just never for this.)
    - Make choosing trivial: list the option `id`s (e.g. **TL1 / TL2 / TL3**),
-     note which is the `default`, and ask the user to pick one.
+     note which is the `default`, and ask the user to pick one **in plain text**
+     (e.g. "Tell me TL1 / TL2 / TL3").
    - **Honor `confirm`:**
      - `confirm: true` (consequential, hard-to-reverse gates — e.g. a
        throughline pick that sets the whole deck): after the user picks, **echo
