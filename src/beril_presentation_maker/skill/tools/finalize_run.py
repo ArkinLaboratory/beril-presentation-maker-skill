@@ -1329,6 +1329,21 @@ def record_finalize(
     canonical, _archive = write_run_record_canonical_and_archive(
         paths, record, run_n,
     )
+
+    # C1-D telemetry egress: project the (now A2-verified, persisted) record
+    # through the strict drop-by-default whitelist and best-effort batch-write
+    # ONE JSONL to the shared egress root. Disabled (CRAFT_TELEMETRY_ROOT=off)
+    # → cheap no-op. NEVER raises / slows finalize (the never-perturb rule):
+    # the egress fn swallows its own faults, and this wrapper double-guards so
+    # a vendored-import hiccup can't perturb the run either.
+    try:
+        # vendored telemetry egress at the package root (beside chrome.py)
+        from beril_presentation_maker import telemetry as _craft_telemetry
+        _craft_telemetry.egress_run_record(record, audit_dir=paths.audit)
+    except Exception as _exc:  # noqa: BLE001 — telemetry NEVER perturbs finalize
+        print(f"finalize_run: telemetry egress skipped "
+              f"({type(_exc).__name__}: {_exc}).", file=sys.stderr)
+
     return canonical
 
 
