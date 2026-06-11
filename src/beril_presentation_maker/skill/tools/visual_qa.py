@@ -350,10 +350,18 @@ def write_stub_reports(
     out_md_path: Path,
     draft_dir: Path,
     note: str,
+    skipped_reason: str | None = None,
 ) -> None:
     """Write minimal advisory reports when the pass cannot run (missing
     toolchain, missing spec, render failure). Always exits 0, so the
-    operator gets *some* artifact explaining what happened."""
+    operator gets *some* artifact explaining what happened.
+
+    C1-B: when the pass is skipped because of a MISSING HOST BINARY
+    (soffice/pdftoppm), pass `skipped_reason` — it's stamped into the
+    stub JSON as `skipped: true` + `skipped_reason`, so the orchestrator
+    records an explicit `skipped`-with-reason in the run-record instead of
+    a silent `completed`. An auto-on stage that can't run is a P1, not a
+    silent pass."""
     payload = {
         "schema_version": SCHEMA_VERSION,
         "draft_dir": str(draft_dir),
@@ -361,6 +369,9 @@ def write_stub_reports(
         "findings": [],
         "note": note,
     }
+    if skipped_reason is not None:
+        payload["skipped"] = True
+        payload["skipped_reason"] = skipped_reason
     out_json_path.parent.mkdir(parents=True, exist_ok=True)
     out_json_path.write_text(json.dumps(payload, indent=2) + "\n")
     md = (
@@ -408,14 +419,23 @@ def run_visual_qa(
     status = probe_toolchain(claude_bin)
     if not status.ok:
         missing = ", ".join(status.missing())
-        write_stub_reports(
-            out_json, out_md, draft_dir,
-            note=f"visual-QA toolchain incomplete (missing: {missing}); "
-                 f"install LibreOffice + Poppler + Claude Code CLI to enable.",
+        reason = (
+            f"visual-QA toolchain incomplete (missing: {missing}); "
+            f"install LibreOffice + Poppler + Claude Code CLI to enable."
         )
-        if not quiet:
-            print(f"  visual-qa: skipped — missing dependencies: {missing}",
-                  file=sys.stderr)
+        write_stub_reports(
+            out_json, out_md, draft_dir, note=reason, skipped_reason=reason,
+        )
+        # C1-B: a missing host binary is a P1 the operator must see — make
+        # it LOUD (unconditional, not quiet-suppressible). The advisory
+        # rc=0 contract is preserved; the orchestrator reads `skipped` from
+        # the stub JSON and records skipped-with-reason in the run-record.
+        print(
+            f"  ⚠ visual-qa: SKIPPED — missing host dependencies: "
+            f"{missing}. This is a P1: an auto-on stage could not run. "
+            f"Install LibreOffice (soffice) + Poppler (pdftoppm) to enable.",
+            file=sys.stderr,
+        )
         return 0
 
     # --- 2. Locate slide_spec.json ---

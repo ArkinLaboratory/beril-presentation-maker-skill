@@ -362,6 +362,115 @@ def test_resume_no_record_allocates_fresh(tmp_path):
     assert action == "allocated" and run_n == 1
 
 
+# ---------------------------------------------------------------------------
+# C1-A1 — reopen on `failed` (the disposition fix). A `--resume-from` after
+# a mid-pipeline FAILURE is a CONTINUATION of the same build, not a redo:
+# the stages the failed run completed before the failure MUST be carried,
+# not dropped. (The C1-A defect bucketed `failed` with `completed` → opened
+# a fresh empty run → lost substory_design/curate_figures cost, ~$5/$40.)
+# ---------------------------------------------------------------------------
+
+def test_resume_on_failed_record_reopens_not_fresh(tmp_path):
+    """status=failed → reopen the SAME run (continuation), not allocate."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="plan", status="completed", cost_usd=1.0,
+                    started_at="2026-06-08T17:00:05Z",
+                    finished_at="2026-06-08T17:01:00Z")
+    # mid-pipeline failure → canonical status=failed
+    fr.record_finalize(paths, exit_code=2, started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+    assert _read_canonical(paths)["status"] == "failed"
+    _c, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T18:00:00Z", skill_version="1.3.1")
+    assert action == "reopened" and run_n == 1
+    assert _read_canonical(paths)["status"] == "running"
+
+
+def test_failure_then_resume_carries_completed_stages_no_drop_no_dup(tmp_path):
+    """C1-A ACCEPTANCE (deterministic repro of the $40-run drop).
+
+    Sequence: a run completes plan + substory_design + curate_figures,
+    then qa_prep FAILS (finalize exit nonzero → status=failed). A
+    `--resume-from qa_prep` reopens and completes qa_prep + merge.
+
+    PASS = the canonical holds ALL completed stages (substory_design +
+    curate_figures PRESENT — the dropped-on-the-$40-run stages), each
+    exactly ONCE (no double-count), status=completed, and total ==
+    sum over what actually ran (NOT a fresh-run undercount). The failed
+    qa_prep entry transitions failed→completed in place (no duplicate id).
+    """
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    # --- continue#1: runs past the gate, completes 3 stages, then qa_prep
+    #     fails ---
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="plan", status="completed", cost_usd=0.20,
+                    started_at="2026-06-08T17:00:05Z",
+                    finished_at="2026-06-08T17:01:00Z")
+    fr.record_stage(paths, stage_id="substory_design", status="completed",
+                    cost_usd=4.99, started_at="2026-06-08T17:01:05Z",
+                    finished_at="2026-06-08T17:06:00Z")
+    fr.record_stage(paths, stage_id="curate_figures", status="completed",
+                    cost_usd=0.00, started_at="2026-06-08T17:06:05Z",
+                    finished_at="2026-06-08T17:06:30Z")
+    # qa_prep started but failed (record the running entry then fail-finalize)
+    fr.record_stage(paths, stage_id="qa_prep", status="running",
+                    started_at="2026-06-08T17:07:00Z")
+    fr.record_finalize(paths, exit_code=1, started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+    assert _read_canonical(paths)["status"] == "failed"
+
+    # --- continue#2: --resume-from qa_prep → reopen (NOT fresh) ---
+    _c, run_n, action = fr.record_resume_or_start(
+        paths, started_at="2026-06-08T18:00:00Z", skill_version="1.3.1")
+    assert action == "reopened" and run_n == 1, (
+        "C1-A: a resume after failure must REOPEN the same run, not "
+        f"allocate a fresh one (got action={action!r}, run-{run_n})"
+    )
+    # qa_prep now succeeds (upserts failed/running → completed in place),
+    # then merge runs.
+    fr.record_stage(paths, stage_id="qa_prep", status="completed",
+                    cost_usd=1.05, started_at="2026-06-08T18:00:05Z",
+                    finished_at="2026-06-08T18:01:30Z")
+    fr.record_stage(paths, stage_id="merge", status="completed", cost_usd=0.00,
+                    started_at="2026-06-08T18:01:35Z",
+                    finished_at="2026-06-08T18:01:50Z")
+    fr.record_finalize(paths, exit_code=0, started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+
+    rec = _read_canonical(paths)
+    assert rec["status"] == "completed"
+    assert rec["run_id"] == "run-1"  # ONE run across the failure
+    ids = [s["id"] for s in rec["stages"]]
+    # no duplicate ids (the failed-stage upserts in place)
+    assert len(ids) == len(set(ids)), f"duplicate stage ids: {ids}"
+    completed = {s["id"] for s in rec["stages"]
+                 if s.get("status") == "completed"}
+    # the stages the failed run completed before the failure are CARRIED
+    assert {"plan", "substory_design", "curate_figures"} <= completed, (
+        "C1-A drop: pre-failure completed stages missing from canonical — "
+        f"completed={sorted(completed)}"
+    )
+    # and the post-resume stages
+    assert {"qa_prep", "merge"} <= completed
+    # qa_prep is completed (transitioned from failed/running, single entry)
+    qa_entries = [s for s in rec["stages"] if s["id"] == "qa_prep"]
+    assert len(qa_entries) == 1 and qa_entries[0]["status"] == "completed"
+    # A3: total == sum over the ACCUMULATED stages (ground-truth cost of
+    # what actually ran: 0.20 + 4.99 + 0.00 + 1.05 + 0.00 = 6.24), NOT a
+    # fresh-run undercount that drops substory's 4.99.
+    assert abs(rec["totals"]["cost_usd"] - 6.24) < 1e-9, (
+        f"total mis-accounts the carried stages: {rec['totals']['cost_usd']}"
+    )
+    # exactly one run dir
+    run_dirs = sorted(p.name for p in paths.runs_dir.iterdir() if p.is_dir())
+    assert run_dirs == ["run-1"]
+
+
 def test_cli_record_start_resume_reopens(tmp_path, capsys):
     """The shell's `record-start --resume` path re-opens a halted run."""
     paths = dp.DraftPaths.from_draft_dir(tmp_path)
@@ -417,6 +526,106 @@ def test_record_stage_append_then_finalize(tmp_path):
     assert rec["exit_code"] == 0
     assert rec["finished_at"] is not None
     assert rec["current_stage"] is None
+
+
+def test_finalize_completeness_guard_fires_on_dropped_stage(tmp_path):
+    """C1-A2 (presmaker wiring): if a (hypothetical) resume regression
+    produced a canonical that drops a stage an ARCHIVED run completed,
+    record_finalize must REFUSE to finalize as completed and raise
+    CompletenessError. Defense-in-depth: even if A1 regresses, this fires.
+
+    We simulate the regression directly: an archived run-1 that completed
+    substory_design, and a canonical run-2 that lacks it, then finalize."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    # Forge an archived run-1 that completed substory_design (a prior run
+    # that finished those stages before dying).
+    run1 = paths.runs_dir / "run-1"
+    run1.mkdir(parents=True, exist_ok=True)
+    archived = {
+        "run_id": "run-1", "status": "failed",
+        "stages": [
+            {"id": "plan", "status": "completed"},
+            {"id": "substory_design", "status": "completed"},
+        ],
+    }
+    (run1 / "run_record.json").write_text(json.dumps(archived),
+                                          encoding="utf-8")
+    # Canonical run-2 only ran the late stages (the dropped-stage bug).
+    fr.record_start(paths, started_at="2026-06-08T18:00:00Z",
+                    skill_version="1.3.1")
+    # bump it to run-2 by faking a prior completed run would be complex;
+    # instead assert directly against the guard semantics: the canonical
+    # (run-2, no substory_design) vs the archive (run-1, has it).
+    canonical_now = fr._load_existing_record(paths.run_record)
+    # the just-started canonical is run-2 (run-1 dir exists) with no stages
+    assert canonical_now["run_id"] == "run-2"
+    fr.record_stage(paths, stage_id="qa_prep", status="completed",
+                    cost_usd=1.0, started_at="2026-06-08T18:00:05Z",
+                    finished_at="2026-06-08T18:01:00Z")
+    with pytest.raises(fr.CompletenessError) as ei:
+        fr.record_finalize(paths, exit_code=0,
+                           started_at="2026-06-08T18:00:00Z",
+                           skill_version="1.3.1")
+    msg = "; ".join(ei.value.errors)
+    assert "substory_design" in msg and "must never drop" in msg
+    # and the canonical was NOT written as completed
+    assert fr._load_existing_record(paths.run_record)["status"] != "completed"
+
+
+def test_finalize_cli_completeness_failure_returns_nonzero(tmp_path, capsys):
+    """The CLI surfaces the guard as a non-zero exit (loud)."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    run1 = paths.runs_dir / "run-1"
+    run1.mkdir(parents=True, exist_ok=True)
+    (run1 / "run_record.json").write_text(json.dumps({
+        "run_id": "run-1", "status": "failed",
+        "stages": [{"id": "substory_design", "status": "completed"}],
+    }), encoding="utf-8")
+    fr.record_start(paths, started_at="2026-06-08T18:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="qa_prep", status="completed",
+                    cost_usd=1.0, started_at="2026-06-08T18:00:05Z",
+                    finished_at="2026-06-08T18:01:00Z")
+    rc = fr.main([
+        "record-finalize", "--draft-dir", str(tmp_path),
+        "--exit-code", "0", "--started-at", "2026-06-08T18:00:00Z",
+    ])
+    assert rc == 3  # non-zero, loud
+    err = capsys.readouterr().err
+    assert "COMPLETENESS FAILURE" in err and "substory_design" in err
+
+
+def test_finalize_completeness_guard_passes_normal_resume(tmp_path):
+    """Defensive: the guard must NOT false-fire on a correct A1 resume,
+    where the failed run's archive shares the canonical's run_id (skipped)
+    and the carried stages are present."""
+    paths = dp.DraftPaths.from_draft_dir(tmp_path)
+    paths.init_layout()
+    fr.record_start(paths, started_at="2026-06-08T17:00:00Z",
+                    skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="plan", status="completed", cost_usd=0.2,
+                    started_at="2026-06-08T17:00:05Z",
+                    finished_at="2026-06-08T17:01:00Z")
+    fr.record_stage(paths, stage_id="substory_design", status="completed",
+                    cost_usd=4.99, started_at="2026-06-08T17:01:05Z",
+                    finished_at="2026-06-08T17:06:00Z")
+    fr.record_finalize(paths, exit_code=1, started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")  # failed
+    # resume (reopen run-1, same run_id) → complete
+    fr.record_resume_or_start(paths, started_at="2026-06-08T18:00:00Z",
+                              skill_version="1.3.1")
+    fr.record_stage(paths, stage_id="qa_prep", status="completed",
+                    cost_usd=1.0, started_at="2026-06-08T18:00:05Z",
+                    finished_at="2026-06-08T18:01:00Z")
+    # must NOT raise — substory_design carried, archive run_id == canonical
+    fr.record_finalize(paths, exit_code=0, started_at="2026-06-08T17:00:00Z",
+                       skill_version="1.3.1")
+    rec = _read_canonical(paths)
+    assert rec["status"] == "completed"
+    assert {"plan", "substory_design", "qa_prep"} <= {
+        s["id"] for s in rec["stages"] if s["status"] == "completed"}
 
 
 def test_record_finalize_failed_when_exit_nonzero(tmp_path):

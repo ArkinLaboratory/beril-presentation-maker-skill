@@ -85,6 +85,18 @@ _TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_TOOLS_DIR))
 import draft_paths as dp  # noqa: E402
 
+
+class CompletenessError(Exception):
+    """Raised at finalize when the C1-A2 completeness guard finds the
+    canonical would drop a stage a prior run completed. Carries the list
+    of human-readable error strings. Caught at the CLI boundary → loud
+    non-zero exit; never silently swallowed."""
+
+    def __init__(self, errors: list):
+        self.errors = errors
+        super().__init__("; ".join(errors))
+
+
 # Stage name extraction. Per-stage metadata files land at paths like:
 #   working/00_plan.md.metadata.json          → "plan"
 #   working/00_throughline_candidates.md.metadata.json → "throughline_candidates"
@@ -200,6 +212,100 @@ def _next_run_n(runs_dir: Path) -> int:
                 f"too many existing runs"
             )
     return n
+
+
+# ---------------------------------------------------------------------------
+# C1-A2 — cross-record completeness guard (VENDORED from craft.run_record)
+# ---------------------------------------------------------------------------
+#
+# The canonical implementation lives in craft-platform
+# `craft.run_record.check_no_dropped_stages`. This skill ships STANDALONE
+# on the hub (`pipx install …beril-presentation-maker-skill.git`, no
+# craft-platform on PYTHONPATH), so — like the run-record validator and the
+# llm_config/chrome vendoring — the function is COPIED here, not imported.
+# A craft-platform conformance check pins this copy byte-equal to the
+# canonical (don't edit one without the other). Keep the two in sync.
+#
+# Why it's needed: a resume must NEVER lose a stage a prior run completed.
+# The per-record reconciliation only checks totals==sum(stages present), so
+# an incomplete record reconciles perfectly. The C1-A drop (a resume after
+# failure that opened a fresh empty run, losing the already-completed
+# substory_design/curate_figures, ~$5 on the $40 run) is exactly this
+# class. Called at finalize, BEFORE writing status=completed; a non-empty
+# return is a hard, loud failure.
+
+
+def _completed_stage_ids(record: object) -> set[str]:
+    """The set of stage ids a record marks `completed`. Tolerant of a
+    malformed record. (Vendored from craft.run_record.)"""
+    out: set[str] = set()
+    if not isinstance(record, dict):
+        return out
+    stages = record.get("stages")
+    if not isinstance(stages, list):
+        return out
+    for s in stages:
+        if (isinstance(s, dict) and s.get("status") == "completed"
+                and isinstance(s.get("id"), str) and s["id"]):
+            out.add(s["id"])
+    return out
+
+
+def check_no_dropped_stages(
+    canonical: dict, archived_runs: list,
+) -> list:
+    """Cross-record completeness guard (C1-A2). The canonical's set of
+    `completed` stage ids MUST be a SUPERSET of every archived run's
+    `completed` set; returns error strings naming any dropped stage.
+    Manifest-free. VENDORED byte-equal from craft.run_record — keep in
+    sync (conformance-pinned)."""
+    errors: list = []
+    canon_completed = _completed_stage_ids(canonical)
+    canon_run_id = (canonical.get("run_id")
+                    if isinstance(canonical, dict) else None)
+    for archived in archived_runs:
+        arch_run_id = (archived.get("run_id")
+                       if isinstance(archived, dict) else None)
+        if arch_run_id is not None and arch_run_id == canon_run_id:
+            continue
+        arch_completed = _completed_stage_ids(archived)
+        dropped = arch_completed - canon_completed
+        if dropped:
+            errors.append(
+                f"completeness: canonical (run_id={canon_run_id!r}) is "
+                f"missing {len(dropped)} stage(s) that archived run "
+                f"{arch_run_id!r} completed: {sorted(dropped)} — a resume "
+                f"must never drop a completed stage (C1-A). Refusing to "
+                f"finalize as completed."
+            )
+    return errors
+
+
+def _load_archived_runs(paths: dp.DraftPaths) -> list:
+    """Load every archived runs/run-N/run_record.json as a parsed dict.
+    Skips unreadable/non-JSON archives (forensic snapshots may be partial)
+    — the completeness guard tolerates a malformed entry. Loud-warns on a
+    parse failure so a corrupt archive is visible, but never raises."""
+    out: list = []
+    runs_dir = paths.runs_dir
+    if not runs_dir.is_dir():
+        return out
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        rr = run_dir / "run_record.json"
+        if not rr.is_file():
+            continue
+        try:
+            out.append(json.loads(rr.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"finalize_run: WARNING — could not read archived run "
+                f"record {rr} for the completeness guard ({exc}); "
+                f"skipping that archive.",
+                file=sys.stderr,
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -674,14 +780,24 @@ def record_resume_or_start(
     mid-build. Decision is by the existing canonical record's STATUS,
     not guesswork:
 
-      status ∈ {halted, running}   → RE-OPEN it. Flip status→running;
-        KEEP run_id + started_at + cumulative totals + existing
-        stages[]. The interrupted run continues; subsequent
-        record-stage calls append. (running covers a crash/re-invoke
-        with no clean halt; halted covers the throughline-pick gate.)
-      status ∈ {completed, failed}, or NO record → ALLOCATE a fresh
-        run-N (a genuine redo / fresh start — e.g. --resume-from
-        targeting an already-finished deck).
+      status ∈ {halted, running, failed}  → RE-OPEN it. Flip
+        status→running; KEEP run_id + started_at + cumulative totals +
+        existing stages[]. The interrupted run continues; subsequent
+        record-stage calls append, and a stage that previously failed
+        upserts failed→completed in place on retry via the
+        find-or-append-by-id in record-stage. (running covers a
+        crash/re-invoke with no clean halt; halted covers the
+        throughline-pick gate; FAILED covers a mid-pipeline stage
+        failure — a `--resume-from` after a failure is a CONTINUATION
+        of the same build, not a redo, so the stages the failed run
+        completed before the failure point MUST be carried, not dropped.
+        Bucketing `failed` with `completed` here was the C1-A defect:
+        it opened a fresh empty run that lost the already-completed
+        substory_design/curate_figures cost, ~$5 on the $40 run.)
+      status == completed, or NO record → ALLOCATE a fresh run-N (a
+        genuine redo / fresh start — e.g. --resume-from targeting an
+        already-finished deck). Per Adam (C1, 2026-06-11): the fix is
+        `failed` ONLY; `completed → fresh` stays.
 
     Returns (canonical_path, run_n, action) where action ∈
     {"reopened", "allocated"} for the caller's logging.
@@ -689,9 +805,11 @@ def record_resume_or_start(
     existing = _load_existing_record(paths.run_record)
     status = existing.get("status") if isinstance(existing, dict) else None
 
-    if status in ("halted", "running"):
+    if status in ("halted", "running", "failed"):
         # Re-open the interrupted record: only the status (and the
         # archive copy) changes; identity + accumulated state persist.
+        # `failed` is a CONTINUATION (C1-A), not a redo — carry the
+        # stages the failed run already completed.
         run_n = _find_canonical_run_n(existing)
         if run_n is None:
             # Corrupted run_id on an otherwise-resumable record — fall
@@ -711,7 +829,8 @@ def record_resume_or_start(
         )
         return canonical, run_n, "reopened"
 
-    # completed / failed / no-record → genuine fresh run.
+    # completed / no-record → genuine fresh run. (`failed` is handled
+    # above as a continuation — C1-A.)
     canonical, run_n = record_start(
         paths, started_at=started_at, skill_version=skill_version)
     return canonical, run_n, "allocated"
@@ -1189,6 +1308,24 @@ def record_finalize(
             else skill_version
         ),
     )
+
+    # C1-A2 completeness guard: before declaring the run COMPLETED, the
+    # canonical's completed-stage set MUST be a superset of every archived
+    # run's completed set. A resume that dropped a completed stage (the
+    # C1-A failure mode) reconciles totals perfectly yet under-reports —
+    # this is the only check that catches it. Fail LOUD: do NOT finalize as
+    # completed; raise so the CLI exits non-zero with the diagnostic. (We
+    # only guard the completed path — a `failed` finalize is already
+    # signalling a problem and may legitimately lack stages.)
+    if status == "completed":
+        archived = _load_archived_runs(paths)
+        drop_errors = check_no_dropped_stages(record, archived)
+        if drop_errors:
+            for e in drop_errors:
+                print(f"finalize_run: COMPLETENESS FAILURE — {e}",
+                      file=sys.stderr)
+            raise CompletenessError(drop_errors)
+
     canonical, _archive = write_run_record_canonical_and_archive(
         paths, record, run_n,
     )
@@ -1313,12 +1450,27 @@ def _cmd_record_finalize(args) -> int:
             file=sys.stderr,
         )
         return 1
-    canonical = record_finalize(
-        paths,
-        exit_code=args.exit_code,
-        started_at=args.started_at,
-        skill_version=args.skill_version or _SKILL_VERSION,
-    )
+    try:
+        canonical = record_finalize(
+            paths,
+            exit_code=args.exit_code,
+            started_at=args.started_at,
+            skill_version=args.skill_version or _SKILL_VERSION,
+        )
+    except CompletenessError as exc:
+        # C1-A2: the run would have been finalized as completed while
+        # dropping a stage a prior run completed. The canonical was NOT
+        # written as completed (it keeps its prior running/reopened
+        # status). Fail loud + non-zero so the wrapping orchestrator and
+        # any CI surface the regression.
+        print(
+            f"finalize_run: record-finalize ABORTED — completeness guard "
+            f"failed ({len(exc.errors)} dropped-stage error(s)); the run "
+            f"was NOT finalized as completed. Fix the resume disposition "
+            f"or the dropped stage(s) and re-finalize.",
+            file=sys.stderr,
+        )
+        return 3
     print(
         f"finalize_run: record-finalize exit_code={args.exit_code} → "
         f"{canonical}",

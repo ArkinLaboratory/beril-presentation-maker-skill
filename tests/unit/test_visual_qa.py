@@ -343,15 +343,26 @@ def test_parse_cost_from_envelope_unparseable(vq):
 # ---------------------------------------------------------------------------
 
 def test_run_visual_qa_returns_0_when_toolchain_incomplete(vq, tmp_path, monkeypatch, capsys):
-    """Missing dep → stub report + rc=0 (advisory)."""
+    """Missing dep → stub report + rc=0 (advisory). C1-B: the stub now
+    carries `skipped: true` + reason (so the orchestrator records
+    skipped-with-reason), and the operator-facing message is LOUD even
+    under quiet=True (a missing host binary is a P1, never a silent
+    no-op)."""
     monkeypatch.setattr(vq, "probe_toolchain",
                         lambda *a, **kw: vq.ToolchainStatus(
                             soffice=None, pdftoppm="/u/p", claude="/u/c"))
-    rc = vq.run_visual_qa(tmp_path)
+    rc = vq.run_visual_qa(tmp_path, quiet=True)  # quiet must NOT silence it
     assert rc == 0
     payload = json.loads((tmp_path / "audit" / "visual_qa.json").read_text())
     assert payload["findings"] == []
     assert "soffice" in payload["note"]
+    # C1-B: explicit skipped-with-reason flag for the run-record.
+    assert payload["skipped"] is True
+    assert "soffice" in payload["skipped_reason"]
+    # C1-B: loud P1 message on stderr despite quiet=True.
+    err = capsys.readouterr().err
+    assert "SKIPPED" in err and "missing host dependencies" in err
+    assert "P1" in err
 
 
 def test_run_visual_qa_returns_0_when_spec_missing(vq, tmp_path, monkeypatch):

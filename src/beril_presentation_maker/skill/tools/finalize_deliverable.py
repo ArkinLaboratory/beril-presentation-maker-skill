@@ -124,6 +124,22 @@ def _populate_from_beril_yaml(draft_dir: Path) -> tuple[bool, str]:
     affiliation = primary.get("affiliation") or ""
     if not name:
         return False, "beril.yaml authors[0] missing name"
+    # C1-C: a handler must not "remediate" a gate with a value that is
+    # itself a placeholder. beril.yaml authors[0].name == "TBD" (or any
+    # TBD token) would otherwise be written into presenter and reported as
+    # a successful populate — a populate that yields TBD is a FAILURE, not
+    # a cleared gate. (Diagnosed on repro 2026-06-11: the empty-name guard
+    # caught "" but not the literal "TBD"; second-pass re-detect kept the
+    # exit honest, but the handler still falsely claimed success.)
+    if vd._is_tbd(name):
+        return False, (
+            f"beril.yaml authors[0].name is itself a placeholder "
+            f"({name!r}); cannot populate presenter from a TBD source — "
+            f"set a real author name in beril.yaml"
+        )
+    # affiliation is optional; only use it if it's a real (non-TBD) value.
+    if affiliation and vd._is_tbd(affiliation):
+        affiliation = ""
 
     mutated = False
     for slide in spec.get("slides", []):
@@ -159,6 +175,23 @@ def _populate_from_beril_yaml(draft_dir: Path) -> tuple[bool, str]:
     if not mutated:
         return False, "no TBD title/presenter/contributors fields to populate"
     _write_spec(draft_dir, spec)
+
+    # C1-C self-verify: re-READ the spec we just wrote and confirm no
+    # title-slide presenter is still TBD. A handler must verify its own
+    # mutation — never report a cleared gate it didn't actually clear.
+    # (Defense-in-depth beyond the source-name guard above: catches any
+    # path that leaves a TBD on the title slide.)
+    written = _load_spec(draft_dir)
+    if written is None:
+        return False, "self-verify failed: spec unreadable after write"
+    for slide in written.get("slides", []):
+        if slide.get("layout") == "title":
+            presenter_now = (slide.get("content") or {}).get("presenter")
+            if vd._is_tbd(presenter_now):
+                return False, (
+                    f"self-verify failed: title presenter is still TBD "
+                    f"({presenter_now!r}) after populate — gate NOT cleared"
+                )
     return True, (
         f"populated title presenter='{name}' from beril.yaml"
         + (f", affiliation='{affiliation}'" if affiliation else "")

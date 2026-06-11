@@ -239,3 +239,37 @@ def test_stage_visual_qa_final_overlap_check_runs_before_visual_qa():
         "(detector is cheaper + its findings can inform what visual-QA "
         "still needs to flag)"
     )
+
+
+# ---------------------------------------------------------------------------
+# C1-B — env-missing skip records skipped-with-reason (not silent completed)
+# ---------------------------------------------------------------------------
+
+def test_visual_qa_final_records_skipped_when_stub_flagged():
+    """C1-B: when visual_qa.py writes a stub with `"skipped": true`
+    (missing host toolchain — soffice/pdftoppm), stage_visual_qa_final
+    must record `skipped` in the run-record, NOT a silent `completed`.
+    An auto-on stage that can't run is a P1, not a silent pass."""
+    text = ORCH_SH.read_text(encoding="utf-8")
+    body = _extract_stage_body(text, "stage_visual_qa_final")
+    # detects the skipped flag from the stub JSON
+    assert "d.get('skipped')" in body or "get(\"skipped\")" in body, (
+        "stage_visual_qa_final must read the `skipped` flag from the "
+        "visual_qa stub JSON")
+    # records skipped (not completed) on that branch
+    assert "_record_stage visual_qa_final skipped" in body, (
+        "a missing-toolchain skip must record `skipped`, not `completed`")
+
+
+def test_visual_qa_py_writes_skipped_reason_on_missing_toolchain():
+    """C1-B: visual_qa.py's missing-toolchain path stamps a
+    skipped_reason into the stub (so the orchestrator can record it) and
+    emits a LOUD (non-quiet-suppressible) P1 message."""
+    vq_py = (REPO_ROOT / "src" / "beril_presentation_maker" / "skill"
+             / "tools" / "visual_qa.py").read_text(encoding="utf-8")
+    assert "skipped_reason" in vq_py, (
+        "visual_qa.py must stamp a skipped_reason on the missing-toolchain "
+        "stub")
+    # the loud message is printed unconditionally (not gated on `not quiet`)
+    assert "missing host dependencies" in vq_py
+    assert 'P1' in vq_py

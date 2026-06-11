@@ -1509,6 +1509,65 @@ claim_file() {
   fi
 }
 
+# C1-B: stage-output completion guard. A Write tool-USE event (which is
+# all stream_progress.py verifies) is NOT proof the artifact landed on
+# disk — the draft_4 qa_prep failure emitted a Write event (rc=0) yet the
+# `{"status":"in_progress"}` sentinel survived, so the deck shipped with
+# a missing stage. This helper is the rc==0≠completion check
+# ([[feedback_subprocess_mtime_contract]]): after a claimed-success
+# invoke, the expected file MUST (a) still exist, (b) no longer be the
+# claim_file sentinel, and (c) have mtime >= the stage-start epoch. A
+# violation is a HARD FAIL (returns non-zero) so the retry wrapper retries
+# it instead of passing a silent no-write. Generalized: every stage that
+# claims a file via invoke_claude_with_retry gets this for free.
+#
+# Returns 0 = output verified; 1 = sentinel survived / mtime stale / gone.
+_mtime_epoch() {
+  # Portable mtime-in-epoch-seconds. GNU `stat -c %Y` FIRST (the hub is
+  # Linux); BSD/macOS `stat -f %m` fallback. CRITICAL: `stat -f` on GNU
+  # means --file-system — it prints "File: ..." filesystem info to STDOUT
+  # and exits 1, so trying it first on Linux corrupts the result into a
+  # multiline string (the C1-B mtime guard then false-fails every real
+  # write). GNU-first avoids that; the numeric guard discards any
+  # non-integer fallthrough as a belt-and-suspenders.
+  local f="$1" m
+  m="$(stat -c %Y "$f" 2>/dev/null)" || m="$(stat -f %m "$f" 2>/dev/null)" || m=0
+  [[ "$m" =~ ^[0-9]+$ ]] || m=0
+  printf '%s\n' "$m"
+}
+
+_verify_stage_output() {
+  local path="$1"
+  local stage_start_epoch="$2"
+  local label="$3"
+
+  if [[ ! -f "$path" ]]; then
+    echo "  ❌ $label: expected output missing after a claimed-success " \
+         "invoke: $path" >&2
+    return 1
+  fi
+  # Sentinel survived → the real Write never landed (the silent-Write
+  # class). claim_file writes either the JSON sentinel or the HTML comment.
+  if grep -q '"status": "in_progress"' "$path" 2>/dev/null \
+      || grep -q '<!-- Stage in progress:' "$path" 2>/dev/null; then
+    echo "  ❌ $label: in-progress sentinel survived in $path — the " \
+         "stage reported success but never wrote its artifact " \
+         "(rc==0 != completion). Treating as a hard failure." >&2
+    return 1
+  fi
+  # mtime must be at/after the stage start (the file was actually
+  # rewritten by this invocation, not a stale leftover).
+  local out_mtime
+  out_mtime="$(_mtime_epoch "$path")"
+  if [[ "$out_mtime" -lt "$stage_start_epoch" ]]; then
+    echo "  ❌ $label: output mtime ($out_mtime) is older than stage " \
+         "start ($stage_start_epoch) — $path was not (re)written by this " \
+         "stage. Treating as a hard failure." >&2
+    return 1
+  fi
+  return 0
+}
+
 # Set the `MODEL` variable for the next claude -p invocation based on a tier
 # name. Honors the caller's --model override: if MODEL_EXPLICIT=1, the helper
 # is a no-op (the caller's pin wins for every stage). When 0, the helper
@@ -1613,10 +1672,29 @@ ${base_user_prompt}"
     fi
 
     claim_file "$expected_path" "$label"
+    # C1-B: capture stage-start epoch AFTER claim_file so a fresh write by
+    # this invocation has mtime >= start. (claim_file just touched it, so
+    # the sentinel's own mtime is ~now; a real Write will be >= this.)
+    local _stage_start_epoch
+    _stage_start_epoch="$(_mtime_epoch "$expected_path")"
     invoke_claude "$sys_prompt_file" "$prompt" "$expected_path" "$label"
     rc=$?
 
-    if [[ $rc -eq 0 ]]; then return 0; fi
+    if [[ $rc -eq 0 ]]; then
+      # C1-B: rc==0 from the stream parser means a Write EVENT fired — but
+      # not that the artifact landed. Verify on disk (no surviving
+      # sentinel, mtime fresh). If the artifact didn't actually land, treat
+      # it like a Write-not-invoked (rc=2): retry, don't pass a silent
+      # no-write.
+      if _verify_stage_output "$expected_path" "$_stage_start_epoch" "$label"; then
+        return 0
+      fi
+      echo "  Retry $((attempt + 1))/$MAX for $label " \
+           "(output verification failed — artifact did not land)" >&2
+      rm -f "$expected_path"
+      attempt=$((attempt + 1))
+      continue
+    fi
     if [[ $rc -eq 2 ]]; then
       rm -f "$expected_path"
       attempt=$((attempt + 1))
@@ -3918,6 +3996,30 @@ stage_visual_qa_final() {
   if [[ ! -f "$vq_final_json" ]]; then
     echo "  visual-QA produced no output; skipping merge" >&2
     _record_vqa  # vision-only (sidecar may be 0-cost if QA couldn't run)
+    return 0
+  fi
+
+  # C1-B: a missing host binary (soffice/pdftoppm) makes visual_qa.py
+  # write a stub with `"skipped": true` + a reason and exit 0 (advisory).
+  # Record an explicit `skipped`-with-reason in the run-record — NOT a
+  # silent `completed` (an auto-on stage that can't run is a P1). The
+  # loud operator-facing message was already printed by visual_qa.py.
+  local _vq_skipped
+  _vq_skipped="$("$PYTHON_BIN" -c "
+import json
+try:
+    d = json.load(open('$vq_final_json'))
+    print('1' if d.get('skipped') else '0')
+    import sys
+    if d.get('skipped'):
+        print(d.get('skipped_reason') or 'visual-QA skipped', file=sys.stderr)
+except Exception:
+    print('0')
+" 2>/dev/null | head -1)"
+  if [[ "$_vq_skipped" == "1" ]]; then
+    echo "  visual-QA SKIPPED (missing host toolchain) — recording " \
+         "skipped-with-reason in the run-record (P1)." >&2
+    _record_stage visual_qa_final skipped
     return 0
   fi
 

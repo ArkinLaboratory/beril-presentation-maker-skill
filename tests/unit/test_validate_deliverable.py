@@ -812,6 +812,80 @@ def test_finalize_populate_title_from_beril_mutates_spec(tmp_path):
     assert new_presenter == "Adam Arkin"
 
 
+def test_finalize_populate_rejects_tbd_source_name(tmp_path):
+    """C1-C: a populate whose SOURCE (beril.yaml authors[0].name) is
+    itself TBD must FAIL (return False + reason), never write 'TBD' into
+    presenter and claim success. (Diagnosed on repro 2026-06-11: the old
+    empty-name guard caught '' but not the literal 'TBD'.)"""
+    draft_dir = _build_clean_draft(tmp_path)
+    proj_dir = draft_dir.parent.parent
+    (proj_dir / "beril.yaml").write_text(
+        "authors:\n  - name: TBD\n    affiliation: LBNL\n", encoding="utf-8")
+    spec = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
+    next(s for s in spec["slides"]
+         if s["layout"] == "title")["content"]["presenter"] = "TBD"
+    _write_json(draft_dir / "working" / "slide_spec.json", spec)
+
+    ok, msg = fd._populate_from_beril_yaml(draft_dir)
+    assert ok is False, "a TBD source name must not count as a populate"
+    assert "placeholder" in msg and "TBD" in msg
+    # presenter must remain TBD (NOT silently overwritten with 'TBD')
+    spec2 = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
+    pres = next(s for s in spec2["slides"]
+                if s["layout"] == "title")["content"]["presenter"]
+    assert vd._is_tbd(pres)
+
+
+def test_finalize_populate_self_verify_catches_residual_tbd(tmp_path):
+    """C1-C self-verify: if (somehow) a title presenter is still TBD after
+    the write, the handler returns False (it verifies its own mutation,
+    never reports a gate it didn't clear). We force the condition with a
+    blank source name so nothing is written, then assert the no-mutation
+    path — and separately assert the real-name path passes self-verify."""
+    draft_dir = _build_clean_draft(tmp_path)
+    # real name → populate succeeds AND self-verify passes
+    spec = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
+    next(s for s in spec["slides"]
+         if s["layout"] == "title")["content"]["presenter"] = "TBD"
+    _write_json(draft_dir / "working" / "slide_spec.json", spec)
+    ok, msg = fd._populate_from_beril_yaml(draft_dir)
+    assert ok, msg
+    spec2 = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
+    pres = next(s for s in spec2["slides"]
+                if s["layout"] == "title")["content"]["presenter"]
+    assert not vd._is_tbd(pres) and pres == "Adam Arkin"
+
+
+def test_finalize_exit_reflects_surviving_presenter_p0(tmp_path):
+    """C1-C ACCEPTANCE (presmaker): beril.yaml with a TBD author →
+    finalize() must NOT clear the presenter gate and the readiness exit
+    must be non-zero with the presenter P0 surfaced. Exit = fresh
+    re-detect over the SHIPPED spec, never a handler self-report."""
+    draft_dir = _build_clean_draft(tmp_path)
+    proj_dir = draft_dir.parent.parent
+    (proj_dir / "beril.yaml").write_text(
+        "authors:\n  - name: TBD\n    affiliation: LBNL\n", encoding="utf-8")
+    spec = json.loads((draft_dir / "working" / "slide_spec.json").read_text())
+    next(s for s in spec["slides"]
+         if s["layout"] == "title")["content"]["presenter"] = "TBD"
+    _write_json(draft_dir / "working" / "slide_spec.json", spec)
+    # first-pass findings (so finalize has an audit to read)
+    vd.write_findings(draft_dir, vd.validate(draft_dir))
+
+    result = fd.finalize(draft_dir)
+    # the populate handler did NOT falsely claim success
+    pop = next(a for a in result["actions_applied"]
+               if a["action"] == "populate_title_from_beril")
+    assert pop["applied"] is False
+    # readiness is non-zero (P0 survives)
+    assert result["second_pass_readiness_rc"] != 0
+    # the specific presenter P0 is in the second pass
+    second = vd.validate(draft_dir)
+    assert any("presenter_tbd" in f.id for f in second), (
+        "presenter P0 must survive a TBD-source populate (no handler-trust)"
+    )
+
+
 def test_finalize_strip_dirname_handler_removed(tmp_path):
     """v1.2.0 followup (Adam, 2026-06-07): the auto strip-dirname-token
     handler is GONE. The finalize-deliverable dispatcher has no
