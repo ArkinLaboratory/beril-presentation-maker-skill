@@ -20,9 +20,10 @@ describing the gate state, prints a "what to do next" message, and
 exits 0 cleanly. This works in TTY-less contexts (Claude Code's
 backgrounded bash on the hub, CI, daemons) where the prior
 `read </dev/tty` blocking model failed 100% of the time. The slash
-command (Steps 4-5 below) reads the handoff, presents candidates via
-`AskUserQuestion`, and re-invokes `continue --pick TLN` to resume from
-substory_design through to the .pptx. Pass `--auto-advance` for
+command (Steps 4-5 below) reads the handoff, renders the candidates
+inline as its own message (the decision-rendering contract — see Step 5;
+NOT the `AskUserQuestion` widget), and re-invokes `continue --pick TLN`
+to resume from substory_design through to the .pptx. Pass `--auto-advance` for
 unattended runs (auto-picks TL1, no halt).
 
 For full reference docs (mode matrix, output artifacts catalog,
@@ -263,7 +264,7 @@ Based on the run outcome:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Bash returns rc=0 after stages 1-2 with no .pptx; `<draft_dir>/.handoff.json` exists with `phase=throughline_pick` | Working as designed (v0.3.6 halt-and-handoff). The bash halted at the throughline-pick gate awaiting user input. | Proceed to Step 5 (read handoff, ask user via AskUserQuestion, run `continue --pick TLN`). For unattended runs, re-invoke `draft` with `--auto-advance` to skip the gate. |
+| Bash returns rc=0 after stages 1-2 with no .pptx; `<draft_dir>/.handoff.json` exists with `phase=throughline_pick` | Working as designed (v0.3.6 halt-and-handoff). The bash halted at the throughline-pick gate awaiting user input. | Proceed to Step 5 (read handoff, render the decision inline per Step 5, run `continue --pick TLN`). For unattended runs, re-invoke `draft` with `--auto-advance` to skip the gate. |
 | Old `(Pick a throughline (TL1 / TL2 / TL3):` prompt waits forever / errors with `read: ambiguous redirect` | Pre-v0.3.6 bash with TTY-block gate, running in TTY-less context | Upgrade to v0.3.6+ (`pipx install --force git+...@v0.3.6`); the TTY block is gone in v0.3.6. |
 | `slide_spec.json failed schema validation: deprecated 'curated/' segment` | slide_compose emitted a `figures/curated/<name>.png` path | Inspect the failed fragment; either bump `slide_compose.v1.md` or fix the spec by hand and retry with `--resume-from merge` |
 | `asset not found` warnings + draft.pptx with missing pictures | figure path doesn't resolve under draft_dir or project_dir | Check `working/curated_figures.md` for canonical paths; cross-reference against the spec |

@@ -1818,8 +1818,9 @@ gate_throughline_pick() {
 }
 
 # v0.3.6: emit narrative/.handoff.json describing the throughline-pick
-# gate state. Slash command reads this to present candidates via
-# AskUserQuestion. continue --pick TLN validates against this file.
+# gate state. Slash command reads this and renders the candidates inline
+# as its own message (the decision-rendering contract, NOT the
+# AskUserQuestion widget). continue --pick TLN validates against this file.
 #
 # Wait — actually puts handoff at draft root (<draft>/.handoff.json),
 # matching paper-writer's location. Outside the 4-zone layout
